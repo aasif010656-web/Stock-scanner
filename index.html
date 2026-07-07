@@ -14,6 +14,8 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -43,8 +45,10 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--muted);}
 .btn-row{display:flex;gap:8px;}
 .btn-row .btn{flex:1;}
-#reader{border-radius:12px;overflow:hidden;border:1px solid var(--border2);}
-#reader video{border-radius:12px;}
+#reader{border-radius:12px;overflow:hidden;border:1px solid var(--border2);background:#000;position:relative;}
+#reader video{border-radius:12px;width:100% !important;height:auto !important;display:block !important;object-fit:cover;}
+#reader img{display:none !important;}
+#reader__scan_region{position:relative;}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;}
 .product-title{font-weight:700;font-size:15px;line-height:1.35;margin-bottom:6px;}
 .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
@@ -127,6 +131,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 </div>
 <div class="toast" id="toast"></div>
 <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="handleRestoreFile(this)" />
+<input type="file" id="importExcelInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportExcel(this)" />
 <div class="bottom-nav">
   <div class="nav-credit">Created by Abdul Asif P.V.</div>
   <div class="nav-buttons">
@@ -4736,39 +4741,93 @@ let stockOverrides = {};  // { barcode: correctedStockQty } -- edited only from 
 let scanLog = [];         // [{id, ts, barcode, code, desc, brand, party, partyName, refQty, scannedQty, operator}]
 let storageReady = false;
 
-async function loadStorage(){
+// ---------- Firebase (cross-device cloud sync) ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyAuk5aUdb_IzGXOu01I78h8OhCqAlBTHDA",
+  authDomain: "stock-take-9a67a.firebaseapp.com",
+  projectId: "stock-take-9a67a",
+  storageBucket: "stock-take-9a67a.firebasestorage.app",
+  messagingSenderId: "771000209228",
+  appId: "1:771000209228:web:60af0496fab8ca0ba809e9"
+};
+let fbDocRef = null;
+let fbReady = false;
+let syncStatus = 'connecting'; // connecting | synced | offline | error
+
+function initFirebase(){
   try{
-    const o = await window.storage.get('stock-overrides', false);
-    if(o && o.value) stockOverrides = JSON.parse(o.value);
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    fbDocRef = db.collection('stockScannerApp').doc('sharedData');
+    fbReady = true;
   }catch(e){
-    try{ const legacy = await window.storage.get('qty-overrides', false); if(legacy && legacy.value) stockOverrides = JSON.parse(legacy.value); }catch(e2){}
+    fbReady = false;
+    syncStatus = 'error';
   }
+}
+
+async function loadStorage(){
+  try{ const op = localStorage.getItem('operator-name'); if(op) state.operatorName = op; }catch(e){}
+
+  if(!fbReady){
+    storageReady = true; syncStatus = 'offline';
+    updateHeaderSub(); render();
+    return;
+  }
+
   try{
-    const l = await window.storage.get('scan-log', false);
-    if(l && l.value) scanLog = JSON.parse(l.value);
-  }catch(e){}
-  try{
-    const cp = await window.storage.get('custom-products', false);
-    if(cp && cp.value){ customProducts = JSON.parse(cp.value); rebuildIndex(); }
-  }catch(e){}
-  try{
-    const op = await window.storage.get('operator-name', false);
-    if(op && op.value) state.operatorName = op.value;
-  }catch(e){}
+    const snap = await fbDocRef.get();
+    if(snap.exists){
+      const data = snap.data();
+      stockOverrides = data.stockOverrides || {};
+      scanLog = data.scanLog || [];
+      customProducts = data.customProducts || [];
+      rebuildIndex();
+    } else {
+      await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[] });
+    }
+    syncStatus = 'synced';
+  }catch(e){
+    syncStatus = 'offline';
+  }
   storageReady = true;
   updateHeaderSub();
+  render();
+
+  // Live updates from OTHER devices using the same shared data
+  try{
+    fbDocRef.onSnapshot({ includeMetadataChanges: true }, (doc)=>{
+      if(!doc.exists) return;
+      if(doc.metadata.hasPendingWrites) return; // this device's own write -- already applied locally
+      const data = doc.data();
+      stockOverrides = data.stockOverrides || {};
+      scanLog = data.scanLog || [];
+      customProducts = data.customProducts || [];
+      rebuildIndex();
+      syncStatus = 'synced';
+      updateHeaderSub();
+      render();
+    }, ()=>{ syncStatus = 'offline'; updateHeaderSub(); });
+  }catch(e){}
 }
-async function saveStockOverrides(){
-  try{ await window.storage.set('stock-overrides', JSON.stringify(stockOverrides), false); }catch(e){ showToast("Storage save failed", true); }
+
+async function pushToCloud(){
+  if(!fbReady){ syncStatus = 'offline'; updateHeaderSub(); return; }
+  try{
+    await fbDocRef.set({ stockOverrides, scanLog, customProducts }, { merge: true });
+    syncStatus = 'synced';
+  }catch(e){
+    syncStatus = 'offline';
+    showToast("Cloud sync failed — check internet connection", true);
+  }
+  updateHeaderSub();
 }
-async function saveLog(){
-  try{ await window.storage.set('scan-log', JSON.stringify(scanLog), false); }catch(e){}
-}
-async function saveCustomProducts(){
-  try{ await window.storage.set('custom-products', JSON.stringify(customProducts), false); }catch(e){}
-}
+
+async function saveStockOverrides(){ await pushToCloud(); }
+async function saveLog(){ await pushToCloud(); }
+async function saveCustomProducts(){ await pushToCloud(); }
 async function saveOperatorName(){
-  try{ await window.storage.set('operator-name', state.operatorName||'', false); }catch(e){}
+  try{ localStorage.setItem('operator-name', state.operatorName||''); }catch(e){}
 }
 
 function effectiveQty(row){
@@ -4854,13 +4913,19 @@ function setTab(tab){
   render();
 }
 
+function syncBadge(){
+  if(syncStatus==='synced') return ' · <span style="color:#3DDC84;">☁ Synced</span>';
+  if(syncStatus==='connecting') return ' · <span style="color:var(--dim);">☁ Connecting…</span>';
+  if(syncStatus==='error') return ' · <span style="color:#E85D5D;">☁ Sync unavailable</span>';
+  return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>';
+}
 function updateHeaderSub(){
   const sub = document.getElementById('headerSub');
   if(!storageReady){ sub.textContent = "Loading data..."; return; }
   const brands = new Set(getAllRows().map(r=>r.Brand||"OTHERS / UNBRANDED")).size;
-  if(state.tab==='scan') sub.textContent = getAllRows().length + " products · " + brands + " brands · " + scanLog.length + " scans logged";
-  else if(state.tab==='brands') sub.textContent = brands + " brands · " + getAllRows().length + " products";
-  else sub.textContent = scanLog.length + " scan entries";
+  if(state.tab==='scan') sub.innerHTML = getAllRows().length + " products · " + brands + " brands · " + scanLog.length + " scans logged" + syncBadge();
+  else if(state.tab==='brands') sub.innerHTML = brands + " brands · " + getAllRows().length + " products" + syncBadge();
+  else sub.innerHTML = scanLog.length + " scan entries" + syncBadge();
 }
 
 // ---------- Barcode lookup ----------
@@ -4994,7 +5059,11 @@ async function startCamera(){
     html5QrCode = new Html5Qrcode("reader", { verbose:false });
     const config = {
       fps: 12,
-      qrbox: { width: 280, height: 150 },
+      qrbox: (vw, vh)=>{
+        const w = Math.min(320, Math.floor(vw*0.85));
+        const h = Math.min(160, Math.floor(vh*0.5));
+        return { width: w, height: h };
+      },
       aspectRatio: 1.5,
       disableFlip: false,
       // Barcode formats ONLY -- QR codes are intentionally excluded
@@ -5006,14 +5075,33 @@ async function startCamera(){
         Html5QrcodeSupportedFormats.ITF
       ]
     };
-    await html5QrCode.start(
-      { facingMode: "environment" },
-      config,
-      (decodedText)=>{
-        lookupBarcode(decodedText);
-      },
-      ()=>{ /* ignore per-frame "not found" scan noise */ }
-    );
+    const onScan = (decodedText)=>{ lookupBarcode(decodedText); };
+    const onFail = ()=>{ /* ignore per-frame "not found" scan noise */ };
+
+    // Prefer an explicit back-camera deviceId -- far more reliable across
+    // Android WebViews than the {facingMode:"environment"} constraint, which
+    // on some devices resolves but never actually paints the video frame.
+    let started = false;
+    try{
+      const cams = await Html5Qrcode.getCameras();
+      if(cams && cams.length){
+        let cam = cams.find(c => /back|rear|environment/i.test(c.label||''));
+        if(!cam) cam = cams[cams.length-1];
+        await html5QrCode.start(cam.id, config, onScan, onFail);
+        started = true;
+      }
+    }catch(e){ /* fall through to facingMode attempt below */ }
+
+    if(!started){
+      await html5QrCode.start({ facingMode: "environment" }, config, onScan, onFail);
+    }
+
+    // Make sure the injected <video> actually paints -- some WebViews leave
+    // it invisible until a layout/style nudge happens after start() resolves.
+    setTimeout(()=>{
+      const v = document.querySelector('#reader video');
+      if(v){ v.style.width='100%'; v.style.height='auto'; v.style.display='block'; v.setAttribute('playsinline','true'); v.muted = true; }
+    }, 150);
   }catch(err){
     state.cameraOn = false;
     render();
@@ -5176,6 +5264,82 @@ async function handleRestoreFile(fileInput){
   fileInput.value = '';
 }
 
+function triggerImportExcel(){
+  const inp = document.getElementById('importExcelInput');
+  if(inp) inp.click();
+}
+
+function pick(row, keys){
+  for(const k of keys){
+    if(row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') return String(row[k]).trim();
+  }
+  return '';
+}
+
+async function handleImportExcel(fileInput){
+  const file = fileInput.files && fileInput.files[0];
+  if(!file) return;
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    if(!rows.length){ showToast("No rows found in that file", true); fileInput.value=''; return; }
+
+    let updated = 0, added = 0, skipped = 0;
+    const today = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
+
+    rows.forEach(r=>{
+      const barcode = pick(r, ['Barcode','barcode','BARCODE']);
+      if(!barcode){ skipped++; return; }
+      const qtyStr = pick(r, ['Stock Qty','Quantity','Qty','stock qty','quantity','qty']);
+      const qty = qtyStr !== '' ? (parseFloat(qtyStr)||0) : null;
+
+      const existing = BARCODE_INDEX.get(barcode);
+      if(existing && existing.length){
+        if(qty !== null){
+          stockOverrides[barcode] = qty;
+          updated++;
+        }
+      } else {
+        const desc = pick(r, ['Description','Product','description','product']) || 'Imported item';
+        const brand = pick(r, ['Brand','brand']) || 'OTHERS / UNBRANDED';
+        const newRow = {
+          SL: 'IMPORT-' + Date.now() + '-' + added,
+          Barcode: barcode,
+          Product: pick(r, ['Code','Product Code','code']),
+          SU: '',
+          Description: desc,
+          Brand: brand,
+          "Stock Qty": String(qty!==null ? qty : 0),
+          "Stock Value": "0",
+          WAC: "0",
+          LLC: "0",
+          Party: pick(r, ['Party','party']),
+          "Party Name": pick(r, ['Party Name','partyName','party name']),
+          "GRN Number": '',
+          "GRN Date": today,
+          "Sale Date": '',
+          "Age Days": "0"
+        };
+        customProducts.push(newRow);
+        BARCODE_INDEX.set(barcode, [newRow]);
+        added++;
+      }
+    });
+
+    await saveStockOverrides();
+    await saveCustomProducts();
+    rebuildIndex();
+    updateHeaderSub();
+    showToast(`✓ Import done — ${updated} stock updates, ${added} new products` + (skipped ? `, ${skipped} rows skipped (no barcode)` : ''));
+    render();
+  }catch(e){
+    showToast("Could not read that Excel file", true);
+  }
+  fileInput.value = '';
+}
+
 async function deleteLogEntry(id){
   if(!confirm("Delete this log entry?")) return;
   scanLog = scanLog.filter(l=>l.id!==id);
@@ -5314,6 +5478,56 @@ function detailRow(label, value, full){
   return '<div style="' + (full?'grid-column:1/-1;':'') + '"><div class="detail-label">' + esc(label) + '</div><div class="detail-value">' + esc(value) + '</div></div>';
 }
 
+function productMatches(r, q){
+  return (r.Description||'').toLowerCase().includes(q) ||
+         (r.Product||'').toLowerCase().includes(q) ||
+         (r.Barcode||'').toLowerCase().includes(q) ||
+         (r.Brand||'OTHERS / UNBRANDED').toLowerCase().includes(q);
+}
+
+function renderProductCard(r, showBrandChip){
+  const isOpen = state.expandedSL === r.SL;
+  const qty = effectiveQty(r);
+  const isEditing = state.editingStockBarcode === r.Barcode;
+  let html = '<div class="card" style="padding:0;">';
+  html += '<div style="padding:12px 14px;cursor:pointer;" onclick="toggleExpand(\'' + r.SL + '\')">';
+  html += '<div class="product-title" style="margin-bottom:4px;">' + esc(r.Description) + '</div>';
+  html += '<div class="chip-row" style="margin-bottom:0;">';
+  if(showBrandChip) html += '<span class="chip">' + esc(r.Brand || "OTHERS / UNBRANDED") + '</span>';
+  html += '<span class="chip">Code ' + esc(r.Product) + '</span>';
+  if(r.Barcode) html += '<span class="chip">' + esc(r.Barcode) + '</span>';
+  html += '<span class="chip-accent">Stock Qty ' + fmtInt(qty) + '</span>';
+  html += '</div></div>';
+  if(isOpen){
+    html += '<div class="detail-grid" style="padding:0 14px 14px;">';
+    html += detailRow('Barcode', r.Barcode||'-');
+    html += detailRow('Brand', r.Brand||'OTHERS / UNBRANDED');
+    html += detailRow('WAC', fmtMoney(r.WAC));
+    html += detailRow('LLC', fmtMoney(r.LLC));
+    html += detailRow('Party', r.Party||'-');
+    html += detailRow('Party Name', r["Party Name"]||'-', true);
+    html += detailRow('GRN Number', r["GRN Number"]||'-');
+    html += detailRow('GRN Date', r["GRN Date"]||'-');
+    html += detailRow('Sale Date', r["Sale Date"]||'-');
+    html += detailRow('Age Days', r["Age Days"]);
+    html += '</div>';
+    html += '<div style="padding:0 14px 14px;">';
+    if(isEditing){
+      html += '<div class="field-label">Edit Stock Quantity</div>';
+      html += '<div class="stock-edit-row">';
+      html += '<input type="number" value="' + state.stockEditValue + '" oninput="setStockEditValue(this.value)" />';
+      html += '<button class="btn btn-ghost" onclick="cancelEditStock()">Cancel</button>';
+      html += '<button class="btn btn-accent" onclick="saveEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\')">Save</button>';
+      html += '</div>';
+    } else {
+      html += '<button class="inline-link-btn" onclick="startEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\',' + qty + ')">✎ Edit Stock Quantity</button>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
 function renderBrands(){
   if(state.selectedBrand){
     const idx = buildBrandIndex();
@@ -5322,7 +5536,7 @@ function renderBrands(){
     let items = bd.items;
     if(state.productQuery.trim()){
       const q = state.productQuery.trim().toLowerCase();
-      items = items.filter(r => r.Description.toLowerCase().includes(q) || r.Product.toLowerCase().includes(q) || (r.Barcode||'').toLowerCase().includes(q));
+      items = items.filter(r => productMatches(r,q));
     }
     let html = '<div class="back-row" style="margin-bottom:12px;">';
     html += '<button class="back-btn" onclick="closeBrand()">←</button>';
@@ -5330,61 +5544,48 @@ function renderBrands(){
     html += '<div style="font-size:11.5px;color:var(--muted);">' + bd.count + ' products · qty ' + fmtInt(bd.totalQty) + ' · value ' + fmtMoney(bd.totalValue) + '</div></div></div>';
     html += '<div class="search-wrap"><input type="text" value="' + esc(state.productQuery) + '" oninput="setProductQuery(this.value)" placeholder="Search product / barcode..." /></div>';
     if(items.length===0) html += '<div class="empty">No matching products.</div>';
-    items.forEach(r=>{
-      const isOpen = state.expandedSL === r.SL;
-      const qty = effectiveQty(r);
-      const isEditing = state.editingStockBarcode === r.Barcode;
-      html += '<div class="card" style="padding:0;">';
-      html += '<div style="padding:12px 14px;cursor:pointer;" onclick="toggleExpand(\'' + r.SL + '\')">';
-      html += '<div class="product-title" style="margin-bottom:4px;">' + esc(r.Description) + '</div>';
-      html += '<div class="chip-row" style="margin-bottom:0;">';
-      html += '<span class="chip">Code ' + esc(r.Product) + '</span>';
-      html += '<span class="chip-accent">Stock Qty ' + fmtInt(qty) + '</span>';
-      html += '</div></div>';
-      if(isOpen){
-        html += '<div class="detail-grid" style="padding:0 14px 14px;">';
-        html += detailRow('Barcode', r.Barcode||'-');
-        html += detailRow('WAC', fmtMoney(r.WAC));
-        html += detailRow('LLC', fmtMoney(r.LLC));
-        html += detailRow('Party', r.Party||'-');
-        html += detailRow('Party Name', r["Party Name"]||'-', true);
-        html += detailRow('GRN Number', r["GRN Number"]||'-');
-        html += detailRow('GRN Date', r["GRN Date"]||'-');
-        html += detailRow('Sale Date', r["Sale Date"]||'-');
-        html += detailRow('Age Days', r["Age Days"]);
-        html += '</div>';
-        html += '<div style="padding:0 14px 14px;">';
-        if(isEditing){
-          html += '<div class="field-label">Edit Stock Quantity</div>';
-          html += '<div class="stock-edit-row">';
-          html += '<input type="number" value="' + state.stockEditValue + '" oninput="setStockEditValue(this.value)" />';
-          html += '<button class="btn btn-ghost" onclick="cancelEditStock()">Cancel</button>';
-          html += '<button class="btn btn-accent" onclick="saveEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\')">Save</button>';
-          html += '</div>';
-        } else {
-          html += '<button class="inline-link-btn" onclick="startEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\',' + qty + ')">✎ Edit Stock Quantity</button>';
-        }
-        html += '</div>';
-      }
-      html += '</div>';
-    });
+    items.forEach(r=>{ html += renderProductCard(r, false); });
     return html;
   }
 
   let idx = buildBrandIndex();
-  if(state.brandQuery.trim()){
-    const q = state.brandQuery.trim().toLowerCase();
-    idx = idx.filter(b=>b.brand.toLowerCase().includes(q));
-  }
-  if(state.brandSort==='count') idx.sort((a,b)=>b.count-a.count);
-  else idx.sort((a,b)=>a.brand.localeCompare(b.brand));
+  let html = '<div class="btn-row" style="margin-bottom:10px;">';
+  html += '<button class="btn btn-accent" onclick="openAddProduct()">+ Add New Product</button>';
+  html += '</div>';
+  html += '<div class="btn-row" style="margin-bottom:14px;">';
+  html += '<button class="btn" onclick="triggerImportExcel()">📥 Import Excel (update stock / add products)</button>';
+  html += '</div>';
+  html += '<div class="backup-note">Import an Excel file with a Barcode column (plus optional Description, Brand, Stock Qty, Party, Party Name). Matching barcodes update stock; new barcodes are added as new products.</div>';
 
-  let html = '<div class="search-wrap"><input type="text" value="' + esc(state.brandQuery) + '" oninput="setBrandQuery(this.value)" placeholder="Search brand name..." /></div>';
+  let html2 = '<div class="search-wrap"><input type="text" value="' + esc(state.brandQuery) + '" oninput="setBrandQuery(this.value)" placeholder="Search brand, barcode, model / product name..." /></div>';
+  html += html2;
+
+  const rawQuery = state.brandQuery.trim();
+  if(rawQuery){
+    // Reference-style lookup: match ANY field (brand, barcode, product code, description)
+    // and show matching products directly, regardless of which brand they belong to.
+    const q = rawQuery.toLowerCase();
+    const matches = getAllRows().filter(r => productMatches(r,q));
+    const CAP = 200;
+    html += '<div class="divider-label">' + matches.length + ' matching product' + (matches.length===1?'':'s') + '</div>';
+    if(matches.length===0){
+      html += '<div class="empty">No matches for "' + esc(rawQuery) + '".</div>';
+    } else {
+      matches.slice(0,CAP).forEach(r=>{ html += renderProductCard(r, true); });
+      if(matches.length>CAP){
+        html += '<div class="empty">Showing first ' + CAP + ' of ' + matches.length + ' matches — refine your search to narrow it down.</div>';
+      }
+    }
+    return html;
+  }
+
   html += '<div class="sort-row">';
   html += '<button class="sort-btn ' + (state.brandSort==='count'?'active':'') + '" onclick="setBrandSort(\'count\')">Most stocked</button>';
   html += '<button class="sort-btn ' + (state.brandSort==='az'?'active':'') + '" onclick="setBrandSort(\'az\')">A–Z</button>';
   html += '</div>';
-  if(idx.length===0) html += '<div class="empty">No brand matches.</div>';
+  if(state.brandSort==='count') idx.sort((a,b)=>b.count-a.count);
+  else idx.sort((a,b)=>a.brand.localeCompare(b.brand));
+  if(idx.length===0) html += '<div class="empty">No brands found.</div>';
   idx.forEach(b=>{
     html += '<div class="brand-card" onclick="openBrand(\'' + b.brand.replace(/'/g,"\\'") + '\')">';
     html += '<div style="flex:1;min-width:0;"><div class="brand-name">' + esc(b.brand) + '</div>';
@@ -5394,7 +5595,7 @@ function renderBrands(){
   return html;
 }
 
-function setBrandQuery(v){ state.brandQuery=v; render(); focusPreserve('input[placeholder*="Search brand name"]'); }
+function setBrandQuery(v){ state.brandQuery=v; render(); focusPreserve('input[placeholder*="Search brand"]'); }
 function setProductQuery(v){ state.productQuery=v; render(); focusPreserve('input[placeholder*="Search product"]'); }
 
 function focusPreserve(sel){
@@ -5463,6 +5664,7 @@ function wireEvents(){
 
 // ---------- Init ----------
 (async function init(){
+  initFirebase();
   await loadStorage();
   render();
 })();
