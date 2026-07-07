@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="ml">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>PDT Stock Scanner</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#F2B705">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -93,6 +93,26 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .cam-status{font-size:12px;color:var(--dim);text-align:center;margin-top:8px;}
 .notfound{background:rgba(232,93,93,0.1);border:1px solid rgba(232,93,93,0.3);color:#F0A0A0;border-radius:10px;padding:12px;font-size:13px;margin-bottom:10px;}
 .divider-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px;}
+#app{padding-bottom:84px;}
+.bottom-nav{flex-direction:column;padding-bottom:env(safe-area-inset-bottom);}
+.nav-credit{text-align:center;font-size:10px;color:var(--dim);padding:4px 0 2px;border-bottom:1px solid var(--border);letter-spacing:.02em;}
+.nav-buttons{display:flex;width:100%;}
+.nav-buttons button{flex:1;background:transparent;color:var(--muted);padding:9px 0 8px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;}
+.nav-buttons button.active{color:var(--accent);}
+.field-label{font-size:11px;color:var(--muted);margin:10px 0 4px;font-weight:600;}
+.stock-edit-row{display:flex;gap:8px;align-items:center;margin-top:8px;}
+.stock-edit-row input{flex:1;}
+.inline-link-btn{background:transparent;border:none;color:var(--accent);font-size:12px;font-weight:700;padding:2px 0;}
+.log-actions{display:flex;gap:6px;margin-top:8px;}
+.log-actions button{flex:1;font-size:11.5px;padding:7px 0;}
+.ref-qty-note{font-size:11px;color:var(--dim);margin-top:2px;}
+.form-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px;}
+.search-row-log{display:flex;gap:8px;margin-bottom:10px;}
+.operator-row{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+.operator-label{font-size:12px;color:var(--muted);white-space:nowrap;font-weight:600;}
+.operator-row input{flex:1;padding:8px 10px;font-size:13px;}
+.dupwarn{background:rgba(242,183,5,0.12);border:1px solid rgba(242,183,5,0.35);color:#F2D27A;border-radius:10px;padding:11px 12px;font-size:12.5px;margin-bottom:12px;}
+.backup-note{font-size:11px;color:var(--dim);margin:2px 0 14px;line-height:1.5;}
 </style>
 </head>
 <body>
@@ -106,16 +126,20 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
   <div class="section" id="content"></div>
 </div>
 <div class="toast" id="toast"></div>
+<input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="handleRestoreFile(this)" />
 <div class="bottom-nav">
-  <button id="navScan" class="active" onclick="setTab('scan')">
-    <span>📷</span><span>Scan</span>
-  </button>
-  <button id="navBrands" onclick="setTab('brands')">
-    <span>🏷️</span><span>Brands</span>
-  </button>
-  <button id="navLog" onclick="setTab('log')">
-    <span>📋</span><span>Log</span>
-  </button>
+  <div class="nav-credit">Created by Abdul Asif P.V.</div>
+  <div class="nav-buttons">
+    <button id="navScan" class="active" onclick="setTab('scan')">
+      <span>📷</span><span>Scan</span>
+    </button>
+    <button id="navBrands" onclick="setTab('brands')">
+      <span>🏷️</span><span>Brands</span>
+    </button>
+    <button id="navLog" onclick="setTab('log')">
+      <span>📋</span><span>Log</span>
+    </button>
+  </div>
 </div>
 
 <script>
@@ -4692,40 +4716,69 @@ function fmtInt(v){ const n=parseFloat(v); if(isNaN(n)) return v; return Math.ro
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 const ALL_ROWS = parseData(RAW_DATA);
-const BARCODE_INDEX = new Map();
-ALL_ROWS.forEach(r=>{
-  if(r.Barcode){
-    if(!BARCODE_INDEX.has(r.Barcode)) BARCODE_INDEX.set(r.Barcode, []);
-    BARCODE_INDEX.get(r.Barcode).push(r);
-  }
-});
+let customProducts = [];   // user-added new products (from "Add as new product")
+let BARCODE_INDEX = new Map();
 
-let overrides = {};   // { barcode: newQty }
-let scanLog = [];     // [{ts,barcode,product,brand,desc,oldQty,newQty,mode}]
+function getAllRows(){ return ALL_ROWS.concat(customProducts); }
+
+function rebuildIndex(){
+  BARCODE_INDEX = new Map();
+  getAllRows().forEach(r=>{
+    if(r.Barcode){
+      if(!BARCODE_INDEX.has(r.Barcode)) BARCODE_INDEX.set(r.Barcode, []);
+      BARCODE_INDEX.get(r.Barcode).push(r);
+    }
+  });
+}
+rebuildIndex();
+
+let stockOverrides = {};  // { barcode: correctedStockQty } -- edited only from Brands tab
+let scanLog = [];         // [{id, ts, barcode, code, desc, brand, party, partyName, refQty, scannedQty, operator}]
 let storageReady = false;
 
 async function loadStorage(){
   try{
-    const o = await window.storage.get('qty-overrides', false);
-    if(o && o.value) overrides = JSON.parse(o.value);
-  }catch(e){}
+    const o = await window.storage.get('stock-overrides', false);
+    if(o && o.value) stockOverrides = JSON.parse(o.value);
+  }catch(e){
+    try{ const legacy = await window.storage.get('qty-overrides', false); if(legacy && legacy.value) stockOverrides = JSON.parse(legacy.value); }catch(e2){}
+  }
   try{
     const l = await window.storage.get('scan-log', false);
     if(l && l.value) scanLog = JSON.parse(l.value);
   }catch(e){}
+  try{
+    const cp = await window.storage.get('custom-products', false);
+    if(cp && cp.value){ customProducts = JSON.parse(cp.value); rebuildIndex(); }
+  }catch(e){}
+  try{
+    const op = await window.storage.get('operator-name', false);
+    if(op && op.value) state.operatorName = op.value;
+  }catch(e){}
   storageReady = true;
   updateHeaderSub();
 }
-async function saveOverrides(){
-  try{ await window.storage.set('qty-overrides', JSON.stringify(overrides), false); }catch(e){ showToast("Storage save പരാജയപ്പെട്ടു", true); }
+async function saveStockOverrides(){
+  try{ await window.storage.set('stock-overrides', JSON.stringify(stockOverrides), false); }catch(e){ showToast("Storage save failed", true); }
 }
 async function saveLog(){
   try{ await window.storage.set('scan-log', JSON.stringify(scanLog), false); }catch(e){}
 }
+async function saveCustomProducts(){
+  try{ await window.storage.set('custom-products', JSON.stringify(customProducts), false); }catch(e){}
+}
+async function saveOperatorName(){
+  try{ await window.storage.set('operator-name', state.operatorName||'', false); }catch(e){}
+}
 
 function effectiveQty(row){
-  if(row.Barcode && overrides.hasOwnProperty(row.Barcode)) return overrides[row.Barcode];
+  if(row.Barcode && stockOverrides.hasOwnProperty(row.Barcode)) return stockOverrides[row.Barcode];
   return parseFloat(row["Stock Qty"]) || 0;
+}
+function liveRefQtyForBarcode(barcode){
+  const m = BARCODE_INDEX.get(barcode);
+  if(!m || !m.length) return 0;
+  return effectiveQty(m[0]);
 }
 
 // ---------- Sound ----------
@@ -4744,8 +4797,10 @@ function beep(freq, dur, delay){
     osc.start(t0); osc.stop(t0+dur+0.02);
   }catch(e){}
 }
+// Success: pleasant two-tone rising beep
 function playSuccessSound(){ beep(1046,0.09,0); beep(1568,0.12,0.09); }
-function playErrorSound(){ beep(220,0.18,0); }
+// Not found: low harsh double buzz (clearly different from success)
+function playErrorSound(){ beep(220,0.16,0); beep(160,0.20,0.14); }
 
 // ---------- Toast ----------
 let toastTimer=null;
@@ -4761,17 +4816,26 @@ function showToast(msg, isErr){
 let state = {
   tab: 'scan',
   cameraOn: false,
+  torchOn: false,
   manualInput: '',
   matchedRow: null,
   multiMatches: null,
   notFoundCode: null,
-  qtyMode: 'add',
-  qtyValue: 1,
+  duplicateWarning: null,
+  scannedQty: 1,
+  operatorName: '',
   brandQuery: '',
   brandSort: 'count',
   selectedBrand: null,
   productQuery: '',
   expandedSL: null,
+  editingStockBarcode: null,
+  stockEditValue: 0,
+  addProductOpen: false,
+  addForm: { brand:'', description:'', code:'', barcode:'', party:'', partyName:'', stockQty:0 },
+  logQuery: '',
+  editingLogId: null,
+  editLogValue: 0,
 };
 
 let html5QrCode = null;
@@ -4779,7 +4843,8 @@ let html5QrCode = null;
 function setTab(tab){
   if(state.cameraOn) stopCamera();
   state.tab = tab;
-  state.matchedRow = null; state.multiMatches=null; state.notFoundCode=null; state.manualInput='';
+  state.matchedRow = null; state.multiMatches=null; state.notFoundCode=null; state.manualInput=''; state.duplicateWarning=null;
+  state.addProductOpen = false; state.editingStockBarcode = null; state.editingLogId = null;
   document.getElementById('navScan').className = tab==='scan'?'active':'';
   document.getElementById('navBrands').className = tab==='brands'?'active':'';
   document.getElementById('navLog').className = tab==='log'?'active':'';
@@ -4792,25 +4857,37 @@ function setTab(tab){
 function updateHeaderSub(){
   const sub = document.getElementById('headerSub');
   if(!storageReady){ sub.textContent = "Loading data..."; return; }
-  const brands = new Set(ALL_ROWS.map(r=>r.Brand||"OTHERS / UNBRANDED")).size;
-  if(state.tab==='scan') sub.textContent = ALL_ROWS.length + " products · " + brands + " brands · " + scanLog.length + " updates saved";
-  else if(state.tab==='brands') sub.textContent = brands + " brands · " + ALL_ROWS.length + " products";
-  else sub.textContent = scanLog.length + " quantity updates";
+  const brands = new Set(getAllRows().map(r=>r.Brand||"OTHERS / UNBRANDED")).size;
+  if(state.tab==='scan') sub.textContent = getAllRows().length + " products · " + brands + " brands · " + scanLog.length + " scans logged";
+  else if(state.tab==='brands') sub.textContent = brands + " brands · " + getAllRows().length + " products";
+  else sub.textContent = scanLog.length + " scan entries";
 }
 
 // ---------- Barcode lookup ----------
+function checkDuplicate(barcode){
+  const prev = scanLog.find(l=>l.barcode===barcode);
+  if(prev){
+    const d = new Date(prev.ts);
+    state.duplicateWarning = { ts: d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}), scannedQty: prev.scannedQty };
+  } else {
+    state.duplicateWarning = null;
+  }
+}
+
 function lookupBarcode(code){
   code = (code||"").trim();
   if(!code) return;
   const matches = BARCODE_INDEX.get(code);
   if(!matches || matches.length===0){
-    state.notFoundCode = code; state.matchedRow=null; state.multiMatches=null;
+    state.notFoundCode = code; state.matchedRow=null; state.multiMatches=null; state.duplicateWarning=null;
     playErrorSound();
   } else if(matches.length===1){
     state.matchedRow = matches[0]; state.notFoundCode=null; state.multiMatches=null;
-    state.qtyMode='add'; state.qtyValue=1;
+    state.scannedQty=1;
+    checkDuplicate(matches[0].Barcode);
+    playSuccessSound();
   } else {
-    state.multiMatches = matches; state.matchedRow=null; state.notFoundCode=null;
+    state.multiMatches = matches; state.matchedRow=null; state.notFoundCode=null; state.duplicateWarning=null;
   }
   render();
 }
@@ -4818,66 +4895,115 @@ function lookupBarcode(code){
 function pickMatch(idx){
   state.matchedRow = state.multiMatches[idx];
   state.multiMatches = null;
-  state.qtyMode='add'; state.qtyValue=1;
+  state.scannedQty=1;
+  checkDuplicate(state.matchedRow.Barcode);
+  playSuccessSound();
   render();
 }
 
-function adjustQty(delta){
-  state.qtyValue = Math.max(0, (parseInt(state.qtyValue)||0) + delta);
+function adjustScannedQty(delta){
+  state.scannedQty = Math.max(0, (parseInt(state.scannedQty)||0) + delta);
   render();
 }
-function setQtyValue(v){
-  state.qtyValue = Math.max(0, parseInt(v)||0);
+function setScannedQty(v){
+  state.scannedQty = Math.max(0, parseInt(v)||0);
 }
 
-async function saveQty(){
+async function saveScan(){
   const row = state.matchedRow;
   if(!row) return;
-  const oldQty = effectiveQty(row);
-  let newQty;
-  if(state.qtyMode==='add') newQty = oldQty + (parseInt(state.qtyValue)||0);
-  else newQty = parseInt(state.qtyValue)||0;
-  overrides[row.Barcode] = newQty;
+  const refQty = effectiveQty(row);
   scanLog.unshift({
+    id: 'L'+Date.now()+Math.floor(Math.random()*1000),
     ts: new Date().toISOString(),
-    barcode: row.Barcode, product: row.Product, brand: row.Brand||"OTHERS / UNBRANDED",
-    desc: row.Description, oldQty, newQty, mode: state.qtyMode
+    barcode: row.Barcode, code: row.Product, desc: row.Description,
+    brand: row.Brand||"OTHERS / UNBRANDED",
+    party: row.Party||'', partyName: row["Party Name"]||'',
+    refQty, scannedQty: (parseInt(state.scannedQty)||0),
+    operator: state.operatorName||''
   });
-  if(scanLog.length>1000) scanLog = scanLog.slice(0,1000);
-  await saveOverrides();
+  if(scanLog.length>2000) scanLog = scanLog.slice(0,2000);
   await saveLog();
-  playSuccessSound();
-  showToast("✓ Qty updated: " + oldQty + " → " + newQty);
-  state.matchedRow = null; state.qtyValue=1; state.qtyMode='add';
+  showToast("✓ Logged: " + esc(row.Description).slice(0,40) + " — Qty " + state.scannedQty);
+  state.matchedRow = null; state.scannedQty=1; state.duplicateWarning=null;
   updateHeaderSub();
   render();
   setTimeout(()=>{ const inp=document.getElementById('manualBarcodeInput'); if(inp) inp.focus(); }, 150);
 }
 
 function cancelMatch(){
-  state.matchedRow=null; state.multiMatches=null; state.notFoundCode=null;
+  state.matchedRow=null; state.multiMatches=null; state.notFoundCode=null; state.duplicateWarning=null;
+  render();
+}
+
+// ---------- Add new product (from not-found barcode) ----------
+function openAddProduct(prefillBarcode){
+  state.addProductOpen = true;
+  state.addForm = { brand:'', description:'', code:'', barcode: prefillBarcode||'', party:'', partyName:'', stockQty:0 };
+  render();
+}
+function closeAddProduct(){ state.addProductOpen = false; render(); }
+function setAddField(field, val){ state.addForm[field] = val; }
+
+async function saveAddProduct(){
+  const f = state.addForm;
+  if(!f.barcode || !f.barcode.trim()){ showToast("Barcode is required", true); return; }
+  if(!f.description || !f.description.trim()){ showToast("Product description is required", true); return; }
+  if(!f.brand || !f.brand.trim()){ showToast("Brand is required", true); return; }
+  const today = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
+  const newRow = {
+    SL: 'CUSTOM-' + Date.now(),
+    Barcode: f.barcode.trim(),
+    Product: f.code.trim() || ('NEW-' + Date.now().toString().slice(-6)),
+    SU: '',
+    Description: f.description.trim(),
+    Brand: f.brand.trim(),
+    "Stock Qty": String(parseFloat(f.stockQty)||0),
+    "Stock Value": "0",
+    WAC: "0",
+    LLC: "0",
+    Party: f.party.trim(),
+    "Party Name": f.partyName.trim(),
+    "GRN Number": '',
+    "GRN Date": today,
+    "Sale Date": '',
+    "Age Days": "0"
+  };
+  customProducts.push(newRow);
+  await saveCustomProducts();
+  rebuildIndex();
+  showToast("✓ New product added to Brands: " + newRow.Description.slice(0,40));
+  state.addProductOpen = false;
+  state.notFoundCode = null;
+  // auto-select the freshly added product so it can be scanned/logged right away
+  state.matchedRow = newRow; state.scannedQty = 1;
+  updateHeaderSub();
   render();
 }
 
 // ---------- Camera ----------
 async function startCamera(){
-  const statusEl = () => document.getElementById('camStatus');
   try{
     if(typeof Html5Qrcode === 'undefined'){
-      showToast("Camera library ലോഡ് ആയില്ല", true);
+      showToast("Camera library did not load", true);
       return;
     }
     state.cameraOn = true;
+    state.torchOn = false;
     render();
-    html5QrCode = new Html5Qrcode("reader");
+    html5QrCode = new Html5Qrcode("reader", { verbose:false });
     const config = {
-      fps: 10,
-      qrbox: { width: 260, height: 140 },
+      fps: 12,
+      qrbox: { width: 280, height: 150 },
+      aspectRatio: 1.5,
+      disableFlip: false,
+      // Barcode formats ONLY -- QR codes are intentionally excluded
       formatsToSupport: [
         Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
         Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
         Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
-        Html5QrcodeSupportedFormats.QR_CODE
+        Html5QrcodeSupportedFormats.CODE_93, Html5QrcodeSupportedFormats.CODABAR,
+        Html5QrcodeSupportedFormats.ITF
       ]
     };
     await html5QrCode.start(
@@ -4886,28 +5012,48 @@ async function startCamera(){
       (decodedText)=>{
         lookupBarcode(decodedText);
       },
-      ()=>{}
+      ()=>{ /* ignore per-frame "not found" scan noise */ }
     );
   }catch(err){
     state.cameraOn = false;
     render();
-    showToast("ക്യാമറ ലഭ്യമല്ല - manually type ചെയ്യൂ", true);
+    showToast("Camera unavailable — type the barcode manually", true);
   }
 }
 async function stopCamera(){
   try{ if(html5QrCode){ await html5QrCode.stop(); html5QrCode.clear(); } }catch(e){}
   state.cameraOn = false;
+  state.torchOn = false;
   html5QrCode = null;
 }
 async function toggleCamera(){
   if(state.cameraOn) await stopCamera(); else await startCamera();
   render();
 }
+function torchSupported(){
+  try{
+    if(!html5QrCode) return false;
+    const caps = html5QrCode.getRunningTrackCapabilities();
+    return !!(caps && caps.torch);
+  }catch(e){ return false; }
+}
+async function toggleTorch(){
+  if(!html5QrCode) return;
+  if(!torchSupported()){ showToast("Torch not supported on this device", true); return; }
+  try{
+    state.torchOn = !state.torchOn;
+    await html5QrCode.applyVideoConstraints({ advanced: [{ torch: state.torchOn }] });
+    render();
+  }catch(e){
+    state.torchOn = !state.torchOn;
+    showToast("Could not toggle torch", true);
+  }
+}
 
 // ---------- Brand explorer ----------
 function buildBrandIndex(){
   const map = new Map();
-  ALL_ROWS.forEach(r=>{
+  getAllRows().forEach(r=>{
     const b = (r.Brand && r.Brand.trim()) ? r.Brand.trim() : "OTHERS / UNBRANDED";
     if(!map.has(b)) map.set(b, []);
     map.get(b).push(r);
@@ -4920,41 +5066,142 @@ function buildBrandIndex(){
 }
 
 function setBrandSort(mode){ state.brandSort = mode; render(); }
-function openBrand(name){ state.selectedBrand = name; state.productQuery=''; state.expandedSL=null; render(); }
+function openBrand(name){ state.selectedBrand = name; state.productQuery=''; state.expandedSL=null; state.editingStockBarcode=null; render(); }
 function closeBrand(){ state.selectedBrand=null; render(); }
-function toggleExpand(sl){ state.expandedSL = state.expandedSL===sl ? null : sl; render(); }
+function toggleExpand(sl){ state.expandedSL = state.expandedSL===sl ? null : sl; state.editingStockBarcode=null; render(); }
 
-// ---------- Excel export ----------
+function startEditStock(barcode, currentQty){
+  state.editingStockBarcode = barcode;
+  state.stockEditValue = currentQty;
+  render();
+}
+function setStockEditValue(v){ state.stockEditValue = v; }
+function cancelEditStock(){ state.editingStockBarcode = null; render(); }
+async function saveEditStock(barcode){
+  const val = parseFloat(state.stockEditValue);
+  if(isNaN(val) || val<0){ showToast("Enter a valid quantity", true); return; }
+  stockOverrides[barcode] = val;
+  await saveStockOverrides();
+  state.editingStockBarcode = null;
+  showToast("✓ Stock quantity updated");
+  render();
+}
+
+// ---------- Excel export (Scan Log only, fixed columns) ----------
 function exportExcel(){
-  const wsData = [["SL","Barcode","Product","SU","Description","Brand","Stock Qty (updated)","Stock Value (updated)","WAC","LLC","Party","Party Name","GRN Number","GRN Date","Sale Date","Age Days"]];
-  ALL_ROWS.forEach(r=>{
-    const q = effectiveQty(r);
-    const val = (q * (parseFloat(r.WAC)||0));
-    wsData.push([r.SL,r.Barcode,r.Product,r.SU,r.Description,r.Brand||"OTHERS / UNBRANDED",q,val.toFixed(3),r.WAC,r.LLC,r.Party,r["Party Name"],r["GRN Number"],r["GRN Date"],r["Sale Date"],r["Age Days"]]);
+  if(scanLog.length===0){ showToast("No scan log entries to export", true); return; }
+  const wsData = [["S.N","Code","Barcode","Product","Quantity","Scanned Quantity","Party Name"]];
+  // Export oldest-first for a natural running log
+  const ordered = scanLog.slice().reverse();
+  ordered.forEach((l, i)=>{
+    const refQty = liveRefQtyForBarcode(l.barcode);
+    wsData.push([i+1, l.code, l.barcode, l.desc, refQty, l.scannedQty, l.partyName]);
   });
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-  const logData = [["Timestamp","Barcode","Product","Brand","Description","Old Qty","New Qty","Mode"]];
-  scanLog.forEach(l=>{
-    logData.push([l.ts, l.barcode, l.product, l.brand, l.desc, l.oldQty, l.newQty, l.mode]);
-  });
-  const wsLog = XLSX.utils.aoa_to_sheet(logData);
-
+  ws['!cols'] = [{wch:6},{wch:14},{wch:16},{wch:42},{wch:10},{wch:14},{wch:26}];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Inventory");
-  XLSX.utils.book_append_sheet(wb, wsLog, "Scan Log");
+  XLSX.utils.book_append_sheet(wb, ws, "Scan Log");
   const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
-  XLSX.writeFile(wb, "ELE_Product_Stock_" + stamp + ".xlsx");
-  showToast("Excel ഫയൽ ഡൗൺലോഡ് ആയി ✓");
+  XLSX.writeFile(wb, "Scan_Log_" + stamp + ".xlsx");
+  showToast("✓ Excel file downloaded");
 }
 
 async function clearLog(){
-  if(!confirm("Log മാത്രം ക്ലിയർ ചെയ്യണോ? (Quantity data നിലനിൽക്കും)")) return;
+  if(!confirm("Clear the entire scan log? This cannot be undone.")) return;
   scanLog = [];
   await saveLog();
   updateHeaderSub();
   render();
 }
+
+// ---------- Operator name ----------
+function setOperatorNameInput(v){ state.operatorName = v; }
+async function commitOperatorName(){ await saveOperatorName(); showToast("✓ Operator name saved"); }
+
+// ---------- Full data Backup & Restore ----------
+function exportBackup(){
+  const backup = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    operatorName: state.operatorName||'',
+    stockOverrides, scanLog, customProducts
+  };
+  try{
+    const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'PDT_Backup_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 3000);
+    showToast("✓ Backup file downloaded");
+  }catch(e){
+    showToast("Backup failed", true);
+  }
+}
+function triggerRestore(){
+  const inp = document.getElementById('restoreFileInput');
+  if(inp) inp.click();
+}
+async function handleRestoreFile(fileInput){
+  const file = fileInput.files && fileInput.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if(!data || (!data.scanLog && !data.stockOverrides && !data.customProducts)){
+      showToast("This file doesn't look like a valid backup", true);
+      fileInput.value = '';
+      return;
+    }
+    if(!confirm("Restore this backup? Current data on this device will be replaced.")){
+      fileInput.value = '';
+      return;
+    }
+    stockOverrides = data.stockOverrides || {};
+    scanLog = data.scanLog || [];
+    customProducts = data.customProducts || [];
+    state.operatorName = data.operatorName || state.operatorName || '';
+    rebuildIndex();
+    await saveStockOverrides();
+    await saveLog();
+    await saveCustomProducts();
+    await saveOperatorName();
+    updateHeaderSub();
+    showToast("✓ Backup restored");
+    render();
+  }catch(e){
+    showToast("Could not read backup file", true);
+  }
+  fileInput.value = '';
+}
+
+async function deleteLogEntry(id){
+  if(!confirm("Delete this log entry?")) return;
+  scanLog = scanLog.filter(l=>l.id!==id);
+  await saveLog();
+  updateHeaderSub();
+  render();
+}
+
+function startEditLog(id, currentVal){
+  state.editingLogId = id;
+  state.editLogValue = currentVal;
+  render();
+}
+function setEditLogValue(v){ state.editLogValue = v; }
+function cancelEditLog(){ state.editingLogId = null; render(); }
+async function saveEditLog(id){
+  const val = parseInt(state.editLogValue);
+  if(isNaN(val) || val<0){ showToast("Enter a valid quantity", true); return; }
+  const entry = scanLog.find(l=>l.id===id);
+  if(entry) entry.scannedQty = val;
+  await saveLog();
+  state.editingLogId = null;
+  showToast("✓ Log quantity updated");
+  render();
+}
+function setLogQuery(v){ state.logQuery = v; render(); focusPreserve('input[placeholder*="Search log"]'); }
 
 // ---------- Render ----------
 function render(){
@@ -4967,24 +5214,55 @@ function render(){
 
 function renderScan(){
   let html = '';
+  html += '<div class="operator-row">';
+  html += '<span class="operator-label">👤 Operator:</span>';
+  html += '<input type="text" id="operatorInput" value="' + esc(state.operatorName) + '" oninput="setOperatorNameInput(this.value)" onblur="commitOperatorName()" placeholder="Your name" />';
+  html += '</div>';
   html += '<div class="btn-row" style="margin-bottom:10px;">';
-  html += '<button class="btn ' + (state.cameraOn?'btn-accent':'') + '" onclick="toggleCamera()">' + (state.cameraOn?'⏹ Camera നിർത്തുക':'📷 Camera തുടങ്ങുക') + '</button>';
+  html += '<button class="btn ' + (state.cameraOn?'btn-accent':'') + '" onclick="toggleCamera()">' + (state.cameraOn?'⏹ Stop Camera':'📷 Start Camera') + '</button>';
+  if(state.cameraOn){
+    html += '<button class="btn ' + (state.torchOn?'btn-accent':'') + '" onclick="toggleTorch()" style="flex:0 0 56px;">🔦</button>';
+  }
   html += '</div>';
   if(state.cameraOn){
-    html += '<div id="reader" style="width:100%;"></div>';
-    html += '<div class="cam-status">ബാർകോഡ് ക്യാമറയ്ക്ക് നേരെ പിടിക്കൂ</div>';
+    html += '<div id="reader" style="width:100%;min-height:220px;"></div>';
+    html += '<div class="cam-status">Point the camera at a BARCODE (QR codes are ignored)</div>';
   }
-  html += '<div class="divider-label">അല്ലെങ്കിൽ manually type ചെയ്യൂ</div>';
+  html += '<div class="divider-label">Or type the barcode manually</div>';
   html += '<div class="search-wrap">';
-  html += '<input type="text" id="manualBarcodeInput" placeholder="Barcode ടൈപ്പ് ചെയ്ത് Enter അമർത്തൂ" value="' + esc(state.manualInput) + '" autocomplete="off" inputmode="numeric" />';
+  html += '<input type="text" id="manualBarcodeInput" placeholder="Type barcode and press Enter" value="' + esc(state.manualInput) + '" autocomplete="off" inputmode="numeric" />';
   html += '</div>';
 
   if(state.notFoundCode){
-    html += '<div class="notfound">❌ Barcode <b>' + esc(state.notFoundCode) + '</b> ഡാറ്റയിൽ കണ്ടെത്തിയില്ല.</div>';
+    html += '<div class="notfound">❌ Barcode <b>' + esc(state.notFoundCode) + '</b> not found in the system.</div>';
+    html += '<div class="btn-row" style="margin-bottom:14px;">';
+    html += '<button class="btn btn-accent" onclick="openAddProduct(\'' + esc(state.notFoundCode).replace(/'/g,"\\'") + '\')">+ Add as New Product</button>';
+    html += '</div>';
+  }
+
+  if(state.duplicateWarning){
+    html += '<div class="dupwarn">⚠️ Already scanned on ' + esc(state.duplicateWarning.ts) + ' — Qty logged then: ' + fmtInt(state.duplicateWarning.scannedQty) + '. You can still save again below if needed.</div>';
+  }
+
+  if(state.addProductOpen){
+    const f = state.addForm;
+    html += '<div class="form-card">';
+    html += '<div class="product-title" style="margin-bottom:8px;">Add New Product</div>';
+    html += '<div class="field-label">Barcode *</div><input type="text" value="' + esc(f.barcode) + '" oninput="setAddField(\'barcode\',this.value)" placeholder="Barcode" />';
+    html += '<div class="field-label">Product Description *</div><input type="text" value="' + esc(f.description) + '" oninput="setAddField(\'description\',this.value)" placeholder="Product name / description" />';
+    html += '<div class="field-label">Brand *</div><input type="text" value="' + esc(f.brand) + '" oninput="setAddField(\'brand\',this.value)" placeholder="Brand" />';
+    html += '<div class="field-label">Product Code</div><input type="text" value="' + esc(f.code) + '" oninput="setAddField(\'code\',this.value)" placeholder="Internal code (optional)" />';
+    html += '<div class="field-label">Opening Stock Qty</div><input type="number" value="' + esc(f.stockQty) + '" oninput="setAddField(\'stockQty\',this.value)" placeholder="0" />';
+    html += '<div class="field-label">Party Code</div><input type="text" value="' + esc(f.party) + '" oninput="setAddField(\'party\',this.value)" placeholder="Party code (optional)" />';
+    html += '<div class="field-label">Party Name</div><input type="text" value="' + esc(f.partyName) + '" oninput="setAddField(\'partyName\',this.value)" placeholder="Supplier / party name" />';
+    html += '<div class="btn-row" style="margin-top:14px;">';
+    html += '<button class="btn btn-ghost" onclick="closeAddProduct()">Cancel</button>';
+    html += '<button class="btn btn-accent" onclick="saveAddProduct()">✓ Save Product</button>';
+    html += '</div></div>';
   }
 
   if(state.multiMatches){
-    html += '<div class="card"><div class="product-title">ഒന്നിലധികം products കിട്ടി — തിരഞ്ഞെടുക്കൂ:</div>';
+    html += '<div class="card"><div class="product-title">Multiple products found for this barcode — choose one:</div>';
     state.multiMatches.forEach((r,idx)=>{
       html += '<div class="brand-card" onclick="pickMatch(' + idx + ')"><div style="flex:1;"><div class="brand-name">' + esc(r.Description) + '</div><div class="brand-meta">Code ' + esc(r.Product) + '</div></div></div>';
     });
@@ -4999,41 +5277,35 @@ function renderScan(){
     html += '<div class="chip-row">';
     html += '<span class="chip">Brand: ' + esc(r.Brand||"OTHERS / UNBRANDED") + '</span>';
     html += '<span class="chip">Code ' + esc(r.Product) + '</span>';
-    html += '<span class="chip-accent">Current Qty: ' + fmtInt(qty) + '</span>';
+    html += '<span class="chip-accent">System Stock (ref): ' + fmtInt(qty) + '</span>';
     html += '</div>';
     html += '<div class="detail-grid">';
     html += detailRow('Barcode', r.Barcode||'-');
     html += detailRow('WAC', fmtMoney(r.WAC));
-    html += detailRow('LLC', fmtMoney(r.LLC));
     html += detailRow('Party', r.Party||'-');
     html += detailRow('Party Name', r["Party Name"]||'-', true);
     html += detailRow('GRN Number', r["GRN Number"]||'-');
     html += detailRow('GRN Date', r["GRN Date"]||'-');
-    html += detailRow('Sale Date', r["Sale Date"]||'-');
-    html += detailRow('Age Days', r["Age Days"]);
     html += '</div>';
 
-    html += '<div class="mode-toggle" style="margin-top:14px;">';
-    html += '<button class="' + (state.qtyMode==='add'?'active':'') + '" onclick="setQtyMode(\'add\')">+ Add ചെയ്യുക</button>';
-    html += '<button class="' + (state.qtyMode==='set'?'active':'') + '" onclick="setQtyMode(\'set\')">= Set ചെയ്യുക</button>';
-    html += '</div>';
-    html += '<div class="qty-box">';
+    html += '<div class="field-label" style="margin-top:14px;">Scanned Quantity (this count)</div>';
+    html += '<div class="qty-box" style="margin-top:6px;">';
     html += '<div class="qty-stepper">';
-    html += '<button onclick="adjustQty(-1)">−</button>';
-    html += '<input type="number" id="qtyInput" value="' + state.qtyValue + '" oninput="setQtyValue(this.value)" />';
-    html += '<button onclick="adjustQty(1)">+</button>';
+    html += '<button onclick="adjustScannedQty(-1)">−</button>';
+    html += '<input type="number" id="qtyInput" value="' + state.scannedQty + '" oninput="setScannedQty(this.value)" />';
+    html += '<button onclick="adjustScannedQty(1)">+</button>';
     html += '</div>';
-    html += '<div style="font-size:12px;color:var(--muted);flex:1;">' + (state.qtyMode==='add' ? ('New qty: ' + fmtInt(qty + (parseInt(state.qtyValue)||0))) : ('New qty: ' + fmtInt(state.qtyValue))) + '</div>';
+    html += '<div class="ref-qty-note" style="flex:1;">This only adds a row to the Log. System Stock Qty in Brands is not changed by scanning.</div>';
     html += '</div>';
     html += '<div class="btn-row">';
     html += '<button class="btn btn-ghost" onclick="cancelMatch()">Cancel</button>';
-    html += '<button class="btn btn-accent" onclick="saveQty()">✓ Save Quantity</button>';
+    html += '<button class="btn btn-accent" onclick="saveScan()">✓ Save to Log</button>';
     html += '</div>';
     html += '</div>';
   }
 
-  if(!state.matchedRow && !state.multiMatches && !state.notFoundCode){
-    html += '<div class="empty">ബാർകോഡ് സ്കാൻ ചെയ്യൂ അല്ലെങ്കിൽ ടൈപ്പ് ചെയ്ത് Enter അമർത്തൂ.<br/>External scanner gun ഉപയോഗിക്കുന്നവർക്ക് ഈ input box focus ചെയ്ത് സ്കാൻ ചെയ്‌താൽ മതി.</div>';
+  if(!state.matchedRow && !state.multiMatches && !state.notFoundCode && !state.addProductOpen){
+    html += '<div class="empty">Scan a barcode or type it and press Enter.<br/>Using an external scanner gun? Just focus this input box and scan.</div>';
   }
   return html;
 }
@@ -5041,8 +5313,6 @@ function renderScan(){
 function detailRow(label, value, full){
   return '<div style="' + (full?'grid-column:1/-1;':'') + '"><div class="detail-label">' + esc(label) + '</div><div class="detail-value">' + esc(value) + '</div></div>';
 }
-
-function setQtyMode(m){ state.qtyMode = m; render(); }
 
 function renderBrands(){
   if(state.selectedBrand){
@@ -5052,23 +5322,24 @@ function renderBrands(){
     let items = bd.items;
     if(state.productQuery.trim()){
       const q = state.productQuery.trim().toLowerCase();
-      items = items.filter(r => r.Description.toLowerCase().includes(q) || r.Product.toLowerCase().includes(q) || r.Barcode.toLowerCase().includes(q));
+      items = items.filter(r => r.Description.toLowerCase().includes(q) || r.Product.toLowerCase().includes(q) || (r.Barcode||'').toLowerCase().includes(q));
     }
     let html = '<div class="back-row" style="margin-bottom:12px;">';
     html += '<button class="back-btn" onclick="closeBrand()">←</button>';
     html += '<div><div style="font-weight:700;font-size:15px;">' + esc(bd.brand) + '</div>';
     html += '<div style="font-size:11.5px;color:var(--muted);">' + bd.count + ' products · qty ' + fmtInt(bd.totalQty) + ' · value ' + fmtMoney(bd.totalValue) + '</div></div></div>';
-    html += '<div class="search-wrap"><input type="text" value="' + esc(state.productQuery) + '" oninput="setProductQuery(this.value)" placeholder="Product / barcode തിരയൂ..." /></div>';
+    html += '<div class="search-wrap"><input type="text" value="' + esc(state.productQuery) + '" oninput="setProductQuery(this.value)" placeholder="Search product / barcode..." /></div>';
     if(items.length===0) html += '<div class="empty">No matching products.</div>';
     items.forEach(r=>{
       const isOpen = state.expandedSL === r.SL;
       const qty = effectiveQty(r);
+      const isEditing = state.editingStockBarcode === r.Barcode;
       html += '<div class="card" style="padding:0;">';
       html += '<div style="padding:12px 14px;cursor:pointer;" onclick="toggleExpand(\'' + r.SL + '\')">';
       html += '<div class="product-title" style="margin-bottom:4px;">' + esc(r.Description) + '</div>';
       html += '<div class="chip-row" style="margin-bottom:0;">';
       html += '<span class="chip">Code ' + esc(r.Product) + '</span>';
-      html += '<span class="chip-accent">Qty ' + fmtInt(qty) + '</span>';
+      html += '<span class="chip-accent">Stock Qty ' + fmtInt(qty) + '</span>';
       html += '</div></div>';
       if(isOpen){
         html += '<div class="detail-grid" style="padding:0 14px 14px;">';
@@ -5081,6 +5352,18 @@ function renderBrands(){
         html += detailRow('GRN Date', r["GRN Date"]||'-');
         html += detailRow('Sale Date', r["Sale Date"]||'-');
         html += detailRow('Age Days', r["Age Days"]);
+        html += '</div>';
+        html += '<div style="padding:0 14px 14px;">';
+        if(isEditing){
+          html += '<div class="field-label">Edit Stock Quantity</div>';
+          html += '<div class="stock-edit-row">';
+          html += '<input type="number" value="' + state.stockEditValue + '" oninput="setStockEditValue(this.value)" />';
+          html += '<button class="btn btn-ghost" onclick="cancelEditStock()">Cancel</button>';
+          html += '<button class="btn btn-accent" onclick="saveEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\')">Save</button>';
+          html += '</div>';
+        } else {
+          html += '<button class="inline-link-btn" onclick="startEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\',' + qty + ')">✎ Edit Stock Quantity</button>';
+        }
         html += '</div>';
       }
       html += '</div>';
@@ -5096,7 +5379,7 @@ function renderBrands(){
   if(state.brandSort==='count') idx.sort((a,b)=>b.count-a.count);
   else idx.sort((a,b)=>a.brand.localeCompare(b.brand));
 
-  let html = '<div class="search-wrap"><input type="text" value="' + esc(state.brandQuery) + '" oninput="setBrandQuery(this.value)" placeholder="Brand name തിരയൂ..." /></div>';
+  let html = '<div class="search-wrap"><input type="text" value="' + esc(state.brandQuery) + '" oninput="setBrandQuery(this.value)" placeholder="Search brand name..." /></div>';
   html += '<div class="sort-row">';
   html += '<button class="sort-btn ' + (state.brandSort==='count'?'active':'') + '" onclick="setBrandSort(\'count\')">Most stocked</button>';
   html += '<button class="sort-btn ' + (state.brandSort==='az'?'active':'') + '" onclick="setBrandSort(\'az\')">A–Z</button>';
@@ -5111,8 +5394,8 @@ function renderBrands(){
   return html;
 }
 
-function setBrandQuery(v){ state.brandQuery=v; render(); focusPreserve('input[placeholder*="Brand name"]'); }
-function setProductQuery(v){ state.productQuery=v; render(); focusPreserve('input[placeholder*="Product"]'); }
+function setBrandQuery(v){ state.brandQuery=v; render(); focusPreserve('input[placeholder*="Search brand name"]'); }
+function setProductQuery(v){ state.productQuery=v; render(); focusPreserve('input[placeholder*="Search product"]'); }
 
 function focusPreserve(sel){
   const el = document.querySelector(sel);
@@ -5121,21 +5404,46 @@ function focusPreserve(sel){
 
 function renderLog(){
   let html = '<div class="btn-row" style="margin-bottom:12px;">';
-  html += '<button class="btn btn-accent" onclick="exportExcel()">⬇ Excel ആയി Save ചെയ്യൂ</button>';
+  html += '<button class="btn btn-accent" onclick="exportExcel()">⬇ Export as Excel</button>';
   html += '</div>';
+  html += '<div class="btn-row" style="margin-bottom:8px;">';
+  html += '<button class="btn" onclick="exportBackup()">💾 Backup All Data</button>';
+  html += '<button class="btn" onclick="triggerRestore()">📂 Restore Backup</button>';
+  html += '</div>';
+  html += '<div class="backup-note">Backup saves everything on this device (stock corrections, scan log, added products) as one file — useful before switching phones or clearing the app. Restoring will replace current data with the backup file\'s data.</div>';
   html += '<div class="btn-row" style="margin-bottom:14px;">';
-  html += '<button class="btn btn-ghost" onclick="clearLog()">Log ക്ലിയർ ചെയ്യൂ</button>';
+  html += '<button class="btn btn-ghost" onclick="clearLog()">Clear Log</button>';
   html += '</div>';
   if(scanLog.length===0){
-    html += '<div class="empty">ഇതുവരെ quantity updates ഒന്നും ഇല്ല.<br/>Scan ചെയ്ത് save ചെയ്‌താൽ ഇവിടെ history കാണാം.</div>';
+    html += '<div class="empty">No scan log entries yet.<br/>Scan an item and save it to see history here.</div>';
     return html;
   }
-  scanLog.forEach(l=>{
+  html += '<div class="search-row-log"><input type="text" value="' + esc(state.logQuery) + '" oninput="setLogQuery(this.value)" placeholder="Search log (product / barcode / party)..." /></div>';
+  let logs = scanLog;
+  if(state.logQuery.trim()){
+    const q = state.logQuery.trim().toLowerCase();
+    logs = logs.filter(l => (l.desc||'').toLowerCase().includes(q) || (l.barcode||'').toLowerCase().includes(q) || (l.partyName||'').toLowerCase().includes(q) || (l.code||'').toLowerCase().includes(q));
+  }
+  if(logs.length===0) html += '<div class="empty">No matching log entries.</div>';
+  logs.forEach(l=>{
     const d = new Date(l.ts);
-    const dstr = d.toLocaleDateString('en-IN') + ' ' + d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    const dstr = d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    const isEditing = state.editingLogId === l.id;
     html += '<div class="log-item">';
-    html += '<div class="log-top"><span>' + esc(l.desc) + '</span><span class="log-qty">' + l.oldQty + ' → ' + l.newQty + '</span></div>';
-    html += '<div class="log-meta">' + esc(l.brand) + ' · ' + esc(l.barcode||'-') + ' · ' + dstr + ' · ' + (l.mode==='add'?'Added':'Set') + '</div>';
+    html += '<div class="log-top"><span>' + esc(l.desc) + '</span><span class="log-qty">Ref ' + l.refQty + ' · Scanned ' + l.scannedQty + '</span></div>';
+    html += '<div class="log-meta">' + esc(l.brand) + ' · ' + esc(l.barcode||'-') + ' · ' + esc(l.partyName||'-') + ' · ' + dstr + (l.operator ? ' · 👤 ' + esc(l.operator) : '') + '</div>';
+    if(isEditing){
+      html += '<div class="stock-edit-row">';
+      html += '<input type="number" value="' + state.editLogValue + '" oninput="setEditLogValue(this.value)" />';
+      html += '<button class="btn btn-ghost" onclick="cancelEditLog()">Cancel</button>';
+      html += '<button class="btn btn-accent" onclick="saveEditLog(\'' + l.id + '\')">Save</button>';
+      html += '</div>';
+    } else {
+      html += '<div class="log-actions">';
+      html += '<button class="btn btn-ghost" onclick="startEditLog(\'' + l.id + '\',' + l.scannedQty + ')">✎ Edit Qty</button>';
+      html += '<button class="btn btn-ghost" onclick="deleteLogEntry(\'' + l.id + '\')">🗑 Delete</button>';
+      html += '</div>';
+    }
     html += '</div>';
   });
   return html;
