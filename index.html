@@ -14,6 +14,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -117,6 +118,17 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .operator-row input{flex:1;padding:8px 10px;font-size:13px;}
 .dupwarn{background:rgba(242,183,5,0.12);border:1px solid rgba(242,183,5,0.35);color:#F2D27A;border-radius:10px;padding:11px 12px;font-size:12.5px;margin-bottom:12px;}
 .backup-note{font-size:11px;color:var(--dim);margin:2px 0 14px;line-height:1.5;}
+.chip-clickable{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;color:var(--accent);background:var(--accent-dim);}
+.detail-value-clickable{cursor:pointer;color:var(--accent);text-decoration:underline;text-decoration-style:dotted;}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.show{display:flex;}
+.modal-box{background:#fff;border-radius:14px;padding:20px 18px;max-width:360px;width:100%;position:relative;text-align:center;}
+.modal-close{position:absolute;top:8px;right:10px;font-size:18px;color:#333;cursor:pointer;font-weight:700;padding:4px 8px;}
+.barcode-modal-code{font-family:'IBM Plex Mono',monospace;color:#111;font-size:14px;font-weight:600;margin-top:6px;}
+#barcodeSvg{max-width:100%;}
+.device-actions{display:flex;gap:6px;margin-bottom:8px;}
+.device-actions .sort-btn{flex:1;text-align:center;}
+.device-chip{font-family:'IBM Plex Mono',monospace;}
 </style>
 </head>
 <body>
@@ -130,6 +142,12 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
   <div class="section" id="content"></div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal-overlay" id="barcodeModal">
+  <div class="modal-box">
+    <div class="modal-close" onclick="closeBarcodeModal()">✕</div>
+    <div id="barcodeModalContent"></div>
+  </div>
+</div>
 <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="handleRestoreFile(this)" />
 <input type="file" id="importExcelInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportExcel(this)" />
 <div class="bottom-nav">
@@ -4871,11 +4889,28 @@ function showToast(msg, isErr){
   toastTimer = setTimeout(()=>{ t.className="toast"; }, 2200);
 }
 
+// ---------- Device identity (per-device, kept only in localStorage, never synced) ----------
+function getOrCreateDeviceId(){
+  try{
+    let id = localStorage.getItem('device-id');
+    if(!id){
+      id = 'DEV-' + Math.random().toString(36).slice(2,6).toUpperCase() + '-' + Date.now().toString().slice(-5);
+      localStorage.setItem('device-id', id);
+    }
+    return id;
+  }catch(e){ return 'DEV-UNKNOWN'; }
+}
+function getStoredDeviceName(){
+  try{ return localStorage.getItem('device-name') || ''; }catch(e){ return ''; }
+}
+
 // ---------- State ----------
 let state = {
   tab: 'scan',
   cameraOn: false,
   torchOn: false,
+  camStatusMsg: null,
+  camError: null,
   manualInput: '',
   matchedRow: null,
   multiMatches: null,
@@ -4883,6 +4918,8 @@ let state = {
   duplicateWarning: null,
   scannedQty: 1,
   operatorName: '',
+  deviceId: getOrCreateDeviceId(),
+  deviceName: getStoredDeviceName(),
   brandQuery: '',
   brandSort: 'count',
   selectedBrand: null,
@@ -4895,6 +4932,8 @@ let state = {
   logQuery: '',
   editingLogId: null,
   editLogValue: 0,
+  lastAction: null,        // tracks the most recent scan-save, for "Undo Last Save"
+  logDeviceFilter: 'mine', // 'mine' | 'all'
 };
 
 let html5QrCode = null;
@@ -4930,7 +4969,8 @@ function updateHeaderSub(){
 
 // ---------- Barcode lookup ----------
 function checkDuplicate(barcode){
-  const prev = scanLog.find(l=>l.barcode===barcode);
+  // Only warn about a duplicate scan on THIS device -- other devices keep separate lists.
+  const prev = scanLog.find(l=>l.barcode===barcode && l.deviceId===state.deviceId);
   if(prev){
     const d = new Date(prev.ts);
     state.duplicateWarning = { ts: d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}), scannedQty: prev.scannedQty };
@@ -4970,6 +5010,15 @@ function adjustScannedQty(delta){
   state.scannedQty = Math.max(0, (parseInt(state.scannedQty)||0) + delta);
   render();
 }
+// Called from native Android code (MainActivity) when the hardware volume
+// buttons are pressed -- see README_APK_BUILD.md for the native snippet.
+// Regular web browsers cannot intercept volume keys; this only works once
+// the app is packaged as an Android APK via Capacitor.
+window.volumeKeyPressed = function(direction){
+  if(state.tab==='scan' && state.matchedRow){
+    adjustScannedQty(direction==='up' ? 1 : -1);
+  }
+};
 function setScannedQty(v){
   state.scannedQty = Math.max(0, parseInt(v)||0);
 }
@@ -4978,22 +5027,62 @@ async function saveScan(){
   const row = state.matchedRow;
   if(!row) return;
   const refQty = effectiveQty(row);
-  scanLog.unshift({
-    id: 'L'+Date.now()+Math.floor(Math.random()*1000),
-    ts: new Date().toISOString(),
-    barcode: row.Barcode, code: row.Product, desc: row.Description,
-    brand: row.Brand||"OTHERS / UNBRANDED",
-    party: row.Party||'', partyName: row["Party Name"]||'',
-    refQty, scannedQty: (parseInt(state.scannedQty)||0),
-    operator: state.operatorName||''
-  });
-  if(scanLog.length>2000) scanLog = scanLog.slice(0,2000);
-  await saveLog();
-  showToast("✓ Logged: " + esc(row.Description).slice(0,40) + " — Qty " + state.scannedQty);
+  const addQty = parseInt(state.scannedQty)||0;
+  // Scans only merge with an earlier entry from the SAME device -- each device keeps its own list.
+  const existing = scanLog.find(l=>l.barcode===row.Barcode && l.deviceId===state.deviceId);
+  if(existing){
+    existing.scannedQty = (parseInt(existing.scannedQty)||0) + addQty;
+    existing.refQty = refQty;
+    existing.ts = new Date().toISOString();
+    existing.operator = state.operatorName || existing.operator || '';
+    state.lastAction = { type:'merge', id: existing.id, addQty: addQty };
+    await saveLog();
+    showToast("✓ Merged with earlier scan — total qty now " + existing.scannedQty);
+  } else {
+    const newId = 'L'+Date.now()+Math.floor(Math.random()*1000);
+    scanLog.unshift({
+      id: newId,
+      ts: new Date().toISOString(),
+      barcode: row.Barcode, code: row.Product, desc: row.Description,
+      brand: row.Brand||"OTHERS / UNBRANDED",
+      party: row.Party||'', partyName: row["Party Name"]||'',
+      refQty, scannedQty: addQty,
+      operator: state.operatorName||'',
+      deviceId: state.deviceId, deviceName: state.deviceName||''
+    });
+    if(scanLog.length>2000) scanLog = scanLog.slice(0,2000);
+    state.lastAction = { type:'new', id: newId };
+    await saveLog();
+    showToast("✓ Logged: " + esc(row.Description).slice(0,40) + " — Qty " + addQty);
+  }
   state.matchedRow = null; state.scannedQty=1; state.duplicateWarning=null;
   updateHeaderSub();
   render();
   setTimeout(()=>{ const inp=document.getElementById('manualBarcodeInput'); if(inp) inp.focus(); }, 150);
+}
+
+// ---------- Undo last save ----------
+async function undoLastSave(){
+  const a = state.lastAction;
+  if(!a){ showToast("Nothing to undo", true); return; }
+  if(a.type==='new'){
+    const idx = scanLog.findIndex(l=>l.id===a.id);
+    if(idx>-1) scanLog.splice(idx,1);
+  } else if(a.type==='merge'){
+    const entry = scanLog.find(l=>l.id===a.id);
+    if(entry){
+      entry.scannedQty = (parseInt(entry.scannedQty)||0) - a.addQty;
+      if(entry.scannedQty<=0){
+        const idx = scanLog.findIndex(l=>l.id===a.id);
+        if(idx>-1) scanLog.splice(idx,1);
+      }
+    }
+  }
+  state.lastAction = null;
+  await saveLog();
+  updateHeaderSub();
+  showToast("↩ Last save undone");
+  render();
 }
 
 function cancelMatch(){
@@ -5001,10 +5090,21 @@ function cancelMatch(){
   render();
 }
 
-// ---------- Add new product (from not-found barcode) ----------
+// ---------- Add new product (from not-found barcode, or from Brands tab) ----------
 function openAddProduct(prefillBarcode){
+  // The Add Product form only renders inside the Scan tab, so always switch there first --
+  // this is what fixes "nothing happens" when tapping + Add New Product from the Brands tab.
+  if(state.tab !== 'scan'){
+    if(state.cameraOn) stopCamera();
+    state.tab = 'scan';
+    document.getElementById('navScan').className = 'active';
+    document.getElementById('navBrands').className = '';
+    document.getElementById('navLog').className = '';
+    document.getElementById('tabTitle').textContent = '📷 Barcode Scan';
+  }
   state.addProductOpen = true;
   state.addForm = { brand:'', description:'', code:'', barcode: prefillBarcode||'', party:'', partyName:'', stockQty:0 };
+  updateHeaderSub();
   render();
 }
 function closeAddProduct(){ state.addProductOpen = false; render(); }
@@ -5048,9 +5148,11 @@ async function saveAddProduct(){
 
 // ---------- Camera ----------
 async function startCamera(){
+  state.camError = null;
+  state.camStatusMsg = "Requesting camera permission…";
   try{
     if(typeof Html5Qrcode === 'undefined'){
-      showToast("Camera library did not load", true);
+      showToast("Camera library did not load — check your internet connection", true);
       return;
     }
     state.cameraOn = true;
@@ -5078,10 +5180,14 @@ async function startCamera(){
     const onScan = (decodedText)=>{ lookupBarcode(decodedText); };
     const onFail = ()=>{ /* ignore per-frame "not found" scan noise */ };
 
+    state.camStatusMsg = "Starting camera…";
+    render();
+
     // Prefer an explicit back-camera deviceId -- far more reliable across
     // Android WebViews than the {facingMode:"environment"} constraint, which
     // on some devices resolves but never actually paints the video frame.
     let started = false;
+    let lastErr = null;
     try{
       const cams = await Html5Qrcode.getCameras();
       if(cams && cams.length){
@@ -5090,11 +5196,21 @@ async function startCamera(){
         await html5QrCode.start(cam.id, config, onScan, onFail);
         started = true;
       }
-    }catch(e){ /* fall through to facingMode attempt below */ }
+    }catch(e){ lastErr = e; }
 
     if(!started){
-      await html5QrCode.start({ facingMode: "environment" }, config, onScan, onFail);
+      try{
+        await html5QrCode.start({ facingMode: "environment" }, config, onScan, onFail);
+        started = true;
+      }catch(e){ lastErr = e; }
     }
+
+    if(!started){
+      throw lastErr || new Error("Could not start any camera");
+    }
+
+    state.camStatusMsg = "Point the camera at a BARCODE (QR codes are ignored)";
+    render();
 
     // Make sure the injected <video> actually paints -- some WebViews leave
     // it invisible until a layout/style nudge happens after start() resolves.
@@ -5102,8 +5218,23 @@ async function startCamera(){
       const v = document.querySelector('#reader video');
       if(v){ v.style.width='100%'; v.style.height='auto'; v.style.display='block'; v.setAttribute('playsinline','true'); v.muted = true; }
     }, 150);
+
+    // Watchdog: if no actual video frame ever paints, tell the user plainly
+    // instead of leaving a silent blank box.
+    setTimeout(()=>{
+      if(!state.cameraOn) return;
+      const v = document.querySelector('#reader video');
+      if(!v || !v.videoWidth){
+        state.camStatusMsg = null;
+        state.camError = "Camera opened but no picture is showing. This usually means the site's camera permission was blocked, or another app is using the camera. Try: (1) tap the 🔒 icon in the address bar → Site settings → Camera → Allow, then reload, or (2) Stop Camera and Start Camera again.";
+        render();
+      }
+    }, 2500);
   }catch(err){
     state.cameraOn = false;
+    state.camStatusMsg = null;
+    const msg = (err && (err.message || err.name)) ? (err.message || err.name) : String(err);
+    state.camError = "Camera failed to start: " + msg;
     render();
     showToast("Camera unavailable — type the barcode manually", true);
   }
@@ -5112,6 +5243,8 @@ async function stopCamera(){
   try{ if(html5QrCode){ await html5QrCode.stop(); html5QrCode.clear(); } }catch(e){}
   state.cameraOn = false;
   state.torchOn = false;
+  state.camStatusMsg = null;
+  state.camError = null;
   html5QrCode = null;
 }
 async function toggleCamera(){
@@ -5176,22 +5309,139 @@ async function saveEditStock(barcode){
 }
 
 // ---------- Excel export (Scan Log only, fixed columns) ----------
-function exportExcel(){
-  if(scanLog.length===0){ showToast("No scan log entries to export", true); return; }
-  const wsData = [["S.N","Code","Barcode","Product","Quantity","Scanned Quantity","Party Name"]];
-  // Export oldest-first for a natural running log
-  const ordered = scanLog.slice().reverse();
+function deviceLabel(deviceId, deviceName){
+  return (deviceName && deviceName.trim()) ? deviceName.trim() : deviceId;
+}
+function sheetSafeName(name){
+  // Excel sheet names: max 31 chars, no : \ / ? * [ ]
+  return String(name).replace(/[:\\\/\?\*\[\]]/g,'-').slice(0,31) || 'Device';
+}
+function buildLogSheetRows(entries){
+  const wsData = [["S.N","Code","Barcode","Product","Quantity","Scanned Quantity","Party Name","Device","Operator"]];
+  const ordered = entries.slice().reverse(); // oldest-first for a natural running log
   ordered.forEach((l, i)=>{
     const refQty = liveRefQtyForBarcode(l.barcode);
-    wsData.push([i+1, l.code, l.barcode, l.desc, refQty, l.scannedQty, l.partyName]);
+    wsData.push([i+1, l.code, l.barcode, l.desc, refQty, l.scannedQty, l.partyName, deviceLabel(l.deviceId,l.deviceName), l.operator||'']);
   });
+  return wsData;
+}
+
+// Exports only THIS device's scan log -- keeps each device's counting as its own separate list/file.
+function exportExcel(){
+  const mine = scanLog.filter(l=>l.deviceId===state.deviceId);
+  if(mine.length===0){ showToast("No scan log entries on this device to export", true); return; }
+  const wsData = buildLogSheetRows(mine);
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = [{wch:6},{wch:14},{wch:16},{wch:42},{wch:10},{wch:14},{wch:26}];
+  ws['!cols'] = [{wch:6},{wch:14},{wch:16},{wch:42},{wch:10},{wch:14},{wch:26},{wch:16},{wch:14}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Scan Log");
   const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
-  XLSX.writeFile(wb, "Scan_Log_" + stamp + ".xlsx");
-  showToast("✓ Excel file downloaded");
+  const label = deviceLabel(state.deviceId, state.deviceName).replace(/[^a-zA-Z0-9_-]/g,'');
+  XLSX.writeFile(wb, "Scan_Log_" + label + "_" + stamp + ".xlsx");
+  showToast("✓ Excel file downloaded (this device only)");
+}
+
+// Exports ALL devices' scan logs, one sheet per device, in a single workbook.
+function exportExcelAllDevices(){
+  if(scanLog.length===0){ showToast("No scan log entries to export", true); return; }
+  const byDevice = {};
+  scanLog.forEach(l=>{
+    const key = l.deviceId || 'unknown';
+    if(!byDevice[key]) byDevice[key] = [];
+    byDevice[key].push(l);
+  });
+  const wb = XLSX.utils.book_new();
+  const usedNames = {};
+  Object.keys(byDevice).forEach(key=>{
+    const entries = byDevice[key];
+    const label = deviceLabel(key, entries[0].deviceName);
+    let name = sheetSafeName(label);
+    let n = name, c=2;
+    while(usedNames[n]){ n = sheetSafeName(name + ' ' + c); c++; }
+    usedNames[n] = true;
+    const wsData = buildLogSheetRows(entries);
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [{wch:6},{wch:14},{wch:16},{wch:42},{wch:10},{wch:14},{wch:26},{wch:16},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws, n);
+  });
+  const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
+  XLSX.writeFile(wb, "Scan_Log_AllDevices_" + stamp + ".xlsx");
+  showToast("✓ Excel file downloaded (all devices, separate sheets)");
+}
+
+// ---------- Barcode image preview (tap a barcode to view it as scannable lines) ----------
+function openBarcodeModal(code){
+  code = String(code||'').trim();
+  if(!code){ showToast("No barcode to show", true); return; }
+  const modal = document.getElementById('barcodeModal');
+  const content = document.getElementById('barcodeModalContent');
+  content.innerHTML = '<svg id="barcodeSvg"></svg><div class="barcode-modal-code">' + esc(code) + '</div>';
+  modal.classList.add('show');
+  setTimeout(()=>{
+    try{
+      let fmt = 'CODE128';
+      if(/^\d{13}$/.test(code)) fmt = 'EAN13';
+      else if(/^\d{12}$/.test(code)) fmt = 'UPC';
+      else if(/^\d{8}$/.test(code)) fmt = 'EAN8';
+      JsBarcode('#barcodeSvg', code, { format: fmt, lineColor:'#000000', background:'#ffffff', width:2, height:80, displayValue:false, margin:12 });
+    }catch(e){
+      try{
+        JsBarcode('#barcodeSvg', code, { format:'CODE128', lineColor:'#000000', background:'#ffffff', width:2, height:80, displayValue:false, margin:12 });
+      }catch(e2){
+        content.innerHTML += '<div style="color:#c0392b;font-size:12px;margin-top:8px;">Could not generate a barcode image for this code.</div>';
+      }
+    }
+  }, 20);
+}
+function closeBarcodeModal(){
+  document.getElementById('barcodeModal').classList.remove('show');
+}
+
+// ---------- Copy full product data ----------
+function copyProductData(sl){
+  const r = getAllRows().find(x=>x.SL===sl);
+  if(!r){ showToast("Product not found", true); return; }
+  const qty = effectiveQty(r);
+  const lines = [
+    'Description: ' + (r.Description||''),
+    'Brand: ' + (r.Brand||'OTHERS / UNBRANDED'),
+    'Product Code: ' + (r.Product||''),
+    'Barcode: ' + (r.Barcode||''),
+    'Stock Qty: ' + fmtInt(qty),
+    'WAC: ' + fmtMoney(r.WAC),
+    'LLC: ' + fmtMoney(r.LLC),
+    'Party: ' + (r.Party||''),
+    'Party Name: ' + (r["Party Name"]||''),
+    'GRN Number: ' + (r["GRN Number"]||''),
+    'GRN Date: ' + (r["GRN Date"]||''),
+    'Sale Date: ' + (r["Sale Date"]||''),
+    'Age Days: ' + (r["Age Days"]||'')
+  ];
+  copyTextToClipboard(lines.join('\n'));
+}
+function copyTextToClipboard(text){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(
+      ()=>showToast("✓ Product data copied"),
+      ()=>fallbackCopy(text)
+    );
+  } else {
+    fallbackCopy(text);
+  }
+}
+function fallbackCopy(text){
+  try{
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast("✓ Product data copied");
+  }catch(e){
+    showToast("Copy failed — please copy manually", true);
+  }
 }
 
 async function clearLog(){
@@ -5205,6 +5455,14 @@ async function clearLog(){
 // ---------- Operator name ----------
 function setOperatorNameInput(v){ state.operatorName = v; }
 async function commitOperatorName(){ await saveOperatorName(); showToast("✓ Operator name saved"); }
+
+// ---------- Device name (per-device only, stored locally, never synced) ----------
+function setDeviceNameInput(v){ state.deviceName = v; }
+function commitDeviceName(){
+  try{ localStorage.setItem('device-name', state.deviceName||''); }catch(e){}
+  updateHeaderSub();
+  showToast("✓ Device name saved");
+}
 
 // ---------- Full data Backup & Restore ----------
 function exportBackup(){
@@ -5382,6 +5640,16 @@ function renderScan(){
   html += '<span class="operator-label">👤 Operator:</span>';
   html += '<input type="text" id="operatorInput" value="' + esc(state.operatorName) + '" oninput="setOperatorNameInput(this.value)" onblur="commitOperatorName()" placeholder="Your name" />';
   html += '</div>';
+  html += '<div class="operator-row">';
+  html += '<span class="operator-label">🖥 Device:</span>';
+  html += '<input type="text" id="deviceInput" value="' + esc(state.deviceName) + '" oninput="setDeviceNameInput(this.value)" onblur="commitDeviceName()" placeholder="Name this device e.g. Counter 1" />';
+  html += '</div>';
+  html += '<div class="backup-note" style="margin-top:-6px;">Each device keeps its own separate scan list and Excel export — naming the device (e.g. "Counter 1", "Counter 2") makes the exported files easy to tell apart.</div>';
+  if(state.lastAction){
+    html += '<div class="btn-row" style="margin-bottom:10px;">';
+    html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
+    html += '</div>';
+  }
   html += '<div class="btn-row" style="margin-bottom:10px;">';
   html += '<button class="btn ' + (state.cameraOn?'btn-accent':'') + '" onclick="toggleCamera()">' + (state.cameraOn?'⏹ Stop Camera':'📷 Start Camera') + '</button>';
   if(state.cameraOn){
@@ -5390,7 +5658,15 @@ function renderScan(){
   html += '</div>';
   if(state.cameraOn){
     html += '<div id="reader" style="width:100%;min-height:220px;"></div>';
-    html += '<div class="cam-status">Point the camera at a BARCODE (QR codes are ignored)</div>';
+    if(state.camStatusMsg){
+      html += '<div class="cam-status">' + esc(state.camStatusMsg) + '</div>';
+    }
+    if(state.camError){
+      html += '<div class="notfound">⚠️ ' + esc(state.camError) + '</div>';
+      html += '<div class="btn-row" style="margin-bottom:10px;">';
+      html += '<button class="btn btn-accent" onclick="toggleCamera().then(()=>toggleCamera())">🔄 Retry Camera</button>';
+      html += '</div>';
+    }
   }
   html += '<div class="divider-label">Or type the barcode manually</div>';
   html += '<div class="search-wrap">';
@@ -5405,7 +5681,7 @@ function renderScan(){
   }
 
   if(state.duplicateWarning){
-    html += '<div class="dupwarn">⚠️ Already scanned on ' + esc(state.duplicateWarning.ts) + ' — Qty logged then: ' + fmtInt(state.duplicateWarning.scannedQty) + '. You can still save again below if needed.</div>';
+    html += '<div class="dupwarn">⚠️ Already scanned on ' + esc(state.duplicateWarning.ts) + ' — logged qty so far: ' + fmtInt(state.duplicateWarning.scannedQty) + '. Saving again will ADD to this total (merged into one entry).</div>';
   }
 
   if(state.addProductOpen){
@@ -5444,13 +5720,18 @@ function renderScan(){
     html += '<span class="chip-accent">System Stock (ref): ' + fmtInt(qty) + '</span>';
     html += '</div>';
     html += '<div class="detail-grid">';
-    html += detailRow('Barcode', r.Barcode||'-');
+    if(r.Barcode){
+      html += '<div><div class="detail-label">Barcode</div><div class="detail-value detail-value-clickable" onclick="openBarcodeModal(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\')">🔳 ' + esc(r.Barcode) + '</div></div>';
+    } else {
+      html += detailRow('Barcode', '-');
+    }
     html += detailRow('WAC', fmtMoney(r.WAC));
     html += detailRow('Party', r.Party||'-');
     html += detailRow('Party Name', r["Party Name"]||'-', true);
     html += detailRow('GRN Number', r["GRN Number"]||'-');
     html += detailRow('GRN Date', r["GRN Date"]||'-');
     html += '</div>';
+    html += '<button class="inline-link-btn" style="margin-top:8px;" onclick="copyProductData(\'' + esc(r.SL).replace(/'/g,"\\'") + '\')">📋 Copy Full Data</button>';
 
     html += '<div class="field-label" style="margin-top:14px;">Scanned Quantity (this count)</div>';
     html += '<div class="qty-box" style="margin-top:6px;">';
@@ -5495,7 +5776,7 @@ function renderProductCard(r, showBrandChip){
   html += '<div class="chip-row" style="margin-bottom:0;">';
   if(showBrandChip) html += '<span class="chip">' + esc(r.Brand || "OTHERS / UNBRANDED") + '</span>';
   html += '<span class="chip">Code ' + esc(r.Product) + '</span>';
-  if(r.Barcode) html += '<span class="chip">' + esc(r.Barcode) + '</span>';
+  if(r.Barcode) html += '<span class="chip chip-clickable" onclick="event.stopPropagation();openBarcodeModal(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\')">🔳 ' + esc(r.Barcode) + '</span>';
   html += '<span class="chip-accent">Stock Qty ' + fmtInt(qty) + '</span>';
   html += '</div></div>';
   if(isOpen){
@@ -5521,6 +5802,7 @@ function renderProductCard(r, showBrandChip){
       html += '</div>';
     } else {
       html += '<button class="inline-link-btn" onclick="startEditStock(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\',' + qty + ')">✎ Edit Stock Quantity</button>';
+      html += '<button class="inline-link-btn" style="margin-left:16px;" onclick="copyProductData(\'' + esc(r.SL).replace(/'/g,"\\'") + '\')">📋 Copy Full Data</button>';
     }
     html += '</div>';
   }
@@ -5603,10 +5885,24 @@ function focusPreserve(sel){
   if(el){ el.focus(); const v=el.value; el.value=''; el.value=v; }
 }
 
+function setLogDeviceFilter(mode){ state.logDeviceFilter = mode; render(); }
+
 function renderLog(){
-  let html = '<div class="btn-row" style="margin-bottom:12px;">';
-  html += '<button class="btn btn-accent" onclick="exportExcel()">⬇ Export as Excel</button>';
+  const deviceCount = new Set(scanLog.map(l=>l.deviceId||'unknown')).size;
+  let html = '';
+  if(state.lastAction){
+    html += '<div class="btn-row" style="margin-bottom:10px;">';
+    html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
+    html += '</div>';
+  }
+  html += '<div class="btn-row" style="margin-bottom:8px;">';
+  html += '<button class="btn btn-accent" onclick="exportExcel()">⬇ Export This Device</button>';
   html += '</div>';
+  if(deviceCount>1){
+    html += '<div class="btn-row" style="margin-bottom:12px;">';
+    html += '<button class="btn" onclick="exportExcelAllDevices()">⬇ Export All Devices (' + deviceCount + ', separate sheets)</button>';
+    html += '</div>';
+  }
   html += '<div class="btn-row" style="margin-bottom:8px;">';
   html += '<button class="btn" onclick="exportBackup()">💾 Backup All Data</button>';
   html += '<button class="btn" onclick="triggerRestore()">📂 Restore Backup</button>';
@@ -5619,8 +5915,14 @@ function renderLog(){
     html += '<div class="empty">No scan log entries yet.<br/>Scan an item and save it to see history here.</div>';
     return html;
   }
+  if(deviceCount>1){
+    html += '<div class="device-actions">';
+    html += '<button class="sort-btn ' + (state.logDeviceFilter==='mine'?'active':'') + '" onclick="setLogDeviceFilter(\'mine\')">This Device</button>';
+    html += '<button class="sort-btn ' + (state.logDeviceFilter==='all'?'active':'') + '" onclick="setLogDeviceFilter(\'all\')">All Devices</button>';
+    html += '</div>';
+  }
   html += '<div class="search-row-log"><input type="text" value="' + esc(state.logQuery) + '" oninput="setLogQuery(this.value)" placeholder="Search log (product / barcode / party)..." /></div>';
-  let logs = scanLog;
+  let logs = (deviceCount>1 && state.logDeviceFilter==='mine') ? scanLog.filter(l=>l.deviceId===state.deviceId) : scanLog;
   if(state.logQuery.trim()){
     const q = state.logQuery.trim().toLowerCase();
     logs = logs.filter(l => (l.desc||'').toLowerCase().includes(q) || (l.barcode||'').toLowerCase().includes(q) || (l.partyName||'').toLowerCase().includes(q) || (l.code||'').toLowerCase().includes(q));
@@ -5632,7 +5934,7 @@ function renderLog(){
     const isEditing = state.editingLogId === l.id;
     html += '<div class="log-item">';
     html += '<div class="log-top"><span>' + esc(l.desc) + '</span><span class="log-qty">Ref ' + l.refQty + ' · Scanned ' + l.scannedQty + '</span></div>';
-    html += '<div class="log-meta">' + esc(l.brand) + ' · ' + esc(l.barcode||'-') + ' · ' + esc(l.partyName||'-') + ' · ' + dstr + (l.operator ? ' · 👤 ' + esc(l.operator) : '') + '</div>';
+    html += '<div class="log-meta">' + esc(l.brand) + ' · ' + esc(l.barcode||'-') + ' · ' + esc(l.partyName||'-') + ' · ' + dstr + (l.operator ? ' · 👤 ' + esc(l.operator) : '') + (deviceCount>1 ? ' · <span class="device-chip">🖥 ' + esc(deviceLabel(l.deviceId,l.deviceName)) + '</span>' : '') + '</div>';
     if(isEditing){
       html += '<div class="stock-edit-row">';
       html += '<input type="number" value="' + state.editLogValue + '" oninput="setEditLogValue(this.value)" />';
@@ -5656,6 +5958,15 @@ function wireEvents(){
     mi.addEventListener('keydown', (e)=>{
       if(e.key==='Enter'){
         lookupBarcode(mi.value);
+        mi.value='';
+      }
+    });
+    mi.addEventListener('input', ()=>{
+      const v = mi.value.trim();
+      // Auto-search as soon as a full 13-digit EAN-13 barcode has been typed
+      // (keyboard-wedge scanners without an Enter keystroke, or manual typing).
+      if(/^\d{13}$/.test(v)){
+        lookupBarcode(v);
         mi.value='';
       }
     });
