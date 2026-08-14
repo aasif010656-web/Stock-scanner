@@ -3,6 +3,7 @@ package com.abdulasif.pdtstockscanner.bridge;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Environment;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
 
