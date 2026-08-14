@@ -81,9 +81,12 @@ public class AndroidNativeBridge {
     @JavascriptInterface
     public void installLastDownloadedApk() {
         try {
-            File cacheDir = activity.getExternalCacheDir();
-            if (cacheDir == null) cacheDir = activity.getCacheDir();
-            File apkFile = new File(cacheDir, "FHL_ELECTRONICS_update.apk");
+            File apkFile = new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "FHL_ELECTRONICS_update.apk");
+            if (!apkFile.exists() || apkFile.length() == 0) {
+                File cacheDir = activity.getExternalCacheDir();
+                if (cacheDir == null) cacheDir = activity.getCacheDir();
+                apkFile = new File(cacheDir, "FHL_ELECTRONICS_update.apk");
+            }
             if (!apkFile.exists() || apkFile.length() == 0) return;
             openInstaller(apkFile);
         } catch (Exception e) {
@@ -117,6 +120,16 @@ public class AndroidNativeBridge {
             @Override
             public void run() {
                 try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                            !activity.getPackageManager().canRequestPackageInstalls()) {
+                        Intent permissionIntent = new Intent(
+                                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:" + activity.getPackageName())
+                        );
+                        permissionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        activity.startActivity(permissionIntent);
+                        return;
+                    }
                     Uri contentUri = FileProvider.getUriForFile(
                             activity,
                             "com.abdulasif.pdtstockscanner.fixed.fileprovider",
