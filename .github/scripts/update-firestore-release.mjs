@@ -46,11 +46,12 @@ if (!accessToken) throw new Error("Google OAuth response did not contain an acce
 const fields = {
   version: { stringValue: version },
   downloadUrl: { stringValue: downloadUrl },
+  url: { stringValue: downloadUrl },
   apkUrl: { stringValue: downloadUrl },
   releaseTag: { stringValue: tag },
   releaseName: { stringValue: `FHL ELECTRONICS v6.1 ${tag}` },
   appName: { stringValue: "FHL ELECTRONICS v6.1" },
-  displayVersion: { stringValue: "v6" },
+  displayVersion: { stringValue: `v${version}` },
   releasedAt: { timestampValue: new Date().toISOString() },
   source: { stringValue: "github-actions" },
 };
