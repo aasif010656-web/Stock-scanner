@@ -426,7 +426,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 /* Full-theme design systems: each theme changes surfaces, geometry, depth, controls, spacing and atmosphere. */
 :root{--ui-radius:18px;--ui-radius-sm:12px;--ui-card-pad:14px;--ui-panel:rgba(255,255,255,.06);--ui-border:rgba(255,255,255,.10);--ui-blur:18px;--ui-shadow:0 14px 32px rgba(0,0,0,.30);--ui-control-radius:13px;--ui-control-height:44px;--ui-font-scale:1;}
 body{background-color:var(--bg)!important;color:var(--text)!important;transition:background-color .35s ease,color .25s ease;}
-#content{transition:padding .35s ease,filter .35s ease;}
+#content{contain:layout style;transition:none;scrollbar-gutter:stable;}
 .card,.form-card,.ios-group,.bento-tile,.dupwarn,.backup-note,.modal-box-dark{border-radius:var(--ui-radius)!important;background:var(--ui-panel)!important;border:1px solid var(--ui-border)!important;box-shadow:var(--ui-shadow)!important;backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;transition:border-radius .35s ease,box-shadow .35s ease,background .35s ease,transform .2s ease;}
 .card,.form-card{padding:var(--ui-card-pad)!important;}
 .card:hover,.form-card:hover,.bento-tile:hover{transform:translateY(var(--ui-hover-y,0));}
@@ -544,6 +544,10 @@ body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!importa
 .report-sheet tr:nth-child(odd){background:transparent!important;}
 .report-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;align-items:center;}
 .report-toolbar .btn{font-size:12px!important;}
+/* Keep large interactive screens in a stable layout/compositing context while scrolling. */
+#brandResultsWrap,#brandProductResultsWrap,#content>.ios-group,#content>.report-sheet{contain:layout paint;}
+#brandResultsWrap,#brandProductResultsWrap{scrollbar-gutter:stable;}
+
 
 
 /* Brands long-scroll stability: avoid repaint/compositing flicker on large lists. */
@@ -7628,7 +7632,13 @@ function toggleLoginPassword(){
 }
 
 // ---------- Render ----------
+let renderFrame = 0;
 function render(){
+  if(renderFrame) return;
+  const schedule = window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); };
+  renderFrame = schedule(function(){ renderFrame = 0; renderNow(); });
+}
+function renderNow(){
   const c = document.getElementById('content');
   document.body.classList.toggle('large-font', !!state.largeFont);
   if(!state.user){
