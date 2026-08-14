@@ -5873,7 +5873,8 @@ function beginBiometricLogin(){
   if(!window.AndroidNative || !window.AndroidNative.authenticateBiometric){
     showToast('Fingerprint/Face unlock is available only in the Android app', true); return;
   }
-  const rememberedUser = localStorage.getItem('app-remembered-username') || '';
+  let rememberedUser = '';
+  try { const saved = JSON.parse(localStorage.getItem('app-user') || '{}'); rememberedUser = saved && saved.user ? saved.user.username : ''; } catch(e) {}
   if(!rememberedUser || localStorage.getItem('app-remember-me') !== '1'){
     showToast('Login once with Remember me enabled before using biometric unlock', true); return;
   }
@@ -5884,7 +5885,8 @@ function beginBiometricLogin(){
 window.onNativeBiometricResult = function(ok){
   state._biometricBusy = false;
   if(ok){
-    const rememberedUser = localStorage.getItem('app-remembered-username') || '';
+    let rememberedUser = '';
+    try { const saved = JSON.parse(localStorage.getItem('app-user') || '{}'); rememberedUser = saved && saved.user ? saved.user.username : ''; } catch(e) {}
     if(rememberedUser && localStorage.getItem('app-remember-me') === '1'){ restoreSavedSession(); updateHeaderSub(); render(); }
     else { showToast('Please login once with Remember me enabled', true); render(); }
   } else { render(); showToast('Biometric unlock cancelled or failed', true); }
@@ -6103,6 +6105,7 @@ function queuePartyPriceNotification(party, description){
       const title = 'Price update · ' + p;
       const body = 'Your ' + count + ' product' + (count===1?'':'s') + ' prices are changed';
       const open = function(){ try{ setTab('priceLog'); }catch(e){} };
+      if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification){ try{ window.AndroidNative.postPriceUpdateNotification(title, body); }catch(e){} }
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
         try{ const ln=window.Capacitor.Plugins.LocalNotifications; if(ln.requestPermissions) ln.requestPermissions(); ln.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'priceLog'}}]}); }catch(e){}
       }
@@ -8009,6 +8012,15 @@ function openA7(){
 }
 
 function closeA7(){ setTab('scan'); }
+
+function addCompactBarcode(code, target){
+  const value = String(code || '').trim();
+  if(!value) return;
+  if(target === 'a7') return addA7Barcode(value);
+  if(target === 'a4') return addA4Barcode(value);
+  state.manualInput = value;
+  lookupBarcode(value);
+}
 
 function addA7Barcode(code){
   code = (code||'').trim();
@@ -9932,8 +9944,8 @@ function wireEvents(){
   if(mi){
     mi.addEventListener('keydown', (e)=>{
       if(e.key==='Enter'){
-        if(state.tab === 'a7'){ addA7Barcode(mi.value.replace(/[^0-9]/g,'')); mi.value=''; return; }
-        if(state.tab === 'a4'){ addA4Barcode(mi.value.replace(/[^0-9]/g,'')); mi.value=''; return; }
+        if(state.tab === 'a7'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a7'); mi.value=''; return; }
+        if(state.tab === 'a4'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a4'); mi.value=''; return; }
         state.barcodeSuggestions = []; state.showSuggestions = false;
         lookupBarcode(mi.value);
         mi.value='';
@@ -9943,13 +9955,13 @@ function wireEvents(){
       if(state.tab === 'a7'){
         const digits7 = mi.value.replace(/[^0-9]/g,'');
         state.a7Input = digits7;
-        if(isCompleteBarcodeLength(digits7)) addA7Barcode(digits7);
+        if(isCompleteBarcodeLength(digits7)) addCompactBarcode(digits7, 'a7');
         return;
       }
       if(state.tab === 'a4'){
         const digits = mi.value.replace(/[^0-9]/g,'');
         state.a4Input = digits;
-        if(isCompleteBarcodeLength(digits)) addA4Barcode(digits);
+        if(isCompleteBarcodeLength(digits)) addCompactBarcode(digits, 'a4');
         return;
       }
 
