@@ -8874,18 +8874,20 @@ function changeUserRole(u){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
   if(u === 'Asif'){ showToast('Cannot change primary admin role', true); return; }
   const current = getUserRole(u);
-  const newRole = prompt('Enter role for ' + u + ' (admin / staff / promoter)', current);
-  if(!newRole) return;
-  const role = newRole.trim().toLowerCase();
+  const currentParties = getUserPartyCodes(u).join(',');
+  const currentBrands = getUserBrandCodes(u).join(',');
+  // Use one prompt instead of three sequential prompts. On Android WebView,
+  // sequential prompts can leave duplicate native dialog surfaces behind.
+  const value = prompt(
+    'Enter role | party codes | brand names for ' + u + '\nExample: promoter | A0356,M0007 | OPPO',
+    current + ' | ' + currentParties + ' | ' + currentBrands
+  );
+  if(!value) return;
+  const parts = value.split('|').map(s => s.trim());
+  const role = (parts[0] || '').toLowerCase();
   if(!['staff','promoter'].includes(role)){ showToast('Role must be staff or promoter (only Asif can be admin)', true); return; }
-  let partyCodes = getUserPartyCodes(u);
-  let brandCodes = getUserBrandCodes(u);
-  if(role === 'promoter'){
-    const codesInput = prompt('Enter party code(s) for ' + u + ', comma separated (leave blank if brand-based) e.g. A0356 or M0007,M0080', partyCodes.join(','));
-    partyCodes = (codesInput || '').split(',').map(s=>s.trim()).filter(Boolean);
-    const brandsInput = prompt('Enter brand(s) for ' + u + ', comma separated (leave blank if party-based) e.g. OPPO', brandCodes.join(','));
-    brandCodes = (brandsInput || '').split(',').map(s=>s.trim()).filter(Boolean);
-  }
+  const partyCodes = (parts[1] || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const brandCodes = (parts[2] || '').split(',').map(s=>s.trim()).filter(Boolean);
   if(!state.userRoles) state.userRoles = {};
   state.userRoles[u] = { role: role, partyCodes: partyCodes, brandCodes: brandCodes };
   addAuditLog('Role Changed', 'Set ' + u + ' to role ' + role + (partyCodes.length ? ' (parties: ' + partyCodes.join('/') + ')' : '') + (brandCodes.length ? ' (brands: ' + brandCodes.join('/') + ')' : ''));
