@@ -546,9 +546,9 @@ body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!importa
 
 /* Brands long-scroll stability: avoid repaint/compositing flicker on large lists. */
 body.brands-scroll-stable{background-attachment:scroll!important;}
-body.brands-scroll-stable #brandResultsWrap,body.brands-scroll-stable #brandProductResultsWrap{contain:layout paint style;transform:translateZ(0);-webkit-transform:translateZ(0);}
-body.brands-scroll-stable .brand-card{backface-visibility:hidden;-webkit-backface-visibility:hidden;transform:translateZ(0);-webkit-transform:translateZ(0);will-change:auto;}
-body.brands-scroll-stable .brand-card,.body.brands-scroll-stable .ios-group{transition:none!important;}
+body.brands-scroll-stable #brandResultsWrap,body.brands-scroll-stable #brandProductResultsWrap{contain:layout;transform:none;-webkit-transform:none;}
+body.brands-scroll-stable .brand-card{backface-visibility:visible;-webkit-backface-visibility:visible;transform:none;-webkit-transform:none;will-change:auto;}
+body.brands-scroll-stable .brand-card,body.brands-scroll-stable .ios-group{transition:none!important;}
 
 </style>
 </head>
@@ -6023,7 +6023,6 @@ function setTab(tab, fromBack){
   }
   if(!fromBack && state.tab !== tab){ try{ history.pushState({tab:tab}, '', location.href); }catch(e){} }
   document.body.classList.toggle('brands-scroll-stable', tab === 'brands');
-  document.body.style.backgroundAttachment = tab === 'brands' ? 'scroll' : 'fixed';
   state.tab = tab;
   if(tab === 'a7' || tab === 'a4') startScanInputFocusKeeper(); else stopScanInputFocusKeeper();
   if(tab === 'aging') refreshAgingMovements();
@@ -9599,6 +9598,13 @@ async function handleImportData(fileInput){
     fileInput.value = '';
 }
 
+function setPricePartyFilter(party){
+  state.pricePartyFilter = party || '';
+  render();
+}
+function getPricePartyOptions(notifications){
+  return Array.from(new Set((notifications || []).map(n => String(n.party || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+}
 function renderPriceLog(){
   const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
   const myPriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
@@ -9672,14 +9678,29 @@ function renderLog(){
   }
 
   const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
-  const myPriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
-  if(myPriceNotifs.length){
-    html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;">';
+  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
+  const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
+  const selectedParty = state.pricePartyFilter || '';
+  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
+  if(allVisiblePriceNotifs.length){
+    html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
     html += '<span>Price Change Alerts (' + myPriceNotifs.length + ')</span>';
     html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
     html += '</div>';
+    if(partyOptions.length){
+      html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
+      html += '<button class="sort-btn' + (!selectedParty ? ' active' : '') + '" onclick="setPricePartyFilter(\'\')">All Parties</button>';
+      partyOptions.forEach(p=>{
+        const safeParty = esc(p).replace(/'/g, "\\'");
+        html += '<button class="sort-btn' + (selectedParty === p ? ' active' : '') + '" onclick="setPricePartyFilter(\'' + safeParty + '\')">' + esc(p) + '</button>';
+      });
+      html += '</div>';
+    }
+    if(!myPriceNotifs.length){
+      html += '<div class="empty">No price updates for ' + esc(selectedParty) + '.</div>';
+    }
     myPriceNotifs.forEach(n=>{
-      html += '<div class="card" style="padding:10px;margin-bottom:8px;cursor:pointer;" onclick="setTab(\'priceLog\')">';
+      html += '<div class="card" style="padding:10px;margin-bottom:8px;cursor:pointer;" onclick="setPricePartyFilter(\'' + esc(String(n.party || '')).replace(/'/g, "\\'") + '\')">';
       html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
       html += '<div style="min-width:0;">';
       html += '<div class="product-title" style="font-size:13px;">' + esc(n.description||'') + '</div>';
@@ -9687,7 +9708,7 @@ function renderLog(){
       html += '<div style="font-size:12.5px;margin-top:3px;"><span style="color:var(--red);text-decoration:line-through;">' + esc(n.oldPrice) + '</span> &rarr; <span style="color:var(--green);font-weight:700;">' + esc(n.newPrice) + '</span></div>';
       html += '<div style="font-size:10.5px;color:var(--dim);margin-top:2px;">' + new Date(n.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
       html += '</div>';
-      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="deletePriceNotification(\'' + n.id + '\')">🗑</button>';
+      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotification(\'' + n.id + '\')">🗑</button>';
       html += '</div></div>';
     });
   }
