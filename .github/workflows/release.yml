@@ -77,7 +77,7 @@ jobs:
       - name: Publish GitHub release asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
+          tag_name: v6.0-build-${{ github.run_number }}
           name: FHL ELECTRONICS v6 build ${{ github.run_number }}
           generate_release_notes: true
           files: FHL_NATIVE_APP/app/build/outputs/apk/release/app-release.apk
@@ -87,8 +87,8 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           FIREBASE_PROJECT_ID: stock-take-9a67a
           RELEASE_VERSION: ${{ steps.app_version.outputs.version }}
-          RELEASE_TAG: build-${{ github.run_number }}
-          RELEASE_DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/build-${{ github.run_number }}/app-release.apk
+          RELEASE_TAG: v6.0-build-${{ github.run_number }}
+          RELEASE_DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/v6.0-build-${{ github.run_number }}/app-release.apk
         run: |
           test -n "$FIREBASE_SERVICE_ACCOUNT_JSON"
           node .github/scripts/update-firestore-release.mjs
