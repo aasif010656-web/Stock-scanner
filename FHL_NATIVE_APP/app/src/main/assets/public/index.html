@@ -527,6 +527,16 @@ body.theme-darkluxury .auth-screen .auth-login-btn{background:linear-gradient(13
 body.theme-bento .aging-party-header,body.theme-bento .report-header,body.theme-material3 .aging-party-header,body.theme-material3 .report-header,body.theme-m3bento .aging-party-header,body.theme-m3bento .report-header{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
 
 
+/* Native WebView stability: disable expensive background/compositing motion that causes scroll flicker. */
+body.native-performance-mode *,body.native-performance-mode *::before,body.native-performance-mode *::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important;}
+body.native-performance-mode .auth-screen,body.native-performance-mode .ios-group,body.native-performance-mode .report-sheet,body.native-performance-mode .aging-party-header,body.native-performance-mode .report-header{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background-attachment:scroll!important;}
+.promoter-actions-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:0 0 12px;border:1px solid var(--ui-border);border-radius:16px;background:var(--ui-panel);box-shadow:var(--ui-shadow);}
+.promoter-actions-title{font-weight:700;color:var(--text);white-space:nowrap;}
+.promoter-actions-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+.promoter-actions-buttons .btn{min-width:82px;}
+.promoter-logout-btn{color:var(--red)!important;border-color:color-mix(in srgb,var(--red) 55%,transparent)!important;}
+@media(max-width:520px){.promoter-actions-card{align-items:stretch;flex-direction:column;}.promoter-actions-buttons{justify-content:stretch;}.promoter-actions-buttons .btn{flex:1;min-width:0;}}
+
 /* Final interaction and presentation fixes. */
 .auth-screen{background:var(--login-bg)!important;}
 .auth-screen::before,.auth-screen::after,.auth-floating-icons,.auth-glow,.auth-wave,.circuit-bg{display:none!important;opacity:0!important;background:none!important;animation:none!important;}
@@ -559,10 +569,11 @@ body.brands-scroll-stable .brand-card,body.brands-scroll-stable .ios-group{trans
 </style>
 </head>
 <body>
+<script>if(window.AndroidNative||window.UpdateBridge){document.body.classList.add("native-performance-mode");}</script>
 <div id="app">
   <div class="header" id="appHeader" style="display:none;">
     <div class="header-title">
-      <img src="icon-192.png" class="app-logo-icon" alt="logo">
+      <img src="fhl-electronics-logo.png" class="app-logo-icon" alt="logo">
       <span id="tabTitle">📷 Barcode Scan</span>
     </div>
     <div class="header-sub" id="headerSub">Loading data...</div>
@@ -7652,7 +7663,7 @@ function renderNow(){
     const remembered = localStorage.getItem('app-remember-me') === '1';
     c.innerHTML = `<div class="auth-screen">
       <div class="auth-glass">
-        <img class="auth-logo" src="login_reference_logo.png" onerror="this.style.display='none';" alt="" />
+        <img class="auth-logo" src="fhl-electronics-logo.png" onerror="this.style.display='none';" alt="" />
         <h2 class="auth-title">Login</h2>
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
@@ -9145,8 +9156,8 @@ function renderSettings(){
     }
     html += '<div class="ios-section-title">Admin Tools</div>';
     html += '<div class="ios-group">';
-    const isLocked = !!state.appLocked;
-    const promoterActions = '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><button class="btn btn-accent btn-sm" onclick="if(!state.appLocked)toggleAppLock();">Lock</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">Unlock</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="forceLogoutPromoters();">Logout</button></div>';
+    const promoterActions = '<div class="promoter-actions-card"><div class="promoter-actions-title">Promoters</div><div class="promoter-actions-buttons"><button class="btn btn-accent btn-sm" onclick="if(!state.appLocked)toggleAppLock();">🔒 Lock</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">🔓 Unlock</button><button class="btn btn-ghost btn-sm promoter-logout-btn" onclick="forceLogoutPromoters();">↪ Logout</button></div></div>';
+    html += promoterActions;
     html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Clear all local stock changes?\')){stockOverrides={};addAuditLog(\'Overrides Cleared\',\'Cleared all stock overrides\');saveStockOverrides();render();}">Clear</button>');
     html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="toggleAuditLogView()">' + (state.auditViewOpen ? 'Hide' : 'View') + '</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
     html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="toggleUserMgmt()">' + (state.userMgmtOpen ? 'Hide' : 'Manage') + '</button>');

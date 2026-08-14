@@ -1,5 +1,6 @@
 package com.abdulasif.pdtstockscanner.bridge;
 
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -136,12 +137,12 @@ public class AndroidNativeBridge {
                             "com.abdulasif.pdtstockscanner.fixed.fileprovider",
                             file
                     );
-                    Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-                    installIntent.setData(contentUri);
-                    installIntent.setType("application/vnd.android.package-archive");
+                    Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                    installIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
                     installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
-                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                     installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    installIntent.setClipData(ClipData.newRawUri("FHL_ELECTRONICS_APK", contentUri));
                     activity.startActivity(installIntent);
                 } catch (Exception e) {
                     e.printStackTrace();
