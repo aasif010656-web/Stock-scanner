@@ -8920,7 +8920,6 @@ function renderBrands(){
     html += '<div class="btn-row" style="margin-bottom:14px;">';
     html += '<button class="btn" onclick="triggerImportExcel()">📥 Import Excel (update stock / add products)</button>';
     html += '</div>';
-    html += '<div class="backup-note">Import an Excel file with a Barcode column (plus optional Description, Brand, Stock Qty, Party, Party Name). Matching barcodes update stock; new barcodes are added as new products. Imports are saved to this device and synced to the cloud automatically.</div>';
   }
 
   html += '<div class="search-wrap" style="position:relative;"><input type="text" id="brandQueryInput" value="' + esc(state.brandQuery) + '" oninput="setBrandQuery(this.value)" placeholder="Search brand, barcode, model / product name..." />';
