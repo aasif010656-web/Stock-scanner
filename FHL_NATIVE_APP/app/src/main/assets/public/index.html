@@ -9678,29 +9678,19 @@ async function handleImportData(fileInput){
 
 function setPricePartyFilter(party){
   state.pricePartyFilter = party || '';
-  state.expandedPriceNotificationId = null;
+  state.expandedPriceParty = '';
   render();
 }
-function togglePriceNotification(id){
-  const key = String(id || '');
-  state.expandedPriceNotificationId = state.expandedPriceNotificationId === key ? null : key;
+function togglePriceParty(party){
+  const key = String(party || '__unassigned__');
+  state.expandedPriceParty = state.expandedPriceParty === key ? '' : key;
   render();
 }
-function getPricePartyOptions(notifications){
-  return Array.from(new Set((notifications || []).map(n => String(n.party || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
-}
-function renderPriceLog(){
-  const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
-  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
-  if(!allVisiblePriceNotifs.length) return '';
-  const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
-  const selectedParty = state.pricePartyFilter || '';
-  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
+function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
   let html = '';
-
-  html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;">';
-  html += '<span>Party-wise Price Update History (' + myPriceNotifs.length + ')</span>';
-  if(myPriceNotifs.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
+  html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
+  html += '<span>Party-wise Price Update History (' + notifications.length + ')</span>';
+  if(notifications.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
   html += '</div>';
   if(partyOptions.length){
     html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
@@ -9711,31 +9701,62 @@ function renderPriceLog(){
     });
     html += '</div>';
   }
-
-  if(!myPriceNotifs.length){
-    html += '<div class="card" style="padding:24px;text-align:center;color:var(--muted);">';
-    html += '<div style="font-size:32px;margin-bottom:8px;">💰</div>';
-    html += '<div style="font-size:14px;">No price updates yet' + (myPartyCodes.length ? ' for your party (' + esc(myPartyCodes.join(', ')) + ')' : '') + '.</div>';
-    html += '</div>';
+  if(!notifications.length){
+    html += '<div class="empty">No price updates' + (selectedParty ? ' for ' + esc(selectedParty) : '') + '.</div>';
     return html;
   }
-
-  myPriceNotifs.forEach(n=>{
-    html += '<div class="card" style="padding:10px;margin-bottom:8px;">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
-    html += '<div style="min-width:0;">';
-    html += '<div class="product-title" style="font-size:13px;">' + esc(n.description||'') + '</div>';
-    html += '<div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(n.barcode||'') + ' · Party: ' + esc(n.party||'-') + '</div>';
-    html += '<div style="font-size:12.5px;margin-top:3px;"><span style="color:var(--red);text-decoration:line-through;">' + esc(n.oldPrice) + '</span> &rarr; <span style="color:var(--green);font-weight:700;">' + esc(n.newPrice) + '</span></div>';
-    html += '<div style="font-size:10.5px;color:var(--dim);margin-top:2px;">' + new Date(n.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
-    html += '</div>';
-    if(isStaffOrAdmin()) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="deletePriceNotification(\'' + n.id + '\')">🗑</button>';
-    html += '</div></div>';
+  const groups = {};
+  notifications.forEach(item=>{
+    const party = String(item.party || item.partyName || '').trim() || '__unassigned__';
+    if(!groups[party]) groups[party] = [];
+    groups[party].push(item);
   });
-
+  Object.keys(groups).sort((a,b)=>a.localeCompare(b)).forEach(party=>{
+    const items = groups[party].slice().sort((a,b)=>Number(b.ts||0)-Number(a.ts||0));
+    const expanded = state.expandedPriceParty === party;
+    const displayParty = party === '__unassigned__' ? 'Unassigned party' : party;
+    const safeParty = esc(party).replace(/'/g, "\\'");
+    const latest = items[0] && items[0].ts ? new Date(items[0].ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) : '';
+    html += '<div class="card price-party-folder" style="padding:0;margin-bottom:10px;overflow:hidden;">';
+    html += '<div role="button" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="padding:12px;cursor:pointer;" onclick="togglePriceParty(\'' + safeParty + '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();togglePriceParty(\'' + safeParty + '\')}">';
+    html += '<div style="display:flex;align-items:center;gap:10px;">';
+    html += '<span style="font-size:20px;">' + (expanded ? '📂' : '📁') + '</span>';
+    html += '<div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">' + esc(displayParty) + '</div><div style="font-size:11px;color:var(--muted);">' + items.length + ' price update' + (items.length===1?'':'s') + (latest ? ' · Latest ' + latest : '') + '</div></div>';
+    html += '<span style="font-size:18px;color:var(--muted);">' + (expanded ? '⌃' : '⌄') + '</span>';
+    html += '</div></div>';
+    if(expanded){
+      html += '<div style="border-top:1px solid var(--border);padding:8px;background:var(--panel);display:grid;gap:8px;">';
+      items.forEach(item=>{
+        const safeId = esc(String(item.id || '')).replace(/'/g, "\\'");
+        html += '<div class="card price-party-update" style="padding:10px;background:var(--card);">';
+        html += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">';
+        html += '<div style="min-width:0;flex:1;"><div class="product-title" style="font-size:13px;">' + esc(item.description || item.articleCode || item.product || '-') + '</div>';
+        html += '<div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(item.barcode || item.code || '-') + '</div>';
+        html += '<div style="font-size:12.5px;margin-top:3px;"><span style="color:var(--red);text-decoration:line-through;">' + esc(item.oldPrice || '-') + '</span> &rarr; <span style="color:var(--green);font-weight:700;">' + esc(item.newPrice || '-') + '</span></div></div>';
+        html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotification(\'' + safeId + '\')">🗑</button></div>';
+        html += '<div style="font-size:11px;color:var(--muted);display:grid;gap:3px;"><div><b>Updated by:</b> ' + esc(item.updatedBy || item.username || item.user || '-') + '</div><div><b>Article code:</b> ' + esc(item.articleCode || item.product || item.code || '-') + '</div><div><b>Updated:</b> ' + (item.ts ? new Date(item.ts).toLocaleString() : '-') + '</div></div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  });
   return html;
 }
-
+function getPricePartyOptions(notifications){
+  return Array.from(new Set((notifications || []).map(n => String(n.party || n.partyName || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+}
+function renderPriceLog(){
+  const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
+  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
+  if(!allVisiblePriceNotifs.length) return '';
+  const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
+  const selectedParty = state.pricePartyFilter || '';
+  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || n.partyName || '').trim() === selectedParty) : allVisiblePriceNotifs;
+  let html = '';
+  html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
+  return html;
+}
 function renderLog(){
   const deviceCount = new Set(scanLog.map(l=>l.deviceId||'unknown')).size;
   let html = '';
@@ -9778,52 +9799,8 @@ function renderLog(){
   const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
-  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
-  if(allVisiblePriceNotifs.length){
-    html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
-    html += '<span>Party-wise Price Update History (' + myPriceNotifs.length + ')</span>';
-    html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
-    html += '</div>';
-    if(partyOptions.length){
-      html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
-      html += '<button class="sort-btn' + (!selectedParty ? ' active' : '') + '" onclick="setPricePartyFilter(\'\')">All Parties</button>';
-      partyOptions.forEach(p=>{
-        const safeParty = esc(p).replace(/'/g, "\\'");
-        html += '<button class="sort-btn' + (selectedParty === p ? ' active' : '') + '" onclick="setPricePartyFilter(\'' + safeParty + '\')">' + esc(p) + '</button>';
-      });
-      html += '</div>';
-    }
-    if(!myPriceNotifs.length){
-      html += '<div class="empty">No price updates for ' + esc(selectedParty) + '.</div>';
-    }
-    myPriceNotifs.forEach(n=>{
-      const notificationId = String(n.id || '');
-      const expanded = state.expandedPriceNotificationId === notificationId;
-      const safeId = esc(notificationId).replace(/'/g, "\\'");
-      html += '<div class="card" style="padding:0;margin-bottom:8px;overflow:hidden;">';
-      html += '<div role="button" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="padding:10px;cursor:pointer;" onclick="togglePriceNotification(\'' + safeId + '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();togglePriceNotification(\'' + safeId + '\')}">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
-      html += '<div style="min-width:0;flex:1;">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><div class="product-title" style="font-size:13px;">' + esc(n.description||'') + '</div><span style="font-size:16px;color:var(--muted);">' + (expanded ? '⌃' : '⌄') + '</span></div>';
-      html += '<div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(n.barcode||'') + ' · Party: ' + esc(n.party||'-') + '</div>';
-      html += '<div style="font-size:12.5px;margin-top:3px;"><span style="color:var(--red);text-decoration:line-through;">' + esc(n.oldPrice) + '</span> &rarr; <span style="color:var(--green);font-weight:700;">' + esc(n.newPrice) + '</span></div>';
-      html += '<div style="font-size:10.5px;color:var(--dim);margin-top:2px;">' + new Date(n.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
-      html += '</div>';
-      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotification(\'' + safeId + '\')">🗑</button>';
-      html += '</div></div>';
-      if(expanded){
-        html += '<div style="border-top:1px solid var(--border);padding:10px;background:var(--panel);font-size:12px;display:grid;gap:5px;">';
-        html += '<div><b>Updated by:</b> ' + esc(n.updatedBy || n.username || n.user || '-') + '</div>';
-        html += '<div><b>Article code:</b> ' + esc(n.articleCode || n.product || n.code || '-') + '</div>';
-        html += '<div><b>Party:</b> ' + esc(n.partyName || n.party || '-') + '</div>';
-        html += '<div><b>Change:</b> ' + esc(n.oldPrice || '-') + ' → ' + esc(n.newPrice || '-') + '</div>';
-        html += '<div><b>Updated:</b> ' + new Date(n.ts).toLocaleString() + '</div>';
-        html += '</div>';
-      }
-      html += '</div>';
-    });
-  }
-
+  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || n.partyName || '').trim() === selectedParty) : allVisiblePriceNotifs;
+  if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
