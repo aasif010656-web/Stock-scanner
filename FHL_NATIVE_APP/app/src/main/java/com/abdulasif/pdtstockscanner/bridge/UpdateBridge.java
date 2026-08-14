@@ -1,6 +1,7 @@
 package com.abdulasif.pdtstockscanner.bridge;
 
 import android.app.DownloadManager;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -86,16 +87,16 @@ public class UpdateBridge {
                 }
             });
 
-            long downloadId = dm.enqueue(request);
-
-            // Register BroadcastReceiver for download complete
+            // Register before enqueue so a very fast/local download cannot finish before the receiver exists.
             IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-            BroadcastReceiverCompat receiver = new BroadcastReceiverCompat(dm, dest, downloadId);
+            BroadcastReceiverCompat receiver = new BroadcastReceiverCompat(dm, dest);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 activity.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
             } else {
                 activity.registerReceiver(receiver, filter);
             }
+            long downloadId = dm.enqueue(request);
+            receiver.setExpectedId(downloadId);
 
         } catch (Exception e) {
             Log.e(TAG, "openUpdate error", e);
@@ -108,11 +109,14 @@ public class UpdateBridge {
     private class BroadcastReceiverCompat extends android.content.BroadcastReceiver {
         private final DownloadManager dm;
         private final File dest;
-        private final long expectedId;
+        private volatile long expectedId = -1;
 
-        BroadcastReceiverCompat(DownloadManager dm, File dest, long expectedId) {
+        BroadcastReceiverCompat(DownloadManager dm, File dest) {
             this.dm = dm;
             this.dest = dest;
+        }
+
+        void setExpectedId(long expectedId) {
             this.expectedId = expectedId;
         }
 
@@ -186,12 +190,12 @@ public class UpdateBridge {
                             "com.abdulasif.pdtstockscanner.fixed.fileprovider",
                             file
                     );
-                    Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-                    installIntent.setData(contentUri);
-                    installIntent.setType("application/vnd.android.package-archive");
+                    Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                    installIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
                     installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
-                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                     installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    installIntent.setClipData(ClipData.newRawUri("FHL_ELECTRONICS_APK", contentUri));
                     activity.startActivity(installIntent);
                 } catch (Exception e) {
                     Log.e(TAG, "install intent failed", e);
