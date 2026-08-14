@@ -137,13 +137,22 @@ public class AndroidNativeBridge {
                             "com.abdulasif.pdtstockscanner.fixed.fileprovider",
                             file
                     );
-                    Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                    Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
                     installIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
                     installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
-                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                    installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, false);
+                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                     installIntent.setClipData(ClipData.newRawUri("FHL_ELECTRONICS_APK", contentUri));
-                    activity.startActivity(installIntent);
+                    try {
+                        activity.startActivity(installIntent);
+                    } catch (Exception primaryFailure) {
+                        Log.w("AndroidNativeBridge", "ACTION_INSTALL_PACKAGE unavailable; retrying ACTION_VIEW", primaryFailure);
+                        Intent viewIntent = new Intent(Intent.ACTION_VIEW);
+                        viewIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+                        viewIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        viewIntent.setClipData(ClipData.newRawUri("FHL_ELECTRONICS_APK", contentUri));
+                        activity.startActivity(viewIntent);
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }

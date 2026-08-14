@@ -19,6 +19,7 @@ import androidx.core.content.FileProvider;
 import com.abdulasif.pdtstockscanner.MainActivity;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * UpdateBridge - JavaScript Interface for handling app updates via DownloadManager
@@ -91,12 +92,15 @@ public class UpdateBridge {
             IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
             BroadcastReceiverCompat receiver = new BroadcastReceiverCompat(dm, dest);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                activity.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
             } else {
                 activity.registerReceiver(receiver, filter);
             }
             long downloadId = dm.enqueue(request);
             receiver.setExpectedId(downloadId);
+            // Some Android builds suppress the completion broadcast for a dynamically
+            // registered receiver. Poll briefly as a deterministic fallback.
+            receiver.pollStatus(downloadId, 0);
 
         } catch (Exception e) {
             Log.e(TAG, "openUpdate error", e);
@@ -110,6 +114,7 @@ public class UpdateBridge {
         private final DownloadManager dm;
         private final File dest;
         private volatile long expectedId = -1;
+        private final AtomicBoolean handled = new AtomicBoolean(false);
 
         BroadcastReceiverCompat(DownloadManager dm, File dest) {
             this.dm = dm;
@@ -120,46 +125,67 @@ public class UpdateBridge {
             this.expectedId = expectedId;
         }
 
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            long id = intent.getLongExtra("extra_download_id", -1);
-            if (id != expectedId) return;
+        void pollStatus(final long id, final int attempt) {
+            if (handled.get() || attempt > 30) return;
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (handled.get()) return;
+                    DownloadManager.Query q = new DownloadManager.Query().setFilterById(new long[]{id});
+                    android.database.Cursor c = dm.query(q);
+                    int status = -1;
+                    if (c != null) {
+                        if (c.moveToFirst()) {
+                            int idx = c.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                            if (idx >= 0) status = c.getInt(idx);
+                        }
+                        c.close();
+                    }
+                    if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
+                        handleCompletion(id);
+                    } else {
+                        pollStatus(id, attempt + 1);
+                    }
+                }
+            }, 1000L);
+        }
 
-            try {
-                context.unregisterReceiver(this);
-            } catch (Exception e) {
-                // ignore
-            }
+        private void handleCompletion(long id) {
+            if (!handled.compareAndSet(false, true)) return;
+            expectedId = id;
+            try { activity.unregisterReceiver(this); } catch (Exception ignored) {}
+            processResult(id);
+        }
 
+        private void processResult(long id) {
             DownloadManager.Query query = new DownloadManager.Query();
-            query.setFilterById(new long[]{expectedId});
+            query.setFilterById(new long[]{id});
             android.database.Cursor cursor = dm.query(query);
-            int status = 16; // STATUS_RUNNING
-
+            int status = DownloadManager.STATUS_FAILED;
             if (cursor != null) {
                 if (cursor.moveToFirst()) {
-                    int statusIdx = cursor.getColumnIndex("status");
-                    if (statusIdx >= 0) {
-                        status = cursor.getInt(statusIdx);
-                    }
+                    int statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                    if (statusIdx >= 0) status = cursor.getInt(statusIdx);
                 }
                 cursor.close();
             }
-
             if (status == DownloadManager.STATUS_SUCCESSFUL) {
                 launchInstaller(dest);
-                Toast.makeText(context, "Download complete. Opening installer...", Toast.LENGTH_LONG).show();
+                Toast.makeText(activity, "Download complete. Opening installer...", Toast.LENGTH_LONG).show();
             } else {
-                Toast.makeText(context, "Download failed, opening browser...", Toast.LENGTH_LONG).show();
-                // Fallback: open in browser
-                try {
-                    Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(dest.getAbsolutePath()));
-                    browserIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(browserIntent);
-                } catch (Exception e) {
-                    Log.e(TAG, "fallback failed", e);
-                }
+                Toast.makeText(activity, "Download failed. Please retry.", Toast.LENGTH_LONG).show();
             }
+        }
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            long id = intent.getLongExtra("extra_download_id", -1);
+            if (expectedId < 0) {
+                expectedId = id;
+            } else if (id != expectedId) {
+                return;
+            }
+
+            handleCompletion(id);
         }
     }
 
@@ -175,28 +201,43 @@ public class UpdateBridge {
                         Log.e(TAG, "Downloaded APK is missing or empty: " + file);
                         return;
                     }
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
-                            !activity.getPackageManager().canRequestPackageInstalls()) {
-                        Intent permissionIntent = new Intent(
-                                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                Uri.parse("package:" + activity.getPackageName())
-                        );
-                        permissionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        activity.startActivity(permissionIntent);
-                        return;
-                    }
                     Uri contentUri = FileProvider.getUriForFile(
                             activity,
                             "com.abdulasif.pdtstockscanner.fixed.fileprovider",
                             file
                     );
-                    Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                    Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
                     installIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
                     installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+                    installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, false);
                     installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                     installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                     installIntent.setClipData(ClipData.newRawUri("FHL_ELECTRONICS_APK", contentUri));
-                    activity.startActivity(installIntent);
+                    try {
+                        activity.startActivity(installIntent);
+                    } catch (Exception primaryFailure) {
+                        Log.w(TAG, "ACTION_INSTALL_PACKAGE unavailable; retrying ACTION_VIEW", primaryFailure);
+                        Intent viewIntent = new Intent(Intent.ACTION_VIEW);
+                        viewIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+                        viewIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        viewIntent.setClipData(ClipData.newRawUri("FHL_ELECTRONICS_APK", contentUri));
+                        try {
+                            activity.startActivity(viewIntent);
+                        } catch (Exception secondaryFailure) {
+                            Log.e(TAG, "Both APK installer intents failed", secondaryFailure);
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                                    !activity.getPackageManager().canRequestPackageInstalls()) {
+                                Intent permissionIntent = new Intent(
+                                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                        Uri.parse("package:" + activity.getPackageName())
+                                );
+                                permissionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                activity.startActivity(permissionIntent);
+                            } else {
+                                throw secondaryFailure;
+                            }
+                        }
+                    }
                 } catch (Exception e) {
                     Log.e(TAG, "install intent failed", e);
                     Toast.makeText(activity, "Could not open APK installer. Open the downloaded APK from Downloads.", Toast.LENGTH_LONG).show();
