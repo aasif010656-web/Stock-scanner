@@ -7,8 +7,15 @@ import android.net.Uri;
 import android.os.Environment;
 import android.util.Base64;
 import android.util.Log;
+import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.webkit.JavascriptInterface;
 import androidx.biometric.BiometricManager;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
 import androidx.biometric.BiometricPrompt;
 import androidx.core.content.ContextCompat;
 
@@ -92,6 +99,34 @@ public class AndroidNativeBridge {
 
     private void sendBiometricResult(boolean success) {
         activity.sendBiometricResultToWeb(success);
+    }
+
+    /** Posts a grouped price-update summary to Android notification center. */
+    @JavascriptInterface
+    public void postPriceUpdateNotification(String title, String body) {
+        activity.runOnUiThread(() -> {
+            final String channelId = "price_updates";
+            NotificationManager manager = (NotificationManager) activity.getSystemService(Activity.NOTIFICATION_SERVICE);
+            if (manager == null) return;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(channelId, "Price Updates", NotificationManager.IMPORTANCE_DEFAULT);
+                channel.setDescription("Promoter price update notifications");
+                manager.createNotificationChannel(channel);
+            }
+            if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4021);
+                return;
+            }
+            String safeBody = body == null ? "Your product prices are changed" : body;
+            NotificationCompat.Builder notification = new NotificationCompat.Builder(activity, channelId)
+                    .setSmallIcon(com.abdulasif.pdtstockscanner.R.mipmap.ic_launcher)
+                    .setContentTitle(title == null ? "Price update" : title)
+                    .setContentText(safeBody)
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(safeBody))
+                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                    .setAutoCancel(true);
+            manager.notify((int)(System.currentTimeMillis() & 0x7fffffff), notification.build());
+        });
     }
 
     /**
