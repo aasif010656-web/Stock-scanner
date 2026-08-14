@@ -2,6 +2,7 @@ package com.abdulasif.pdtstockscanner;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
 import android.util.Base64;
@@ -12,6 +13,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.ValueCallback;
 import android.widget.FrameLayout;
 
 import androidx.activity.result.ActivityResult;
@@ -37,6 +39,8 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private ActivityResultLauncher<Intent> scannerLauncher;
+    private ActivityResultLauncher<Intent> fileChooserLauncher;
+    private ValueCallback<Uri[]> filePathCallback;
     private AndroidNativeBridge nativeBridge;
     private UpdateBridge updateBridge;
 
@@ -56,6 +60,21 @@ public class MainActivity extends AppCompatActivity {
                             onBarcodeScanned(code);
                         }
                     }
+                }
+        );
+        // Android WebView does not open HTML <input type=file> reliably with the
+        // default WebChromeClient. Route file inputs through the system picker.
+        fileChooserLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                result -> {
+                    if (filePathCallback == null) return;
+                    Uri[] results = null;
+                    if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                        Uri data = result.getData().getData();
+                        if (data != null) results = new Uri[]{data};
+                    }
+                    filePathCallback.onReceiveValue(results);
+                    filePathCallback = null;
                 }
         );
 
@@ -94,7 +113,23 @@ public class MainActivity extends AppCompatActivity {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         webView.setWebViewClient(new WebViewClient());
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (filePathCallback != null) filePathCallback.onReceiveValue(null);
+                filePathCallback = callback;
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "application/vnd.ms-excel",
+                        "text/csv"
+                });
+                fileChooserLauncher.launch(intent);
+                return true;
+            }
+        });
     }
 
     private void onBarcodeScanned(String code) {
