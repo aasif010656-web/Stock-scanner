@@ -5201,7 +5201,7 @@ let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error
 let stockCacheLoaded = false;
 let stockCacheUpdatedAt = 0;
-const OFFLINE_STOCK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const OFFLINE_STOCK_MAX_AGE_MS = Number.MAX_SAFE_INTEGER;
 function markStockCacheFresh(ts){
   const value = Number(ts);
   if(!Number.isFinite(value) || value <= 0) return;
@@ -5214,7 +5214,7 @@ function hasTrustedOfflineStock(){
 }
 function offlineStockLabel(){
   if(syncStatus !== 'offline') return '';
-  if(!hasTrustedOfflineStock()) return ' · ⚠ Stock unavailable or stale offline';
+  if(!stockCacheLoaded) return ' · ⚠ Offline stock snapshot not available';
   const d = new Date(stockCacheUpdatedAt).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
   return ' · ⚠ Last trusted stock sync ' + d;
 }
@@ -5553,9 +5553,9 @@ async function saveOperatorName(){
 }
 
 function effectiveQty(row){
-  // Never present cached or bundled quantities as current when offline data is
-  // missing or older than the trusted freshness window.
-  if(syncStatus === 'offline' && !hasTrustedOfflineStock()) return 0;
+  // Offline mode intentionally keeps showing the last locally saved stock snapshot.
+  // The header label makes it clear that the values are not live.
+  if(syncStatus === 'offline' && !stockCacheLoaded) return 0;
   if(row.Barcode && stockOverrides.hasOwnProperty(row.Barcode)) return stockOverrides[row.Barcode];
   return parseFloat(row["Stock Qty"]) || 0;
 }
@@ -5848,8 +5848,9 @@ function openPasswordModal(username){
   );
   setTimeout(()=>{ const input=document.getElementById('passwordModalInput'); if(input) input.focus(); }, 50);
 }
-function savePasswordModal(){
+async function savePasswordModal(){
   if(!isAdminUser()){ closeActionModal(); showToast('Only Admin can manage users', true); return; }
+  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   const username = state._passwordEditUser;
   const input = document.getElementById('passwordModalInput');
   const newPass = input ? input.value : '';
@@ -5857,7 +5858,7 @@ function savePasswordModal(){
   state.appUsers[username] = newPass;
   addAuditLog('Password Changed', 'Changed password for user ' + username);
   closeActionModal();
-  pushToCloud(); render();
+  await pushToCloud(true, true); render();
   showToast('✓ Password updated for ' + username);
 }
 function openRoleModal(username){
@@ -5881,8 +5882,9 @@ function openRoleModal(username){
     '</div>'
   );
 }
-function saveRoleModal(){
+async function saveRoleModal(){
   if(!isAdminUser()){ closeActionModal(); showToast('Only Admin can manage users', true); return; }
+  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   const username = state._roleEditUser;
   const roleEl = document.getElementById('roleModalRole');
   const partyEl = document.getElementById('roleModalParties');
@@ -5895,7 +5897,7 @@ function saveRoleModal(){
   state.userRoles[username] = { role, partyCodes, brandCodes };
   addAuditLog('Role Changed', 'Set ' + username + ' to role ' + role + (partyCodes.length ? ' (parties: ' + partyCodes.join('/') + ')' : '') + (brandCodes.length ? ' (brands: ' + brandCodes.join('/') + ')' : ''));
   closeActionModal();
-  pushToCloud(); render();
+  await pushToCloud(true, true); render();
   showToast('✓ Role updated for ' + username);
 }
 function selectTheme(themeId){
@@ -8975,8 +8977,9 @@ function getUserBrandCodes(u){
   const info = state.userRoles && state.userRoles[u];
   return (info && Array.isArray(info.brandCodes)) ? info.brandCodes : [];
 }
-function saveUser(){
+async function saveUser(){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
+  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   const u = state.userForm.username.trim();
   const p = state.userForm.password.trim();
   if(!u || !p){ showToast('Enter username and password', true); return; }
@@ -8992,16 +8995,17 @@ function saveUser(){
   }
   addAuditLog('User Saved', 'Added/Updated user ' + u + ' (role: ' + (u==='Asif'?'admin':role) + (partyCodes.length ? ', parties: ' + partyCodes.join('/') : '') + (brandCodes.length ? ', brands: ' + brandCodes.join('/') : '') + ')');
   state.userForm = { username: '', password: '', role: 'promoter', partyCodes: '', brandCodes: '' };
-  pushToCloud(); render();
+  await pushToCloud(true, true); render();
 }
-function deleteUser(u){
+async function deleteUser(u){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
+  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   if(u === 'Asif'){ showToast('Cannot delete primary admin', true); return; }
   if(!confirm('Delete user ' + u + '?')) return;
   delete state.appUsers[u];
   if(state.userRoles) delete state.userRoles[u];
   addAuditLog('User Deleted', 'Deleted user ' + u);
-  pushToCloud(); render();
+  await pushToCloud(true, true); render();
 }
 
 function changeUserPassword(u){
@@ -9119,7 +9123,7 @@ function renderSettings(){
   html += '<div class="ios-section-title">Support & Contact</div>';
   html += '<div class="ios-group">';
   const canEditContactAdmin = !!(state.user && state.user.username === 'Asif' && state.user.role === 'admin');
-  const contactAdminControl = canEditContactAdmin ? '<div style="display:flex;gap:6px;align-items:center;max-width:245px;"><input type="url" value="' + esc(state.contactAdminLink||'') + '" placeholder="Paste admin link" oninput="state.contactAdminLink=this.value" style="width:150px;margin:0;padding:7px 8px;font-size:12px;" /><button class="btn btn-accent btn-sm" onclick="saveContactAdminLink()">Save</button>' + (state.contactAdminLink ? '<button class="btn btn-ghost btn-sm" onclick="openContactAdminLink()">Open</button>' : '') + '</div>' : (state.contactAdminLink ? '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open</button>' : '<span style="font-size:12px;color:var(--muted);">Admin link not set</span>');
+  const contactAdminControl = canEditContactAdmin ? '<div style="display:flex;gap:6px;align-items:center;max-width:245px;"><input type="url" value="' + esc(state.contactAdminLink||'') + '" placeholder="Paste admin link" oninput="state.contactAdminLink=this.value" style="width:150px;margin:0;padding:7px 8px;font-size:12px;" /><button class="btn btn-accent btn-sm" onclick="saveContactAdminLink()">Save</button>' + (state.contactAdminLink ? '<button class="btn btn-ghost btn-sm" onclick="openContactAdminLink()">Open</button>' : '') + '</div>' : (state.contactAdminLink ? '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open</button>' : '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open Admin Contact</button>');
   html += iosRow('💬', 'linear-gradient(#25D366,#128C7E)', 'Contact Admin', contactAdminControl);
   html += '</div>';
 
@@ -9401,13 +9405,8 @@ function exportAgingExcel(partyFilter){
 
 function renderData(){
   let html = '<div class="section">';
-  html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;"><div><h2 style="margin-bottom:4px;">Data & Excel</h2><div style="font-size:12px;color:var(--muted);">Import, review, search, and manage spreadsheet data in one place.</div></div><div class="chip">' + ((state.reports||[]).length) + ' reports</div></div>';
-  html += '<div class="card" style="margin:14px 0;padding:16px;background:linear-gradient(135deg,rgba(10,132,255,.15),rgba(88,86,214,.12));border:1px solid rgba(10,132,255,.28);">';
-  html += '<div style="display:flex;gap:12px;align-items:flex-start;"><div style="font-size:25px;">📊</div><div style="flex:1;"><div style="font-weight:800;font-size:15px;">Import a professional Excel report</div><div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45;">Upload an .xlsx or .xls file, then search, filter, edit, and review every row. Your import is cached on this device and synchronized when connected.</div></div></div>';
-  html += '<div class="btn-row" style="margin-top:14px;"><button class="btn btn-accent" onclick="triggerImportData()">📥 Choose Excel file</button><button class="btn btn-ghost" onclick="document.getElementById(\'importDataInput\').click()">Browse again</button></div>';
-  const latest = state.latestExcelUpdate;
-  if(latest){ html += '<div style="font-size:11px;color:var(--muted);margin-top:10px;">Last inventory Excel: <b>' + esc(latest.fileName||'Unnamed file') + '</b> · ' + esc(new Date(latest.ts).toLocaleString()) + (latest.uploadedBy ? ' · uploaded by ' + esc(latest.uploadedBy) : '') + '</div>'; }
-  html += '</div>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><h2 style="margin-bottom:0;">Data & Excel</h2><button class="btn btn-accent" onclick="triggerImportData()">📥 Import Excel</button></div>';
+  html += '<input id="importDataInput" type="file" accept=".xlsx,.xls" style="display:none" onchange="handleImportData(this)" />';
   if(!state.reports || state.reports.length === 0) {
       html += '<div class="empty">No data reports imported yet.</div>';
   } else {

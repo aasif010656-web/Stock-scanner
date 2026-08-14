@@ -56,7 +56,10 @@ public class UpdateBridge {
         }
 
         // Get cache directory
-        File dir = activity.getExternalCacheDir();
+        File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (dir == null) {
+            dir = activity.getExternalCacheDir();
+        }
         if (dir == null) {
             dir = activity.getCacheDir();
         }
@@ -159,34 +162,32 @@ public class UpdateBridge {
     /**
      * Launches the package installer for the given APK file
      */
-    private void launchInstaller(File file) {
-        String mimeType = "application/vnd.android.package-archive";
-        String action = Intent.ACTION_VIEW;
-        int flags = Intent.FLAG_ACTIVITY_NEW_TASK;
-
-        try {
-            Uri contentUri = FileProvider.getUriForFile(
-                    activity,
-                    "com.abdulasif.pdtstockscanner.fixed.fileprovider",
-                    file
-            );
-
-            Intent installIntent = new Intent(action);
-            installIntent.setDataAndType(contentUri, mimeType);
-            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            installIntent.addFlags(flags);
-            activity.startActivity(installIntent);
-        } catch (Exception e) {
-            Log.e(TAG, "install intent failed", e);
-            // Fallback with file:// URI
-            try {
-                Intent fallback = new Intent(action);
-                fallback.setDataAndType(Uri.fromFile(file), mimeType);
-                fallback.addFlags(flags);
-                activity.startActivity(fallback);
-            } catch (Exception e2) {
-                Log.e(TAG, "fallback install failed", e2);
+    private void launchInstaller(final File file) {
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (!file.exists() || file.length() == 0) {
+                        Log.e(TAG, "Downloaded APK is missing or empty: " + file);
+                        return;
+                    }
+                    Uri contentUri = FileProvider.getUriForFile(
+                            activity,
+                            "com.abdulasif.pdtstockscanner.fixed.fileprovider",
+                            file
+                    );
+                    Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+                    installIntent.setData(contentUri);
+                    installIntent.setType("application/vnd.android.package-archive");
+                    installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    activity.startActivity(installIntent);
+                } catch (Exception e) {
+                    Log.e(TAG, "install intent failed", e);
+                    Toast.makeText(activity, "Could not open APK installer. Open the downloaded APK from Downloads.", Toast.LENGTH_LONG).show();
+                }
             }
-        }
+        });
     }
 }
