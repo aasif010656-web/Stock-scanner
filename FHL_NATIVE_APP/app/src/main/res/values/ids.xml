@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="webview" type="id" />
+    <item name="camera_container" type="id" />
+    <item name="previewView" type="id" />
+    <item name="btn_close" type="id" />
+    <item name="btn_close_camera" type="id" />
+    <item name="btn_toggle_torch" type="id" />
+    <item name="btn_torch" type="id" />
+</resources>
