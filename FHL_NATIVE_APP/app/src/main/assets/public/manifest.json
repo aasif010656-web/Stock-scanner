@@ -1,6 +1,6 @@
 {
-  "name": "FHL ELECTRONICS v5.9",
-  "short_name": "FHL ELECTRONICS v5.9",
+  "name": "FHL ELECTRONICS v6",
+  "short_name": "FHL ELECTRONICS v6",
   "description": "Barcode scan-and-update stock app for electronics inventory",
   "start_url": "./index.html",
   "display": "standalone",
