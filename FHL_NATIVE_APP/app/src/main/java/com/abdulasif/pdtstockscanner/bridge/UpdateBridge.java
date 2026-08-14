@@ -171,6 +171,16 @@ public class UpdateBridge {
                         Log.e(TAG, "Downloaded APK is missing or empty: " + file);
                         return;
                     }
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                            !activity.getPackageManager().canRequestPackageInstalls()) {
+                        Intent permissionIntent = new Intent(
+                                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:" + activity.getPackageName())
+                        );
+                        permissionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        activity.startActivity(permissionIntent);
+                        return;
+                    }
                     Uri contentUri = FileProvider.getUriForFile(
                             activity,
                             "com.abdulasif.pdtstockscanner.fixed.fileprovider",
