@@ -80,27 +80,12 @@ public class AndroidNativeBridge {
      */
     @JavascriptInterface
     public void installLastDownloadedApk() {
-        String mimeType = "application/vnd.android.package-archive";
-        String action = Intent.ACTION_VIEW;
-        int flags = 0x10000000; // FLAG_ACTIVITY_NEW_TASK
-
         try {
             File cacheDir = activity.getExternalCacheDir();
+            if (cacheDir == null) cacheDir = activity.getCacheDir();
             File apkFile = new File(cacheDir, "FHL_ELECTRONICS_update.apk");
-
-            if (apkFile.exists()) {
-                Uri contentUri = FileProvider.getUriForFile(
-                        activity,
-                        "com.abdulasif.pdtstockscanner.fixed.fileprovider",
-                        apkFile
-                );
-
-                Intent installIntent = new Intent(action);
-                installIntent.setDataAndType(contentUri, mimeType);
-                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                installIntent.addFlags(flags);
-                activity.startActivity(installIntent);
-            }
+            if (!apkFile.exists() || apkFile.length() == 0) return;
+            openInstaller(apkFile);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -114,25 +99,41 @@ public class AndroidNativeBridge {
     public void installApk(String base64Data, String fileName) {
         try {
             byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
-            File file = new File(activity.getExternalCacheDir(), fileName);
-            FileOutputStream fos = new FileOutputStream(file);
-            fos.write(decodedBytes);
-            fos.close();
-
-            Uri contentUri = FileProvider.getUriForFile(
-                    activity,
-                    "com.abdulasif.pdtstockscanner.fixed.fileprovider",
-                    file
-            );
-
-            Intent installIntent = new Intent(Intent.ACTION_VIEW);
-            installIntent.setDataAndType(contentUri, "application/vnd.android.package-archive");
-            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            installIntent.addFlags(0x10000000); // FLAG_ACTIVITY_NEW_TASK
-            activity.startActivity(installIntent);
+            File cacheDir = activity.getExternalCacheDir();
+            if (cacheDir == null) cacheDir = activity.getCacheDir();
+            File file = new File(cacheDir, fileName == null || fileName.trim().isEmpty() ? "FHL_ELECTRONICS_update.apk" : fileName);
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                fos.write(decodedBytes);
+                fos.flush();
+            }
+            openInstaller(file);
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private void openInstaller(final File file) {
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Uri contentUri = FileProvider.getUriForFile(
+                            activity,
+                            "com.abdulasif.pdtstockscanner.fixed.fileprovider",
+                            file
+                    );
+                    Intent installIntent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+                    installIntent.setData(contentUri);
+                    installIntent.setType("application/vnd.android.package-archive");
+                    installIntent.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
+                    installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    activity.startActivity(installIntent);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     /**
