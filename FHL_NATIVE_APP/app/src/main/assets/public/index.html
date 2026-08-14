@@ -7112,8 +7112,9 @@ async function checkForUpdates(isAuto){
     if(updateDoc.exists){
       const data = updateDoc.data();
       const latestUrl = resolveLatestUpdateUrl(data);
+      const releaseLabel = String(data.releaseTag || ('v' + data.version));
       if(data.version && data.version !== currentVersion && latestUrl){
-        const msg = "New version " + data.version + " is available!";
+        const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
         if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
         if(isAuto && !state._updateNotified){
           state._updateNotified = true;
@@ -7137,6 +7138,8 @@ async function downloadAndInstallUpdate(url){
   }
 
   var statusEl = document.getElementById('updateStatus');
+  var releaseMatch = String(url).match(/[?&]fhl_release=([^&]+)/);
+  var releaseLabel = releaseMatch ? decodeURIComponent(releaseMatch[1]) : 'latest release';
   function upStatus(msg){
     if(statusEl) statusEl.innerText = msg;
     showToast(msg);
@@ -7145,10 +7148,10 @@ async function downloadAndInstallUpdate(url){
   // ---- Primary: Use DownloadManager (UpdateBridge) for system-level download ----
   // DownloadManager handles redirects properly and avoids CORS issues with XHR.
   if(window.UpdateBridge && typeof window.UpdateBridge.openUpdate === 'function'){
-    upStatus("Downloading update via system manager...");
+    upStatus("Downloading " + releaseLabel + " via system manager...");
     try {
       window.UpdateBridge.openUpdate(String(url));
-      showToast("Update downloading in background...");
+      showToast("" + releaseLabel + " download started. Android installer will open when ready.");
       return;
     } catch(e) {
       console.error("UpdateBridge.openUpdate failed:", e);
