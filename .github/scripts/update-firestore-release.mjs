@@ -48,7 +48,9 @@ const fields = {
   downloadUrl: { stringValue: downloadUrl },
   apkUrl: { stringValue: downloadUrl },
   releaseTag: { stringValue: tag },
-  releaseName: { stringValue: `FHL ELECTRONICS ${tag}` },
+  releaseName: { stringValue: `FHL ELECTRONICS v6 ${tag}` },
+  appName: { stringValue: "FHL ELECTRONICS v6" },
+  displayVersion: { stringValue: "v6" },
   releasedAt: { timestampValue: new Date().toISOString() },
   source: { stringValue: "github-actions" },
 };
