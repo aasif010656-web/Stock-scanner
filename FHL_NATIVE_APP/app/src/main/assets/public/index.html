@@ -203,7 +203,9 @@
 .share-row{display:flex;gap:10px;margin-top:10px;}
 .btn-whatsapp{background:#25D366;color:#fff;border:none;}
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif; transition: font-size 0.2s; }
+html,body{
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior-y:none;margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif; transition: font-size 0.2s; }
 /* ---- Background variants, one per theme "mood" ---- */
 body.bg-spatial{ background: radial-gradient(ellipse 900px 500px at 15% -5%, rgba(108,125,255,0.14), transparent 60%), radial-gradient(ellipse 700px 500px at 100% 10%, rgba(58,220,145,0.08), transparent 55%), radial-gradient(ellipse 800px 600px at 50% 120%, rgba(108,125,255,0.10), transparent 60%), var(--bg); background-attachment:fixed; }
 body.bg-spatial-strong{ background: radial-gradient(ellipse 1000px 600px at 10% -10%, rgba(124,140,255,0.22), transparent 55%), radial-gradient(ellipse 800px 600px at 100% 0%, rgba(89,199,247,0.14), transparent 55%), radial-gradient(ellipse 900px 700px at 50% 130%, rgba(124,140,255,0.18), transparent 60%), var(--bg); background-attachment:fixed; }
@@ -5195,16 +5197,22 @@ let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error
 let stockCacheLoaded = false;
 let stockCacheUpdatedAt = 0;
+const OFFLINE_STOCK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 function markStockCacheFresh(ts){
+  const value = Number(ts);
+  if(!Number.isFinite(value) || value <= 0) return;
   stockCacheLoaded = true;
-  stockCacheUpdatedAt = Number(ts) || Date.now();
+  stockCacheUpdatedAt = value;
   try{ localStorage.setItem('stock-cache-updated-at', String(stockCacheUpdatedAt)); }catch(e){}
+}
+function hasTrustedOfflineStock(){
+  return stockCacheLoaded && stockCacheUpdatedAt > 0 && (Date.now() - stockCacheUpdatedAt) <= OFFLINE_STOCK_MAX_AGE_MS;
 }
 function offlineStockLabel(){
   if(syncStatus !== 'offline') return '';
-  if(!stockCacheLoaded) return ' · ⚠ Stock unavailable offline';
-  const d = stockCacheUpdatedAt ? new Date(stockCacheUpdatedAt).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : 'unknown time';
-  return ' · ⚠ Last stock sync ' + d;
+  if(!hasTrustedOfflineStock()) return ' · ⚠ Stock unavailable or stale offline';
+  const d = new Date(stockCacheUpdatedAt).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  return ' · ⚠ Last trusted stock sync ' + d;
 }
 
 function initFirebase(){
@@ -5226,7 +5234,7 @@ async function loadStorage(){
   try {
     const cachedOverrides = localStorage.getItem('stock-overrides-cache');
     const cachedStockAt = localStorage.getItem('stock-cache-updated-at');
-    if(cachedOverrides){ stockOverrides = JSON.parse(cachedOverrides); markStockCacheFresh(cachedStockAt || Date.now()); }
+    if(cachedOverrides){ stockOverrides = JSON.parse(cachedOverrides); if(cachedStockAt) markStockCacheFresh(cachedStockAt); }
     const cachedLog = localStorage.getItem('scan-log-cache');
     if(cachedLog) scanLog = JSON.parse(cachedLog);
     const cachedCustom = localStorage.getItem('custom-products-cache');
@@ -5541,10 +5549,10 @@ async function saveOperatorName(){
 }
 
 function effectiveQty(row){
+  // Never present cached or bundled quantities as current when offline data is
+  // missing or older than the trusted freshness window.
+  if(syncStatus === 'offline' && !hasTrustedOfflineStock()) return 0;
   if(row.Barcode && stockOverrides.hasOwnProperty(row.Barcode)) return stockOverrides[row.Barcode];
-  // Never present the bundled/raw quantity as current when the app is offline
-  // and no trusted stock cache has been loaded from Firebase or a prior sync.
-  if(syncStatus === 'offline' && !stockCacheLoaded) return 0;
   return parseFloat(row["Stock Qty"]) || 0;
 }
 function liveRefQtyForBarcode(barcode){
@@ -9124,7 +9132,7 @@ function renderSettings(){
     html += '<div class="ios-section-title">Admin Tools</div>';
     html += '<div class="ios-group">';
     const isLocked = !!state.appLocked;
-    const promoterActions = '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;"><button class="btn btn-accent btn-sm" onclick="toggleAppLock()">' + (isLocked ? 'Unlock' : 'Lock') + '</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">Unlock</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Force-logout all promoters on all devices?\'))forceLogoutPromoters();">Logout</button></div>';
+    const promoterActions = '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><button class="btn btn-accent btn-sm" onclick="if(!state.appLocked)toggleAppLock();">Lock</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">Unlock</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="forceLogoutPromoters();">Logout</button></div>';
     html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Clear all local stock changes?\')){stockOverrides={};addAuditLog(\'Overrides Cleared\',\'Cleared all stock overrides\');saveStockOverrides();render();}">Clear</button>');
     html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="toggleAuditLogView()">' + (state.auditViewOpen ? 'Hide' : 'View') + '</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
     html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="toggleUserMgmt()">' + (state.userMgmtOpen ? 'Hide' : 'Manage') + '</button>');
@@ -9645,7 +9653,7 @@ function getPricePartyOptions(notifications){
 function renderPriceLog(){
   const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
   const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
-  if(state.user && state.user.role === 'promoter' && !allVisiblePriceNotifs.length) return '';
+  if(!allVisiblePriceNotifs.length) return '';
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
