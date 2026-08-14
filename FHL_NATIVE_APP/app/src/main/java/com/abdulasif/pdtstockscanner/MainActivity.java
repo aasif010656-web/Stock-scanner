@@ -143,6 +143,29 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    public void onBackPressed() {
+        if (webView == null) {
+            super.onBackPressed();
+            return;
+        }
+        webView.evaluateJavascript(
+                "(function(){" +
+                "if(typeof window.handleNativeBack==='function'){return window.handleNativeBack()?'handled':'exit';}" +
+                "if(typeof window.back==='function'){return window.back()?'handled':'exit';}" +
+                "return 'exit';" +
+                "})()",
+                value -> {
+                    if (value == null || value.contains("exit")) {
+                        runOnUiThread(() -> superOnBackPressed());
+                    }
+                });
+    }
+
+    private void superOnBackPressed() {
+        super.onBackPressed();
+    }
+
+    @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
             webView.evaluateJavascript("if(typeof window.volumeKeyPressed==='function') window.volumeKeyPressed('up');", null);
