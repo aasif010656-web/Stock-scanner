@@ -94,6 +94,13 @@ public class MainActivity extends AppCompatActivity {
         webView.loadUrl(htmlPath);
     }
 
+    public void sendBiometricResultToWeb(boolean success) {
+        runOnUiThread(() -> {
+            if (webView == null) return;
+            webView.evaluateJavascript("window.onNativeBiometricResult && window.onNativeBiometricResult(" + success + ")", null);
+        });
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
         WebSettings settings = webView.getSettings();
