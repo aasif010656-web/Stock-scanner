@@ -7086,6 +7086,16 @@ function logout(){
   sessionStorage.removeItem('app-user-session');
   render();
 }
+function resolveLatestUpdateUrl(data){
+  if(!data) return '';
+  const raw = String(data.downloadUrl || data.apkUrl || data.url || '').trim();
+  if(!raw) return '';
+  // Use the release tag/timestamp as a cache key so Android DownloadManager and
+  // redirecting GitHub URLs cannot reuse an older APK with the same filename.
+  const cacheKey = String(data.releaseTag || data.releasedAt || data.version || Date.now());
+  const separator = raw.indexOf('?') >= 0 ? '&' : '?';
+  return raw + separator + 'fhl_release=' + encodeURIComponent(cacheKey);
+}
 async function checkForUpdates(isAuto){
   const status = document.getElementById('updateStatus');
   const currentVersion = APP_VERSION;
@@ -7101,12 +7111,13 @@ async function checkForUpdates(isAuto){
     const updateDoc = await firebase.firestore().collection('appSettings').doc('updateInfo').get();
     if(updateDoc.exists){
       const data = updateDoc.data();
-      if(data.version && data.version !== currentVersion){
+      const latestUrl = resolveLatestUpdateUrl(data);
+      if(data.version && data.version !== currentVersion && latestUrl){
         const msg = "New version " + data.version + " is available!";
-        if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + data.url + "\")'>Install Now</button>";
+        if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
         if(isAuto && !state._updateNotified){
           state._updateNotified = true;
-          openUpdatePrompt(msg, data.url);
+          openUpdatePrompt(msg, latestUrl);
         }
       } else {
         if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
