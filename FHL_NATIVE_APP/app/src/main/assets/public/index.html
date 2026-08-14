@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>FHL ELECTRONICS v6</title>
+<title>FHL ELECTRONICS v6.1</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#F2B705">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="FHL ELECTRONICS v6">
+<meta name="apple-mobile-web-app-title" content="FHL ELECTRONICS v6.1">
 
 <!-- Native CameraX/MLKit Bridge Used -->
 <script src="js/xlsx.full.min.js"></script>
@@ -5627,7 +5627,7 @@ function getStoredDeviceName(){
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.0';
-const APP_NAME = 'FHL ELECTRONICS v6';
+const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 // Party codes tracked in the Aging Details section
 const AGING_TARGET_PARTIES = ["SAN029","E0012","A0356","M0080","M0007","INF024","ASH073","J0005","R0036","M0020","F0027"];
@@ -7740,7 +7740,7 @@ function renderScan(){
   html += '</div>';
   html += '<div class="divider-label">Type barcode or article code</div>';
   html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="text" id="manualBarcodeInput" placeholder="Barcode / Article Code" value="' + esc(state.manualInput) + '" autocomplete="off" style="font-family:monospace;padding-left:12px;" />';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" placeholder="Barcode / Article Code" value="' + esc(state.manualInput) + '" autocomplete="off" enterkeyhint="done" style="font-family:monospace;padding-left:12px;" />';
   if(state.manualInput) html += '<div class="search-clear" onclick="state.manualInput=\'\';render();setTimeout(()=>{const inp=document.getElementById(\'manualBarcodeInput\'); if(inp){inp.value=\'\';inp.focus();}},50);">✕</div>';
   html += '</div>';
   if(state.showSuggestions && state.barcodeSuggestions.length > 0){
@@ -9664,6 +9664,12 @@ async function handleImportData(fileInput){
 
 function setPricePartyFilter(party){
   state.pricePartyFilter = party || '';
+  state.expandedPriceNotificationId = null;
+  render();
+}
+function togglePriceNotification(id){
+  const key = String(id || '');
+  state.expandedPriceNotificationId = state.expandedPriceNotificationId === key ? null : key;
   render();
 }
 function getPricePartyOptions(notifications){
@@ -9777,16 +9783,30 @@ function renderLog(){
       html += '<div class="empty">No price updates for ' + esc(selectedParty) + '.</div>';
     }
     myPriceNotifs.forEach(n=>{
-      html += '<div class="card" style="padding:10px;margin-bottom:8px;cursor:pointer;" onclick="setPricePartyFilter(\'' + esc(String(n.party || '')).replace(/'/g, "\\'") + '\')">';
+      const notificationId = String(n.id || '');
+      const expanded = state.expandedPriceNotificationId === notificationId;
+      const safeId = esc(notificationId).replace(/'/g, "\\'");
+      html += '<div class="card" style="padding:0;margin-bottom:8px;overflow:hidden;">';
+      html += '<div role="button" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="padding:10px;cursor:pointer;" onclick="togglePriceNotification(\'' + safeId + '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();togglePriceNotification(\'' + safeId + '\')}">';
       html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
-      html += '<div style="min-width:0;">';
-      html += '<div class="product-title" style="font-size:13px;">' + esc(n.description||'') + '</div>';
+      html += '<div style="min-width:0;flex:1;">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><div class="product-title" style="font-size:13px;">' + esc(n.description||'') + '</div><span style="font-size:16px;color:var(--muted);">' + (expanded ? '⌃' : '⌄') + '</span></div>';
       html += '<div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(n.barcode||'') + ' · Party: ' + esc(n.party||'-') + '</div>';
       html += '<div style="font-size:12.5px;margin-top:3px;"><span style="color:var(--red);text-decoration:line-through;">' + esc(n.oldPrice) + '</span> &rarr; <span style="color:var(--green);font-weight:700;">' + esc(n.newPrice) + '</span></div>';
       html += '<div style="font-size:10.5px;color:var(--dim);margin-top:2px;">' + new Date(n.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
       html += '</div>';
-      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotification(\'' + n.id + '\')">🗑</button>';
+      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotification(\'' + safeId + '\')">🗑</button>';
       html += '</div></div>';
+      if(expanded){
+        html += '<div style="border-top:1px solid var(--border);padding:10px;background:var(--panel);font-size:12px;display:grid;gap:5px;">';
+        html += '<div><b>Updated by:</b> ' + esc(n.updatedBy || n.username || n.user || '-') + '</div>';
+        html += '<div><b>Article code:</b> ' + esc(n.articleCode || n.product || n.code || '-') + '</div>';
+        html += '<div><b>Party:</b> ' + esc(n.partyName || n.party || '-') + '</div>';
+        html += '<div><b>Change:</b> ' + esc(n.oldPrice || '-') + ' → ' + esc(n.newPrice || '-') + '</div>';
+        html += '<div><b>Updated:</b> ' + new Date(n.ts).toLocaleString() + '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
     });
   }
 
@@ -9907,46 +9927,39 @@ function wireEvents(){
 try{ history.replaceState({tab: state.tab}, "", location.href); }catch(e){}
 window.addEventListener("popstate", function(){ document.dispatchEvent(new Event("backbutton")); });
 // ---------- Android hardware back button handler ----------
+window.handleNativeBack = function(){
+  // Priority: close modals first.
+  const barcodeModal = document.getElementById('barcodeModal');
+  if(barcodeModal && barcodeModal.classList.contains('show')){ closeBarcodeModal(); return true; }
+  const a7PreviewModal = document.getElementById('a7PreviewModal');
+  if(a7PreviewModal && a7PreviewModal.classList.contains('show')){ closeA7Preview(); return true; }
+  // In brands tab: step-by-step back.
+  if(state.tab === 'brands'){
+    if(state.editingProductSL !== null){ cancelEditProduct(); return true; }
+    if(state.editingStockBarcode !== null){ cancelEditStock(); return true; }
+    if(state.expandedSL !== null){ state.expandedSL = null; render(); return true; }
+    if(state.selectedBrand !== null){ closeBrand(); return true; }
+    setTab('scan', true); return true;
+  }
+  // In scan tab: close any open form/result/suggestions.
+  if(state.tab === 'scan'){
+    if(state.addProductOpen){ closeAddProduct(); return true; }
+    if(state.matchedRow || state.multiMatches || state.notFoundCode){ cancelMatch(); return true; }
+    if(state.showSuggestions){ state.barcodeSuggestions=[]; state.showSuggestions=false; render(); return true; }
+    return false;
+  }
+  if(state.tab === 'a7'){ closeA7(); return true; }
+  if(state.tab === 'a4'){ closeA4(); return true; }
+  if(state.tab === 'aging'){
+    if(state.openAgingParty !== null){ state.openAgingParty = null; render(); return true; }
+    setTab('scan', true); return true;
+  }
+  setTab('scan', true); return true;
+};
 document.addEventListener('backbutton', function(e){
   e.preventDefault();
-  // Priority: close modals first
-  if(document.getElementById('barcodeModal').classList.contains('show')){
-    closeBarcodeModal(); return;
-  }
-  if(document.getElementById('a7PreviewModal').classList.contains('show')){
-    closeA7Preview(); return;
-  }
-  // In brands tab: step-by-step back
-  if(state.tab === 'brands'){
-    if(state.editingProductSL !== null){ cancelEditProduct(); return; }
-    if(state.editingStockBarcode !== null){ cancelEditStock(); return; }
-    if(state.expandedSL !== null){ state.expandedSL = null; render(); return; }
-    if(state.selectedBrand !== null){ closeBrand(); return; }
-    // At brand list root — go to scan tab
-    setTab('scan'); return;
-  }
-  // In scan tab: close any open form/result
-  if(state.tab === 'scan'){
-    if(state.addProductOpen){ closeAddProduct(); return; }
-    if(state.matchedRow || state.multiMatches || state.notFoundCode){
-      cancelMatch(); return;
-    }
-    if(state.showSuggestions){ state.barcodeSuggestions=[]; state.showSuggestions=false; render(); return; }
-    // Nothing open in scan — do nothing (don't close app)
-    return;
-  }
-  // A7/A4 tools: go back to scan tab (matches their own "back" arrow button)
-  if(state.tab === 'a7'){ closeA7(); return; }
-  if(state.tab === 'a4'){ closeA4(); return; }
-  // Aging: close an open party group first, otherwise go back to scan
-  if(state.tab === 'aging'){
-    if(state.openAgingParty !== null){ state.openAgingParty = null; render(); return; }
-    setTab('scan'); return;
-  }
-  // Any other tab (data, log, settings, createExcel): go back to scan tab
-  setTab('scan'); return;
+  if(window.handleNativeBack) window.handleNativeBack();
 }, false);
-
 // Also handle Capacitor App plugin back button
 try{
   if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
