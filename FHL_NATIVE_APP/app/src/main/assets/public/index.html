@@ -5193,6 +5193,19 @@ const firebaseConfig = {
 let fbDocRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error
+let stockCacheLoaded = false;
+let stockCacheUpdatedAt = 0;
+function markStockCacheFresh(ts){
+  stockCacheLoaded = true;
+  stockCacheUpdatedAt = Number(ts) || Date.now();
+  try{ localStorage.setItem('stock-cache-updated-at', String(stockCacheUpdatedAt)); }catch(e){}
+}
+function offlineStockLabel(){
+  if(syncStatus !== 'offline') return '';
+  if(!stockCacheLoaded) return ' · ⚠ Stock unavailable offline';
+  const d = stockCacheUpdatedAt ? new Date(stockCacheUpdatedAt).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : 'unknown time';
+  return ' · ⚠ Last stock sync ' + d;
+}
 
 function initFirebase(){
   try{
@@ -5212,7 +5225,8 @@ async function loadStorage(){
   // Load from local cache first for instant offline access
   try {
     const cachedOverrides = localStorage.getItem('stock-overrides-cache');
-    if(cachedOverrides) stockOverrides = JSON.parse(cachedOverrides);
+    const cachedStockAt = localStorage.getItem('stock-cache-updated-at');
+    if(cachedOverrides){ stockOverrides = JSON.parse(cachedOverrides); markStockCacheFresh(cachedStockAt || Date.now()); }
     const cachedLog = localStorage.getItem('scan-log-cache');
     if(cachedLog) scanLog = JSON.parse(cachedLog);
     const cachedCustom = localStorage.getItem('custom-products-cache');
@@ -5257,6 +5271,7 @@ async function loadStorage(){
       // Merge strategy: cloud data takes precedence if it's newer or if local is empty
       // For simplicity in this app, we'll use cloud data but ensure local cache is updated
       stockOverrides = data.stockOverrides || stockOverrides;
+      markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || scanLog;
       customProducts = data.customProducts || customProducts;
       state.reports = data.reports || state.reports || [];
@@ -5267,7 +5282,9 @@ async function loadStorage(){
       state.a4Excels = data.a4Excels || state.a4Excels || [];
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
+      if(data.contactAdminLink !== undefined){ state.contactAdminLink = data.contactAdminLink || ''; try{ localStorage.setItem('contact-admin-link', state.contactAdminLink); }catch(e){} }
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
+      state.contactAdminLink = data.contactAdminLink || state.contactAdminLink || '';
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       // If the cloud's saved template predates our current built-in one, use the
       // built-in (fixed) version instead and flag it to be pushed back to the cloud.
@@ -5316,6 +5333,7 @@ async function loadStorage(){
       if(doc.metadata.hasPendingWrites) return; // this device's own write -- already applied locally
       const data = doc.data();
       stockOverrides = data.stockOverrides || {};
+      markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || [];
       customProducts = data.customProducts || [];
       state.reports = data.reports || state.reports || [];
@@ -5437,6 +5455,7 @@ function unionExtraBarcodes(cloudArr, localArr, mergedArr){
 async function pushToCloud(force, suppressToast){
   // Save locally first to prevent data loss
   try {
+    markStockCacheFresh(Date.now());
     localStorage.setItem('stock-overrides-cache', JSON.stringify(stockOverrides));
     localStorage.setItem('scan-log-cache', JSON.stringify(scanLog));
     localStorage.setItem('custom-products-cache', JSON.stringify(customProducts));
@@ -5486,7 +5505,8 @@ async function pushToCloud(force, suppressToast){
     rebuildIndex();
 
     await fbDocRef.set({ 
-      stockOverrides, 
+      stockOverrides,
+      stockDataUpdatedAt: stockCacheUpdatedAt || Date.now(),
       scanLog: mergedScanLog, 
       customProducts: mergedCustomProducts, 
       auditLog: mergedAuditLog, 
@@ -5499,6 +5519,7 @@ async function pushToCloud(force, suppressToast){
       priceChangeNotifications: mergedPriceNotifs,
       stockMovements: mergedStockMovements,
       latestExcelUpdate: state.latestExcelUpdate || null,
+      contactAdminLink: state.contactAdminLink || '',
       reports: mergedReports, 
       prices: state.prices || {} 
     }, { merge: true });
@@ -5521,6 +5542,9 @@ async function saveOperatorName(){
 
 function effectiveQty(row){
   if(row.Barcode && stockOverrides.hasOwnProperty(row.Barcode)) return stockOverrides[row.Barcode];
+  // Never present the bundled/raw quantity as current when the app is offline
+  // and no trusted stock cache has been loaded from Firebase or a prior sync.
+  if(syncStatus === 'offline' && !stockCacheLoaded) return 0;
   return parseFloat(row["Stock Qty"]) || 0;
 }
 function liveRefQtyForBarcode(barcode){
@@ -5942,6 +5966,7 @@ function saveContactAdminLink(){
   if(value && !/^https?:\/\//i.test(value)){ showToast('Use a full http(s) link', true); return; }
   state.contactAdminLink = value;
   if(value) localStorage.setItem('contact-admin-link', value); else localStorage.removeItem('contact-admin-link');
+  pushToCloud(true, true).catch(()=>{});
   render();
   showToast(value ? '✓ Contact Admin link saved' : 'Contact Admin link cleared');
 }
@@ -6048,7 +6073,7 @@ function syncBadge(){
   if(syncStatus==='synced') return ' · <span style="color:#3DDC84;">☁ Synced</span>';
   if(syncStatus==='connecting') return ' · <span style="color:var(--dim);">☁ Connecting…</span>';
   if(syncStatus==='error') return ' · <span style="color:#E85D5D;">☁ Sync unavailable</span>';
-  return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>';
+  return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>' + offlineStockLabel();
 }
 function updateAdminExcelSummary(){
   const el = document.getElementById('adminExcelSummary');
@@ -7454,7 +7479,7 @@ async function handleImportExcel(fileInput){
     }
 
     state.importProgress = { active: false, current: 0, total: 0, label: '' };
-    state.latestExcelUpdate = { ts: Date.now(), fileName: file.name, updatedRows: latestUpdatedRows, updatedQtyTotal: latestUpdatedQtyTotal };
+    state.latestExcelUpdate = { ts: Date.now(), fileName: file.name, updatedRows: latestUpdatedRows, updatedQtyTotal: latestUpdatedQtyTotal, uploadedBy: (state.user && state.user.username) || 'Unknown', uploadedRole: (state.user && state.user.role) || 'unknown' };
     try{ localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
 
     await saveStockOverrides();
@@ -8678,10 +8703,21 @@ function detailRow(label, value, full){
   return '<div style="' + (full?'grid-column:1/-1;':'') + '"><div class="detail-label">' + esc(label) + '</div><div class="detail-value">' + esc(value) + '</div></div>';
 }
 
+function normalizeSearchText(value){
+  return String(value||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[\u200c\u200d]/g,'').trim();
+}
 function productMatches(r, q){
-  const haystack = [r.Description, r.Product, r.Barcode, (r.Brand||'OTHERS / UNBRANDED'), r.Party, r['Party Name']]
-    .filter(Boolean).join(' ').toLowerCase();
-  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const raw = normalizeSearchText(q);
+  if(!raw) return true;
+  const haystack = normalizeSearchText([r.Description, r.Product, r.Barcode, (r.Brand||'OTHERS / UNBRANDED'), r.Party, r['Party Name']].filter(Boolean).join(' '));
+  const qty = effectiveQty(r);
+  const lowStockWords = /(?:low\s*stock|lowstock|stock\s*(?:low|kurav|kuravaaya|kuravulla)|kuravulla\s*stock|kuravaya\s*stock|കുറവ്|കുറവുള്ള)/i;
+  if(lowStockWords.test(raw) && !(qty <= 0 || qty <= 5)) return false;
+  const lastBarcode = raw.match(/(?:last\s*barcode|barcode\s*(?:ending|last)|അവസാന\s*barcode)\s*[:#-]?\s*(\d{2,})/i);
+  if(lastBarcode && !String(r.Barcode||'').endsWith(lastBarcode[1])) return false;
+  let query = raw.replace(lowStockWords,' ').replace(/(?:last\s*barcode|barcode\s*(?:ending|last)|അവസാന\s*barcode)\s*[:#-]?\s*\d{2,}/ig,' ');
+  query = query.replace(/\b(please|show|find|products?|ulla|ullathu|varunna|varunn|last|barcode|stock|kurav|kuravaaya|kuravulla|with|having|the|a|an)\b/ig,' ');
+  const tokens = query.split(/\s+/).filter(Boolean);
   if(!tokens.length) return true;
   return tokens.every(t => haystack.includes(t));
 }
@@ -9088,8 +9124,7 @@ function renderSettings(){
     html += '<div class="ios-section-title">Admin Tools</div>';
     html += '<div class="ios-group">';
     const isLocked = !!state.appLocked;
-    html += iosRow('🔒', 'linear-gradient(' + (isLocked ? '#FF9500,#D97E00' : '#FF3B30,#C4291F') + ')', 'Login Lock (Promoters)' + (isLocked ? ' — LOCKED' : ''), '<button class="btn btn-accent btn-sm" onclick="toggleAppLock()">' + (isLocked ? 'Unlock' : 'Lock') + '</button>');
-    html += iosRow('🚪', 'linear-gradient(#5856D6,#3F3DAE)', 'Logout Promoters', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Force-logout all promoters on all devices?\'))forceLogoutPromoters();">Logout</button>');
+    const promoterActions = '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;"><button class="btn btn-accent btn-sm" onclick="toggleAppLock()">' + (isLocked ? 'Unlock' : 'Lock') + '</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">Unlock</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Force-logout all promoters on all devices?\'))forceLogoutPromoters();">Logout</button></div>';
     html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Clear all local stock changes?\')){stockOverrides={};addAuditLog(\'Overrides Cleared\',\'Cleared all stock overrides\');saveStockOverrides();render();}">Clear</button>');
     html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="toggleAuditLogView()">' + (state.auditViewOpen ? 'Hide' : 'View') + '</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
     html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="toggleUserMgmt()">' + (state.userMgmtOpen ? 'Hide' : 'Manage') + '</button>');
@@ -9348,11 +9383,13 @@ function exportAgingExcel(partyFilter){
 
 function renderData(){
   let html = '<div class="section">';
-  html += '<h2>Data Reports</h2>';
-  html += '<div class="btn-row" style="margin-bottom:12px;">';
-  html += '<button class="btn btn-accent" onclick="triggerImportData()">📥 Import Data Excel</button>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;"><div><h2 style="margin-bottom:4px;">Data & Excel</h2><div style="font-size:12px;color:var(--muted);">Import, review, search, and manage spreadsheet data in one place.</div></div><div class="chip">' + ((state.reports||[]).length) + ' reports</div></div>';
+  html += '<div class="card" style="margin:14px 0;padding:16px;background:linear-gradient(135deg,rgba(10,132,255,.15),rgba(88,86,214,.12));border:1px solid rgba(10,132,255,.28);">';
+  html += '<div style="display:flex;gap:12px;align-items:flex-start;"><div style="font-size:25px;">📊</div><div style="flex:1;"><div style="font-weight:800;font-size:15px;">Import a professional Excel report</div><div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45;">Upload an .xlsx or .xls file, then search, filter, edit, and review every row. Your import is cached on this device and synchronized when connected.</div></div></div>';
+  html += '<div class="btn-row" style="margin-top:14px;"><button class="btn btn-accent" onclick="triggerImportData()">📥 Choose Excel file</button><button class="btn btn-ghost" onclick="document.getElementById(\'importDataInput\').click()">Browse again</button></div>';
+  const latest = state.latestExcelUpdate;
+  if(latest){ html += '<div style="font-size:11px;color:var(--muted);margin-top:10px;">Last inventory Excel: <b>' + esc(latest.fileName||'Unnamed file') + '</b> · ' + esc(new Date(latest.ts).toLocaleString()) + (latest.uploadedBy ? ' · uploaded by ' + esc(latest.uploadedBy) : '') + '</div>'; }
   html += '</div>';
-  
   if(!state.reports || state.reports.length === 0) {
       html += '<div class="empty">No data reports imported yet.</div>';
   } else {
@@ -9608,6 +9645,7 @@ function getPricePartyOptions(notifications){
 function renderPriceLog(){
   const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
   const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
+  if(state.user && state.user.role === 'promoter' && !allVisiblePriceNotifs.length) return '';
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
