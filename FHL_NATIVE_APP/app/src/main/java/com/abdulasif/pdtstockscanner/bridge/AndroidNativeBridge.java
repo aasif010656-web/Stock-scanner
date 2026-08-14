@@ -8,6 +8,9 @@ import android.os.Environment;
 import android.util.Base64;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
+import androidx.biometric.BiometricManager;
+import androidx.biometric.BiometricPrompt;
+import androidx.core.content.ContextCompat;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.core.content.FileProvider;
@@ -31,6 +34,64 @@ public class AndroidNativeBridge {
     public AndroidNativeBridge(MainActivity activity, ActivityResultLauncher<Intent> scannerLauncher) {
         this.activity = activity;
         this.scannerLauncher = scannerLauncher;
+    }
+
+    /**
+     * Reports whether the device has enrolled fingerprint/face authentication.
+     */
+    @JavascriptInterface
+    public boolean isBiometricAvailable() {
+        try {
+            int result = BiometricManager.from(activity).canAuthenticate(
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG |
+                    BiometricManager.Authenticators.BIOMETRIC_WEAK
+            );
+            return result == BiometricManager.BIOMETRIC_SUCCESS;
+        } catch (Exception e) {
+            Log.w("AndroidNativeBridge", "Biometric availability check failed", e);
+            return false;
+        }
+    }
+
+    /**
+     * Shows the Android fingerprint/face prompt. The WebView only restores its
+     * existing Remember Me session after Android reports success; no password
+     * is stored in JavaScript or local storage for biometric unlock.
+     */
+    @JavascriptInterface
+    public void authenticateBiometric() {
+        activity.runOnUiThread(() -> {
+            if (!isBiometricAvailable()) {
+                sendBiometricResult(false);
+                return;
+            }
+            BiometricPrompt prompt = new BiometricPrompt(
+                    activity,
+                    ContextCompat.getMainExecutor(activity),
+                    new BiometricPrompt.AuthenticationCallback() {
+                        @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                            sendBiometricResult(true);
+                        }
+                        @Override public void onAuthenticationError(int errorCode, CharSequence errString) {
+                            sendBiometricResult(false);
+                        }
+                        @Override public void onAuthenticationFailed() {
+                            // Keep the system prompt visible for another attempt.
+                        }
+                    }
+            );
+            BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("FHL ELECTRONICS")
+                    .setSubtitle("Unlock your saved login")
+                    .setDescription("Use fingerprint or Face ID to continue")
+                    .setNegativeButtonText("Use password")
+                    .build();
+            prompt.authenticate(promptInfo);
+        });
+    }
+
+    private void sendBiometricResult(boolean success) {
+        activity.sendBiometricResultToWeb(success);
     }
 
     /**

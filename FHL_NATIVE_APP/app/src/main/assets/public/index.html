@@ -624,7 +624,7 @@ body.brands-scroll-stable .brand-card,body.brands-scroll-stable .ios-group{trans
       <span>⏳</span><span>Aging</span>
     </button>
     <button id="navPriceLog" onclick="setTab('priceLog')" style="display:none;">
-      <span>💰</span><span>Price Log</span>
+      <span>💰</span><span>Price Log</span><span id="priceLogBadge" class="count-badge" style="display:none;margin-left:3px;">0</span>
     </button>
     <button id="navData" onclick="setTab('data')">
       <span>📊</span><span>Data</span>
@@ -5753,6 +5753,9 @@ let state = {
   reportFilters: {}, // { reportIdx: { field: value } }
   reportSearch: {},  // { reportIdx: query }
   prices: JSON.parse(localStorage.getItem('app-prices') || '{}'),
+  _confirmRequest: null,
+  _biometricAvailable: false,
+  _biometricBusy: false,
 };
 
 function setGlassBlur(v) {
@@ -5835,6 +5838,57 @@ function openActionModal(content){
   target.innerHTML = content;
   modal.classList.add('show');
 }
+function appConfirm(message, title){
+  return new Promise(function(resolve){
+    if(state._confirmRequest){ state._confirmRequest(false); }
+    state._confirmRequest = function(result){
+      const done = state._confirmRequest;
+      state._confirmRequest = null;
+      closeActionModal();
+      resolve(!!result);
+    };
+    openActionModal(
+      '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">' + esc(title || 'Please Confirm') + '</div>' +
+      '<div style="font-size:14px;line-height:1.5;margin-bottom:16px;">' + esc(message || '') + '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+      '<button class="btn btn-ghost" onclick="resolveAppConfirm(false)">Cancel</button>' +
+      '<button class="btn btn-accent" onclick="resolveAppConfirm(true)">Continue</button>' +
+      '</div>'
+    );
+  });
+}
+function resolveAppConfirm(result){
+  if(state._confirmRequest) state._confirmRequest(!!result);
+}
+function confirmClearLocalOverrides(){
+  appConfirm('Clear all local stock changes?', 'Clear Local Overrides').then(function(ok){
+    if(!ok) return;
+    stockOverrides = {};
+    addAuditLog('Overrides Cleared','Cleared all stock overrides');
+    saveStockOverrides();
+    render();
+  });
+}
+function beginBiometricLogin(){
+  if(!window.AndroidNative || !window.AndroidNative.authenticateBiometric){
+    showToast('Fingerprint/Face unlock is available only in the Android app', true); return;
+  }
+  const rememberedUser = localStorage.getItem('app-remembered-username') || '';
+  if(!rememberedUser || localStorage.getItem('app-remember-me') !== '1'){
+    showToast('Login once with Remember me enabled before using biometric unlock', true); return;
+  }
+  state._biometricBusy = true;
+  render();
+  try{ window.AndroidNative.authenticateBiometric(); }catch(e){ state._biometricBusy=false; render(); showToast('Biometric unlock is unavailable', true); }
+}
+window.onNativeBiometricResult = function(ok){
+  state._biometricBusy = false;
+  if(ok){
+    const rememberedUser = localStorage.getItem('app-remembered-username') || '';
+    if(rememberedUser && localStorage.getItem('app-remember-me') === '1'){ restoreSavedSession(); updateHeaderSub(); render(); }
+    else { showToast('Please login once with Remember me enabled', true); render(); }
+  } else { render(); showToast('Biometric unlock cancelled or failed', true); }
+};
 function openUpdatePrompt(message, url){
   state._pendingUpdateUrl = url || '';
   openActionModal(
@@ -6047,10 +6101,10 @@ function queuePartyPriceNotification(party, description){
     Object.keys(groups).forEach(function(p){
       const count = groups[p].length;
       const title = 'Price update · ' + p;
-      const body = 'Your ' + count + ' product' + (count===1?'':'s') + ' prices changed';
+      const body = 'Your ' + count + ' product' + (count===1?'':'s') + ' prices are changed';
       const open = function(){ try{ setTab('priceLog'); }catch(e){} };
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
-        try{ window.Capacitor.Plugins.LocalNotifications.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'priceLog'}}]}); }catch(e){}
+        try{ const ln=window.Capacitor.Plugins.LocalNotifications; if(ln.requestPermissions) ln.requestPermissions(); ln.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'priceLog'}}]}); }catch(e){}
       }
       if('Notification' in window){
         try{
@@ -6100,6 +6154,14 @@ function syncBadge(){
   if(syncStatus==='error') return ' · <span style="color:#E85D5D;">☁ Sync unavailable</span>';
   return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>' + offlineStockLabel();
 }
+function updatePriceLogNotificationBadge(){
+  const badge = document.getElementById('priceLogBadge');
+  if(!badge) return;
+  const partyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
+  const count = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || partyCodes.includes(n.party)).length;
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.style.display = count ? 'inline-flex' : 'none';
+}
 function updateAdminExcelSummary(){
   const el = document.getElementById('adminExcelSummary');
   if(!el) return;
@@ -6113,6 +6175,7 @@ function updateAdminExcelSummary(){
 }
 function updateHeaderSub(){
   updateAdminExcelSummary();
+  updatePriceLogNotificationBadge();
   const sub = document.getElementById('headerSub');
   if(!storageReady){ sub.textContent = "Loading data..."; return; }
   if(state.user && state.user.viewingAs){
@@ -6889,7 +6952,7 @@ function fallbackCopy(text){
 }
 
 async function clearLog(){
-  if(!confirm("Clear the entire scan log? This cannot be undone.")) return;
+  if(!(await appConfirm('Clear the entire scan log? This cannot be undone.', 'Clear Scan Log'))) return;
   scanLog = [];
   await saveLog();
   updateHeaderSub();
@@ -6990,9 +7053,9 @@ function login(username, password, remember){
     showToast("Invalid credentials", true);
   }
 }
-function fullHardReset(){
-  if(!confirm('FULL HARD RESET: This will permanently delete ALL products, brands, stock corrections, scan logs, and reports. This cannot be undone. Continue?')) return;
-  if(!confirm('Are you absolutely sure? ALL DATA will be lost!')) return;
+async function fullHardReset(){
+  if(!(await appConfirm('This will permanently delete all products, brands, stock corrections, scan logs, and reports. This cannot be undone.', 'Full Hard Reset'))) return;
+  if(!(await appConfirm('All app data will be lost. Continue only if you are certain.', 'Confirm Permanent Deletion'))) return;
   // Clear all in-memory data
   stockOverrides = {};
   scanLog = [];
@@ -7288,7 +7351,7 @@ async function handleRestoreFile(fileInput){
       fileInput.value = '';
       return;
     }
-    if(!confirm("Restore this backup? Current data on this device will be replaced.")){
+    if(!(await appConfirm('Current data on this device will be replaced by the backup.', 'Restore Backup'))){
       fileInput.value = '';
       return;
     }
@@ -7547,7 +7610,7 @@ async function handleImportExcel(fileInput){
 }
 
 async function deleteLogEntry(id){
-  if(!confirm("Delete this log entry?")) return;
+  if(!(await appConfirm('Delete this log entry?', 'Delete Log Entry'))) return;
   scanLog = scanLog.filter(l=>l.id!==id);
   addAuditLog('Log Deleted', 'Deleted scan log entry ' + id);
   // Optimistic: update UI immediately, sync in background
@@ -7562,7 +7625,7 @@ async function deleteProduct(sl){
     showToast('Delete allowed only for admin', true);
     return;
   }
-  if(!confirm("Delete this product? This cannot be undone.")) return;
+  if(!(await appConfirm('Delete this product? This cannot be undone.', 'Delete Product'))) return;
   // Check if it's a custom product
   const cidx = customProducts.findIndex(x=>x.SL===sl);
   if(cidx >= 0){
@@ -7701,6 +7764,7 @@ function renderNow(){
           </label>
         </div>
         <button class="btn auth-login-btn" id="loginButton" type="button" onclick="submitLogin()">Login</button>
+        <button class="btn btn-ghost" type="button" id="biometricLoginButton" style="display:none;margin-top:8px;width:100%;" onclick="beginBiometricLogin()">◉ Use fingerprint / Face ID</button>
         <div class="auth-created">Created By <strong>Abdul Asif</strong></div>
         <div class="message" id="message"></div>
       </div>
@@ -7731,7 +7795,8 @@ function renderNow(){
   else if(state.tab==='a7') c.innerHTML = renderA7();
   else if(state.tab==='a4') c.innerHTML = renderA4();
   else if(state.tab==='createExcel') c.innerHTML = renderCreateExcel();
-  wireEvents();
+  const bioBtn = document.getElementById('biometricLoginButton');
+  if(bioBtn && window.AndroidNative && window.AndroidNative.isBiometricAvailable){ try{ const available = !!window.AndroidNative.isBiometricAvailable(); bioBtn.style.display = available ? 'block' : 'none'; bioBtn.disabled = !!state._biometricBusy; }catch(e){ bioBtn.style.display='none'; } }
   // Restore focus to the previously focused input to keep keyboard open
   if(focusedId){
     const newInput = document.getElementById(focusedId);
@@ -7754,7 +7819,7 @@ function renderScan(){
   html += '</div>';
   html += '<div class="divider-label">Type barcode or article code</div>';
   html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" placeholder="Barcode / Article Code" value="' + esc(state.manualInput) + '" autocomplete="off" enterkeyhint="done" style="font-family:monospace;padding-left:12px;" />';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" placeholder="Barcode / Article Code" value="' + esc(state.manualInput) + '" autocomplete="off" enterkeyhint="done" style="font-family:monospace;padding-left:12px;" />';
   if(state.manualInput) html += '<div class="search-clear" onclick="state.manualInput=\'\';render();setTimeout(()=>{const inp=document.getElementById(\'manualBarcodeInput\'); if(inp){inp.value=\'\';inp.focus();}},50);">✕</div>';
   html += '</div>';
   if(state.showSuggestions && state.barcodeSuggestions.length > 0){
@@ -8200,7 +8265,7 @@ function closeA7Preview(){
 
 async function deleteA7Excel(id){
   if(!isStaffOrAdmin()) return;
-  if(!confirm('Delete this A7 excel?')) return;
+  if(!(await appConfirm('Delete this A7 export?', 'Delete A7 Export'))) return;
   deletedKeys.a7Excels.add(id);
   state.a7Excels = (state.a7Excels || []).filter(e=>e.id!==id);
   await pushToCloud(true, true);
@@ -8221,7 +8286,7 @@ function renderA7(){
   html += '<div style="font-size:11.5px;color:var(--muted);">Will be sent to Staff as "' + esc(state.user.username) + ' A7"</div></div></div>';
 
   html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" value="' + esc(state.a7Input) + '" placeholder="Type barcode..." />';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a7Input) + '" placeholder="Barcode" />';
   html += '</div>';
 
   html += '<div class="btn-row" style="margin-top:8px;">';
@@ -8530,7 +8595,7 @@ function openA4Preview(id){
 
 async function deleteA4Excel(id){
   if(!isStaffOrAdmin()) return;
-  if(!confirm('Delete this A4 PDF?')) return;
+  if(!(await appConfirm('Delete this A4 PDF?', 'Delete A4 PDF'))) return;
   deletedKeys.a4Excels.add(id);
   state.a4Excels = (state.a4Excels || []).filter(e=>e.id!==id);
   await pushToCloud(true, true);
@@ -8539,7 +8604,7 @@ async function deleteA4Excel(id){
 }
 
 async function deletePriceNotification(id){
-  if(!confirm('Delete this price-change alert?')) return;
+  if(!(await appConfirm('Delete this price-change alert?', 'Delete Price Alert'))) return;
   deletedKeys.priceChangeNotifications.add(id);
   state.priceChangeNotifications = (state.priceChangeNotifications || []).filter(n=>n.id!==id);
   await pushToCloud(true, true);
@@ -8551,7 +8616,7 @@ async function deleteAllPriceNotifications(){
   const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
   const visible = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
   if(!visible.length) return;
-  if(!confirm('Delete all ' + visible.length + ' price-change alert(s)?')) return;
+  if(!(await appConfirm('Delete all ' + visible.length + ' price-change alert(s)?', 'Delete Price Alerts'))) return;
   const visibleIds = new Set(visible.map(n=>n.id));
   visibleIds.forEach(id=>deletedKeys.priceChangeNotifications.add(id));
   state.priceChangeNotifications = (state.priceChangeNotifications || []).filter(n=>!visibleIds.has(n.id));
@@ -8570,7 +8635,7 @@ function renderA4(){
   html += '<div style="font-size:11.5px;color:var(--muted);">Type barcodes with the numeric keypad — 13 digits auto-adds</div></div></div>';
 
   html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" value="' + esc(state.a4Input) + '" placeholder="Type barcode..." />';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a4Input) + '" placeholder="Barcode" />';
   html += '</div>';
 
   html += '<div class="btn-row" style="margin-top:8px;">';
@@ -8676,8 +8741,8 @@ function setCERowQty(idx, val){
   const n = parseFloat(val);
   state.createExcelRows[idx].qty = isNaN(n) ? 0 : n;
 }
-function clearCERows(){
-  if(state.createExcelRows.length && !confirm('Clear all rows?')) return;
+async function clearCERows(){
+  if(state.createExcelRows.length && !(await appConfirm('Clear all rows?', 'Clear Rows'))) return;
   state.createExcelRows = [];
   render();
 }
@@ -9025,7 +9090,7 @@ async function deleteUser(u){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
   if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   if(u === 'Asif'){ showToast('Cannot delete primary admin', true); return; }
-  if(!confirm('Delete user ' + u + '?')) return;
+  if(!(await appConfirm('Delete user ' + u + '?', 'Delete User'))) return;
   delete state.appUsers[u];
   if(state.userRoles) delete state.userRoles[u];
   addAuditLog('User Deleted', 'Deleted user ' + u);
@@ -9074,7 +9139,7 @@ function renderUserMgmt(){
 }
 function toggleAuditLogView(){ state.auditViewOpen = !state.auditViewOpen; render(); }
 async function clearAuditLog(){
-  if(!confirm("Clear all audit log entries? This will sync to cloud.")) return;
+  if(!(await appConfirm('Clear all audit log entries? This will sync to cloud.', 'Clear Audit Log'))) return;
   (state.auditLog || []).forEach(l => deletedKeys.auditLog.add(l.id || (l.action+'|'+l.detail+'|'+l.ts)));
   state.auditLog = [];
   try{ localStorage.setItem('audit-log-cache', '[]'); }catch(e){}
@@ -9171,7 +9236,7 @@ function renderSettings(){
     html += '<div class="ios-group">';
     const promoterActions = '<div class="promoter-actions-card"><div class="promoter-actions-title">Promoters</div><div class="promoter-actions-buttons"><button class="btn btn-accent btn-sm" onclick="if(!state.appLocked)toggleAppLock();">🔒 Lock</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">🔓 Unlock</button><button class="btn btn-ghost btn-sm promoter-logout-btn" onclick="forceLogoutPromoters();">↪ Logout</button></div></div>';
     html += promoterActions;
-    html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="if(confirm(\'Clear all local stock changes?\')){stockOverrides={};addAuditLog(\'Overrides Cleared\',\'Cleared all stock overrides\');saveStockOverrides();render();}">Clear</button>');
+    html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="confirmClearLocalOverrides()">Clear</button>');
     html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="toggleAuditLogView()">' + (state.auditViewOpen ? 'Hide' : 'View') + '</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
     html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="toggleUserMgmt()">' + (state.userMgmtOpen ? 'Hide' : 'Manage') + '</button>');
     html += '</div>';
@@ -9464,8 +9529,8 @@ function toggleReport(idx) {
     render();
 }
 
-function deleteReport(idx) {
-    if(!confirm("Delete this report?")) return;
+async function deleteReport(idx) {
+    if(!(await appConfirm('Delete this report?', 'Delete Report'))) return;
     const rep = state.reports[idx];
     if(rep && rep.name) deletedKeys.reports.add(rep.name);
     state.reports.splice(idx, 1);
@@ -9523,10 +9588,10 @@ function addReportRow(reportIdx){
   pushToCloud();
   render();
 }
-function removeReportRow(reportIdx,rowIdx){
+async function removeReportRow(reportIdx,rowIdx){
   const report = state.reports[reportIdx];
   if(!report || !report.data || !report.data[rowIdx]) return;
-  if(!confirm('Remove this row from the report?')) return;
+  if(!(await appConfirm('Remove this row from the report?', 'Remove Report Row'))) return;
   report.data.splice(rowIdx,1);
   state.editingReportRow = null;
   localStorage.setItem('app-reports', JSON.stringify(state.reports));
