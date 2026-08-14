@@ -9607,13 +9607,25 @@ function getPricePartyOptions(notifications){
 }
 function renderPriceLog(){
   const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
-  const myPriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
+  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
+  const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
+  const selectedParty = state.pricePartyFilter || '';
+  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
   let html = '';
 
   html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;">';
-  html += '<span>Price Change Alerts (' + myPriceNotifs.length + ')</span>';
+  html += '<span>Party-wise Price Update History (' + myPriceNotifs.length + ')</span>';
   if(myPriceNotifs.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
   html += '</div>';
+  if(partyOptions.length){
+    html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
+    html += '<button class="sort-btn' + (!selectedParty ? ' active' : '') + '" onclick="setPricePartyFilter(\'\')">All Parties</button>';
+    partyOptions.forEach(party=>{
+      const safeParty = esc(party).replace(/'/g, "\\'");
+      html += '<button class="sort-btn' + (selectedParty === party ? ' active' : '') + '" onclick="setPricePartyFilter(\'' + safeParty + '\')">' + esc(party) + '</button>';
+    });
+    html += '</div>';
+  }
 
   if(!myPriceNotifs.length){
     html += '<div class="card" style="padding:24px;text-align:center;color:var(--muted);">';
@@ -9684,7 +9696,7 @@ function renderLog(){
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || '').trim() === selectedParty) : allVisiblePriceNotifs;
   if(allVisiblePriceNotifs.length){
     html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
-    html += '<span>Price Change Alerts (' + myPriceNotifs.length + ')</span>';
+    html += '<span>Party-wise Price Update History (' + myPriceNotifs.length + ')</span>';
     html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
     html += '</div>';
     if(partyOptions.length){
