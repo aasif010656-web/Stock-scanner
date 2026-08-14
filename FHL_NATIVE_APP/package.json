@@ -1,0 +1,30 @@
+{
+  "name": "fhl-electronics-stock-scanner",
+  "version": "5.9.5",
+  "description": "FHL ELECTRONICS - Stock Scanner & Inventory Management App",
+  "private": true,
+  "scripts": {
+    "start": "cap serve",
+    "build": "cap sync android",
+    "android": "cap open android",
+    "build:android": "cd android && ./gradlew assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^5.5.0",
+    "@capacitor/camera": "^5.0.8",
+    "@capacitor/core": "^5.5.0",
+    "firebase": "^10.12.2",
+    "jsbarcode": "^3.11.5",
+    "jspdf": "^2.5.1",
+    "jszip": "^3.10.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^5.5.0"
+  },
+  "capacitor": {
+    "appId": "com.abdulasif.pdtstockscanner",
+    "appName": "FHL ELECTRONICS v5.9",
+    "webDir": "www"
+  }
+}
