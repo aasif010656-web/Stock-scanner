@@ -8,6 +8,7 @@ import android.os.Environment;
 import android.util.Base64;
 import android.util.Log;
 import android.Manifest;
+import android.app.Activity;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.pm.PackageManager;
