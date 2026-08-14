@@ -585,6 +585,12 @@ body.brands-scroll-stable .brand-card,.body.brands-scroll-stable .ios-group{tran
     <div id="themeModalContent"></div>
   </div>
 </div>
+<div class="modal-overlay" id="actionModal">
+  <div class="modal-box modal-box-dark" style="max-width:480px;text-align:left;padding:18px 16px;">
+    <div class="modal-close" style="color:var(--text);" onclick="closeActionModal()">✕</div>
+    <div id="actionModalContent"></div>
+  </div>
+</div>
 <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="handleRestoreFile(this)" />
 <input type="file" id="importDataInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportData(this)" />
 <input type="file" id="importExcelInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportExcel(this)" />
@@ -5769,6 +5775,93 @@ function openThemePicker(){
 function closeThemePicker(){
   document.getElementById('themeModal').classList.remove('show');
 }
+function closeActionModal(){
+  const modal = document.getElementById('actionModal');
+  if(modal) modal.classList.remove('show');
+  const content = document.getElementById('actionModalContent');
+  if(content) content.innerHTML = '';
+}
+function openActionModal(content){
+  const target = document.getElementById('actionModalContent');
+  const modal = document.getElementById('actionModal');
+  if(!target || !modal) return;
+  target.innerHTML = content;
+  modal.classList.add('show');
+}
+function openUpdatePrompt(message, url){
+  state._pendingUpdateUrl = url || '';
+  openActionModal(
+    '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">App Update Available</div>' +
+    '<div style="font-size:14px;line-height:1.5;margin-bottom:16px;">' + esc(message) + '</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+    '<button class="btn btn-ghost" onclick="closeActionModal()">Later</button>' +
+    '<button class="btn btn-accent" onclick="const url=state._pendingUpdateUrl; closeActionModal(); downloadAndInstallUpdate(url);">Update Now</button>' +
+    '</div>'
+  );
+}
+function openPasswordModal(username){
+  state._passwordEditUser = username;
+  openActionModal(
+    '<div style="font-weight:800;font-size:18px;margin-bottom:12px;">Change Password</div>' +
+    '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Enter a new password for ' + esc(username) + '.</div>' +
+    '<input id="passwordModalInput" type="password" autocomplete="new-password" placeholder="New password" style="width:100%;box-sizing:border-box;margin-bottom:14px;" />' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+    '<button class="btn btn-ghost" onclick="closeActionModal()">Cancel</button>' +
+    '<button class="btn btn-accent" onclick="savePasswordModal()">Save Password</button>' +
+    '</div>'
+  );
+  setTimeout(()=>{ const input=document.getElementById('passwordModalInput'); if(input) input.focus(); }, 50);
+}
+function savePasswordModal(){
+  if(!isAdminUser()){ closeActionModal(); showToast('Only Admin can manage users', true); return; }
+  const username = state._passwordEditUser;
+  const input = document.getElementById('passwordModalInput');
+  const newPass = input ? input.value : '';
+  if(!newPass){ showToast('Enter a new password', true); return; }
+  state.appUsers[username] = newPass;
+  addAuditLog('Password Changed', 'Changed password for user ' + username);
+  closeActionModal();
+  pushToCloud(); render();
+  showToast('✓ Password updated for ' + username);
+}
+function openRoleModal(username){
+  if(username === 'Asif'){ showToast('Cannot change primary admin role', true); return; }
+  const role = getUserRole(username);
+  const parties = getUserPartyCodes(username).join(',');
+  const brands = getUserBrandCodes(username).join(',');
+  state._roleEditUser = username;
+  openActionModal(
+    '<div style="font-weight:800;font-size:18px;margin-bottom:12px;">Change Role</div>' +
+    '<div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Choose a role for ' + esc(username) + '.</div>' +
+    '<select id="roleModalRole" style="width:100%;box-sizing:border-box;margin-bottom:10px;background:var(--border);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:10px;">' +
+    '<option value="promoter"' + (role === 'promoter' ? ' selected' : '') + '>Promoter</option>' +
+    '<option value="staff"' + (role === 'staff' ? ' selected' : '') + '>Staff</option>' +
+    '</select>' +
+    '<input id="roleModalParties" type="text" placeholder="Party codes (optional, comma separated)" value="' + esc(parties) + '" style="width:100%;box-sizing:border-box;margin-bottom:10px;" />' +
+    '<input id="roleModalBrands" type="text" placeholder="Brands (optional, comma separated)" value="' + esc(brands) + '" style="width:100%;box-sizing:border-box;margin-bottom:14px;" />' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+    '<button class="btn btn-ghost" onclick="closeActionModal()">Cancel</button>' +
+    '<button class="btn btn-accent" onclick="saveRoleModal()">Save Role</button>' +
+    '</div>'
+  );
+}
+function saveRoleModal(){
+  if(!isAdminUser()){ closeActionModal(); showToast('Only Admin can manage users', true); return; }
+  const username = state._roleEditUser;
+  const roleEl = document.getElementById('roleModalRole');
+  const partyEl = document.getElementById('roleModalParties');
+  const brandEl = document.getElementById('roleModalBrands');
+  const role = roleEl ? roleEl.value : '';
+  if(!['staff','promoter'].includes(role)){ showToast('Choose a valid role', true); return; }
+  const partyCodes = (partyEl ? partyEl.value : '').split(',').map(s=>s.trim()).filter(Boolean);
+  const brandCodes = (brandEl ? brandEl.value : '').split(',').map(s=>s.trim()).filter(Boolean);
+  if(!state.userRoles) state.userRoles = {};
+  state.userRoles[username] = { role, partyCodes, brandCodes };
+  addAuditLog('Role Changed', 'Set ' + username + ' to role ' + role + (partyCodes.length ? ' (parties: ' + partyCodes.join('/') + ')' : '') + (brandCodes.length ? ' (brands: ' + brandCodes.join('/') + ')' : ''));
+  closeActionModal();
+  pushToCloud(); render();
+  showToast('✓ Role updated for ' + username);
+}
 function selectTheme(themeId){
   applyTheme(themeId);
   closeThemePicker();
@@ -6964,9 +7057,7 @@ async function checkForUpdates(isAuto){
         if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + data.url + "\")'>Install Now</button>";
         if(isAuto && !state._updateNotified){
           state._updateNotified = true;
-          if(confirm(msg + "\nWould you like to download and install it now?")){
-            downloadAndInstallUpdate(data.url);
-          }
+          openUpdatePrompt(msg, data.url);
         }
       } else {
         if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
@@ -8862,37 +8953,12 @@ function deleteUser(u){
 
 function changeUserPassword(u){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
-  const newPass = prompt('Enter new password for ' + u);
-  if(!newPass) return;
-  state.appUsers[u] = newPass;
-  addAuditLog('Password Changed', 'Changed password for user ' + u);
-  pushToCloud(); render();
-  showToast('✓ Password updated for ' + u);
+  openPasswordModal(u);
 }
 
 function changeUserRole(u){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
-  if(u === 'Asif'){ showToast('Cannot change primary admin role', true); return; }
-  const current = getUserRole(u);
-  const currentParties = getUserPartyCodes(u).join(',');
-  const currentBrands = getUserBrandCodes(u).join(',');
-  // Use one prompt instead of three sequential prompts. On Android WebView,
-  // sequential prompts can leave duplicate native dialog surfaces behind.
-  const value = prompt(
-    'Enter role | party codes | brand names for ' + u + '\nExample: promoter | A0356,M0007 | OPPO',
-    current + ' | ' + currentParties + ' | ' + currentBrands
-  );
-  if(!value) return;
-  const parts = value.split('|').map(s => s.trim());
-  const role = (parts[0] || '').toLowerCase();
-  if(!['staff','promoter'].includes(role)){ showToast('Role must be staff or promoter (only Asif can be admin)', true); return; }
-  const partyCodes = (parts[1] || '').split(',').map(s=>s.trim()).filter(Boolean);
-  const brandCodes = (parts[2] || '').split(',').map(s=>s.trim()).filter(Boolean);
-  if(!state.userRoles) state.userRoles = {};
-  state.userRoles[u] = { role: role, partyCodes: partyCodes, brandCodes: brandCodes };
-  addAuditLog('Role Changed', 'Set ' + u + ' to role ' + role + (partyCodes.length ? ' (parties: ' + partyCodes.join('/') + ')' : '') + (brandCodes.length ? ' (brands: ' + brandCodes.join('/') + ')' : ''));
-  pushToCloud(); render();
-  showToast('✓ Role updated for ' + u);
+  openRoleModal(u);
 }
 
 function renderUserMgmt(){
