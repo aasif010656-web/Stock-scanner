@@ -5655,7 +5655,8 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.0';
+const APP_VERSION = '6.1';
+const APP_BUILD = '35';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 // Party codes tracked in the Aging Details section
@@ -5783,8 +5784,6 @@ let state = {
   reportSearch: {},  // { reportIdx: query }
   prices: JSON.parse(localStorage.getItem('app-prices') || '{}'),
   _confirmRequest: null,
-  _biometricAvailable: false,
-  _biometricBusy: false,
 };
 
 function setGlassBlur(v) {
@@ -5912,28 +5911,6 @@ function confirmClearLocalOverrides(){
     render();
   });
 }
-function beginBiometricLogin(){
-  if(!window.AndroidNative || !window.AndroidNative.authenticateBiometric){
-    showToast('Fingerprint/Face unlock is available only in the Android app', true); return;
-  }
-  let rememberedUser = '';
-  try { const saved = JSON.parse(localStorage.getItem('app-user') || '{}'); rememberedUser = saved && saved.user ? saved.user.username : ''; } catch(e) {}
-  if(!rememberedUser || localStorage.getItem('app-remember-me') !== '1'){
-    showToast('Login once with Remember me enabled before using biometric unlock', true); return;
-  }
-  state._biometricBusy = true;
-  render();
-  try{ window.AndroidNative.authenticateBiometric(); }catch(e){ state._biometricBusy=false; render(); showToast('Biometric unlock is unavailable', true); }
-}
-window.onNativeBiometricResult = function(ok){
-  state._biometricBusy = false;
-  if(ok){
-    let rememberedUser = '';
-    try { const saved = JSON.parse(localStorage.getItem('app-user') || '{}'); rememberedUser = saved && saved.user ? saved.user.username : ''; } catch(e) {}
-    if(rememberedUser && localStorage.getItem('app-remember-me') === '1'){ restoreSavedSession(); updateHeaderSub(); render(); }
-    else { showToast('Please login once with Remember me enabled', true); render(); }
-  } else { render(); showToast('Biometric unlock cancelled or failed', true); }
-};
 function openUpdatePrompt(message, url){
   state._pendingUpdateUrl = url || '';
   openActionModal(
@@ -7206,6 +7183,15 @@ function resolveLatestUpdateUrl(data){
   const separator = raw.indexOf('?') >= 0 ? '&' : '?';
   return raw + separator + 'fhl_release=' + encodeURIComponent(cacheKey);
 }
+function isCurrentRelease(data){
+  if(!data) return true;
+  const latestVersion = String(data.version || '').replace(/^v/i, '').trim();
+  const currentVersion = String(APP_VERSION).replace(/^v/i, '').trim();
+  if(!latestVersion || latestVersion !== currentVersion) return false;
+  const releaseTag = String(data.releaseTag || '').trim();
+  const buildMatch = releaseTag.match(/build[-_](\\d+)/i);
+  return !buildMatch || String(buildMatch[1]) === String(APP_BUILD);
+}
 async function checkForUpdates(isAuto){
   const status = document.getElementById('updateStatus');
   const currentVersion = APP_VERSION;
@@ -7223,7 +7209,7 @@ async function checkForUpdates(isAuto){
       const data = updateDoc.data();
       const latestUrl = resolveLatestUpdateUrl(data);
       const releaseLabel = String(data.releaseTag || ('v' + data.version));
-      if(data.version && data.version !== currentVersion && latestUrl){
+      if(!isCurrentRelease(data) && data.version && latestUrl){
         const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
         if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
         if(isAuto && !state._updateNotified){
@@ -7822,20 +7808,10 @@ function renderNow(){
           </label>
         </div>
         <button class="btn auth-login-btn" id="loginButton" type="button" onclick="submitLogin()">Login</button>
-        <button class="btn btn-ghost" type="button" id="biometricLoginButton" style="display:block;margin-top:8px;width:100%;" onclick="beginBiometricLogin()">◉ Use fingerprint / Face ID</button><div id="biometricLoginHint" style="display:block;margin-top:6px;font-size:11px;color:var(--muted);text-align:center;">Uses the fingerprint or face unlock configured on this phone.</div>
         <div class="auth-created">Created By <strong>Abdul Asif</strong></div>
         <div class="message" id="message"></div>
       </div>
     </div>`;
-    const loginBioBtn = document.getElementById('biometricLoginButton');
-    if(loginBioBtn){
-      loginBioBtn.style.display = 'block';
-      loginBioBtn.disabled = !!state._biometricBusy;
-      let loginBioAvailable = false;
-      try{ loginBioAvailable = !!(window.AndroidNative && window.AndroidNative.isBiometricAvailable && window.AndroidNative.isBiometricAvailable()); }catch(e){ loginBioAvailable = false; }
-      loginBioBtn.style.opacity = loginBioAvailable ? '1' : '.72';
-      loginBioBtn.title = loginBioAvailable ? 'Unlock with fingerprint or Face ID' : 'Set up fingerprint or Face ID in Android settings first';
-    }
     return;
   }
   { const bn = document.getElementById('bottomNav'); if(bn) bn.style.display = 'flex'; }
@@ -7862,15 +7838,6 @@ function renderNow(){
   else if(state.tab==='a7') c.innerHTML = renderA7();
   else if(state.tab==='a4') c.innerHTML = renderA4();
   else if(state.tab==='createExcel') c.innerHTML = renderCreateExcel();
-  const bioBtn = document.getElementById('biometricLoginButton');
-  if(bioBtn){
-    bioBtn.style.display = 'block';
-    bioBtn.disabled = !!state._biometricBusy;
-    let available = false;
-    try{ available = !!(window.AndroidNative && window.AndroidNative.isBiometricAvailable && window.AndroidNative.isBiometricAvailable()); }catch(e){ available = false; }
-    bioBtn.style.opacity = available ? '1' : '.72';
-    bioBtn.title = available ? 'Unlock with fingerprint or Face ID' : 'Set up fingerprint or Face ID in Android settings first';
-  }
   // Restore focus to the previously focused input to keep keyboard open
   if(focusedId){
     const newInput = document.getElementById(focusedId);
@@ -8368,8 +8335,9 @@ function renderA7(){
   html += '<div><div style="font-weight:700;font-size:15px;">🏷️ A7 Talker</div>';
   html += '<div style="font-size:11.5px;color:var(--muted);">Will be sent to Staff as "' + esc(state.user.username) + ' A7"</div></div></div>';
 
-  html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a7Input) + '" placeholder="Barcode" />';
+  html += '<div class="search-wrap" style="position:relative;display:flex;gap:8px;align-items:center;">';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a7Input) + '" placeholder="Barcode" style="flex:1;min-width:0;" />';
+  html += '<button class="btn btn-ghost btn-sm compact-scan-btn" style="flex:0 0 auto;min-width:70px;" type="button" onclick="startNativeScanner()">▣ Scan</button>';
   html += '</div>';
 
   html += '<div class="btn-row" style="margin-top:8px;">';
@@ -8717,8 +8685,9 @@ function renderA4(){
   html += '<div><div style="font-weight:700;font-size:15px;">📄 A4 Label</div>';
   html += '<div style="font-size:11.5px;color:var(--muted);">Type barcodes with the numeric keypad — 13 digits auto-adds</div></div></div>';
 
-  html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a4Input) + '" placeholder="Barcode" />';
+  html += '<div class="search-wrap" style="position:relative;display:flex;gap:8px;align-items:center;">';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a4Input) + '" placeholder="Barcode" style="flex:1;min-width:0;" />';
+  html += '<button class="btn btn-ghost btn-sm compact-scan-btn" style="flex:0 0 auto;min-width:70px;" type="button" onclick="startNativeScanner()">▣ Scan</button>';
   html += '</div>';
 
   html += '<div class="btn-row" style="margin-top:8px;">';

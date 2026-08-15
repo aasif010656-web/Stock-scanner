@@ -53,6 +53,24 @@ jobs:
           test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Inject runtime release identity
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          RELEASE_VERSION: ${{ steps.app_version.outputs.version }}
+          RELEASE_BUILD: ${{ github.run_number }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          path = Path('app/src/main/assets/public/index.html')
+          text = path.read_text()
+          text = re.sub(r"const APP_VERSION = '[^']+';", "const APP_VERSION = '%s';" % os.environ['RELEASE_VERSION'], text, count=1)
+          text = re.sub(r"const APP_BUILD = '[^']+';", "const APP_BUILD = '%s';" % os.environ['RELEASE_BUILD'], text, count=1)
+          path.write_text(text)
+          PY
+          grep -nE "const APP_(VERSION|BUILD)" app/src/main/assets/public/index.html
+
       - name: Build signed release APK
         working-directory: ${{ env.PROJECT_DIR }}
         env:
