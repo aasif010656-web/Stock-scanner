@@ -5880,6 +5880,21 @@ function openActionModal(content){
   target.innerHTML = html;
   modal.classList.add('show');
 }
+function installDialogGuards(){
+  window.alert = function(message){
+    try { showToast(String(message || ''), false); } catch (_) {}
+  };
+  window.confirm = function(message){
+    try {
+      openActionModal('<div style="font-weight:800;font-size:18px;margin-bottom:10px;">Please Confirm</div><div style="font-size:14px;line-height:1.5;margin-bottom:16px;">' + esc(String(message || '')) + '</div><div style="font-size:12px;color:var(--muted);">Use the app action controls to continue.</div>');
+    } catch (_) {}
+    return false;
+  };
+  window.prompt = function(message){
+    try { openActionModal('<div style="font-weight:800;font-size:18px;margin-bottom:10px;">Input Required</div><div style="font-size:14px;line-height:1.5;">' + esc(String(message || '')) + '</div>'); } catch (_) {}
+    return null;
+  };
+}
 function appConfirm(message, title){
   return new Promise(function(resolve){
     if(state._confirmRequest){ state._confirmRequest(false); }
@@ -5902,6 +5917,7 @@ function appConfirm(message, title){
 function resolveAppConfirm(result){
   if(state._confirmRequest) state._confirmRequest(!!result);
 }
+installDialogGuards();
 function confirmClearLocalOverrides(){
   appConfirm('Clear all local stock changes?', 'Clear Local Overrides').then(function(ok){
     if(!ok) return;
@@ -6139,7 +6155,20 @@ function queuePartyPriceNotification(party, description){
     });
   }, 900);
 }
+function closeAllTransientOverlays(){
+  ['barcodeModal','a7PreviewModal','themeModal','actionModal'].forEach(function(id){
+    const el = document.getElementById(id);
+    if(el) el.classList.remove('show');
+  });
+  ['barcodeModalContent','a7PreviewModalContent','themeModalContent','actionModalContent'].forEach(function(id){
+    const el = document.getElementById(id);
+    if(el) el.innerHTML = '';
+  });
+  state._confirmRequest = null;
+  state._pendingUpdateUrl = '';
+}
 function setTab(tab, fromBack){
+  closeAllTransientOverlays();
   if(state.cameraOn) stopCamera();
   if((tab === 'data' || tab === 'log') && state.user && state.user.role === 'promoter'){
     tab = 'scan';
@@ -6521,6 +6550,7 @@ function startCamera(){
     showToast("Native camera not available in this environment", true);
   }
 }
+function startNativeScanner(){ return startCamera(); }
 function stopCamera(){
   if(window.AndroidNative && window.AndroidNative.stopNativeScanner) {
     window.AndroidNative.stopNativeScanner();
@@ -8337,7 +8367,7 @@ function renderA7(){
 
   html += '<div class="search-wrap" style="position:relative;display:flex;gap:8px;align-items:center;">';
   html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a7Input) + '" placeholder="Barcode" style="flex:1;min-width:0;" />';
-  html += '<button class="btn btn-ghost btn-sm compact-scan-btn" style="flex:0 0 auto;min-width:70px;" type="button" onclick="startNativeScanner()">▣ Scan</button>';
+  html += '<button class="btn btn-ghost btn-sm compact-scan-btn" style="flex:0 0 auto;min-width:70px;" type="button" onclick="startCamera()">▣ Scan</button>';
   html += '</div>';
 
   html += '<div class="btn-row" style="margin-top:8px;">';
@@ -8687,7 +8717,7 @@ function renderA4(){
 
   html += '<div class="search-wrap" style="position:relative;display:flex;gap:8px;align-items:center;">';
   html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="manualBarcodeInput" class="compact-barcode-input" value="' + esc(state.a4Input) + '" placeholder="Barcode" style="flex:1;min-width:0;" />';
-  html += '<button class="btn btn-ghost btn-sm compact-scan-btn" style="flex:0 0 auto;min-width:70px;" type="button" onclick="startNativeScanner()">▣ Scan</button>';
+  html += '<button class="btn btn-ghost btn-sm compact-scan-btn" style="flex:0 0 auto;min-width:70px;" type="button" onclick="startCamera()">▣ Scan</button>';
   html += '</div>';
 
   html += '<div class="btn-row" style="margin-top:8px;">';
