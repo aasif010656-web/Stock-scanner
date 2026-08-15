@@ -366,7 +366,8 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,12,.7);backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center;padding:20px;}
 .modal-overlay.show{display:flex;}
 .modal-box{background:var(--panel,#171a27);border-radius:18px;padding:20px 18px;max-width:96vw;width:min(96vw,520px);max-height:86vh;overflow:auto;position:relative;text-align:center;color:var(--text,#f5f7ff);box-shadow:0 24px 60px rgba(0,0,0,0.5);}
-#barcodeModal .modal-box{background:#ffffff;color:#111;max-height:92vh;}
+#barcodeModal .modal-box{background:#ffffff;color:#111;width:min(92vw,420px);max-width:420px;max-height:80vh;min-height:0;overflow:auto;}
+.modal-overlay.show .modal-box:empty{display:none;}
 .modal-box-dark{background:var(--panel);color:var(--text);border:1px solid var(--border2);}
 .modal-box svg{background:#ffffff !important;display:block;margin:0 auto;}
 .modal-close{position:absolute;top:8px;right:10px;font-size:18px;color:#333;cursor:pointer;font-weight:700;padding:4px 8px;}
@@ -5826,6 +5827,19 @@ function openThemePicker(){
 function closeThemePicker(){
   document.getElementById('themeModal').classList.remove('show');
 }
+function closeStaleTransientOverlays(){
+  ['a7PreviewModal','themeModal'].forEach(function(id){
+    const el = document.getElementById(id);
+    const box = el && el.querySelector('.modal-box');
+    if(el && el.classList.contains('show') && box && !box.textContent.trim()) el.classList.remove('show');
+  });
+  const barcode = document.getElementById('barcodeModal');
+  const barcodeContent = document.getElementById('barcodeModalContent');
+  if(barcode && barcode.classList.contains('show') && barcodeContent && !barcodeContent.textContent.trim() && !barcodeContent.querySelector('svg')) barcode.classList.remove('show');
+  const action = document.getElementById('actionModal');
+  const actionContent = document.getElementById('actionModalContent');
+  if(action && action.classList.contains('show') && actionContent && !actionContent.textContent.trim() && !state._confirmRequest) action.classList.remove('show');
+}
 function closeActionModal(){
   const modal = document.getElementById('actionModal');
   if(modal) modal.classList.remove('show');
@@ -5835,8 +5849,9 @@ function closeActionModal(){
 function openActionModal(content){
   const target = document.getElementById('actionModalContent');
   const modal = document.getElementById('actionModal');
-  if(!target || !modal) return;
-  target.innerHTML = content;
+  const html = String(content || '').trim();
+  if(!target || !modal || !html) return;
+  target.innerHTML = html;
   modal.classList.add('show');
 }
 function appConfirm(message, title){
@@ -7729,6 +7744,7 @@ function toggleLoginPassword(){
 // ---------- Render ----------
 let renderFrame = 0;
 function render(){
+  closeStaleTransientOverlays();
   if(renderFrame) return;
   const schedule = window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); };
   renderFrame = schedule(function(){ renderFrame = 0; renderNow(); });
