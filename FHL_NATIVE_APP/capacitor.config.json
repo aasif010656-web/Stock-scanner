@@ -1,6 +1,6 @@
 {
   "appId": "com.abdulasif.pdtstockscanner",
-  "appName": "FHL ELECTRONICS v6",
+  "appName": "FHL ELECTRONICS v6.1",
   "webDir": "www",
   "android": {
     "allowMixedContent": false
