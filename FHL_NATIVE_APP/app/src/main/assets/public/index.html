@@ -6023,8 +6023,11 @@ installDialogGuards();
 installContextMenuGuards();
 
 // ---------- Shared notifications and PDF import ----------
+function canUseNotificationCenter(){
+  return !!(state.user && state.user.role !== 'admin');
+}
 function notificationVisibleToCurrentUser(item){
-  if(!state.user) return false;
+  if(!canUseNotificationCenter()) return false;
   if(item.audience === 'staff-admin' && !isStaffOrAdmin()) return false;
   if(item.audience === 'promoters' && state.user.role !== 'promoter') return false;
   if(item.audience === 'staff-promoters' && !isStaffOrAdmin() && state.user.role !== 'promoter') return false;
@@ -6033,12 +6036,20 @@ function notificationVisibleToCurrentUser(item){
 }
 function updateNotificationBadge(){
   const badge = document.getElementById('headerNotificationsBadge');
-  if(!badge) return;
+  const button = document.getElementById('headerNotificationsBtn');
+  if(!badge || !button) return;
+  if(!canUseNotificationCenter()){
+    button.style.display = 'none';
+    badge.style.display = 'none';
+    return;
+  }
+  button.style.display = '';
   const unread = (state.appNotifications || []).filter(notificationVisibleToCurrentUser).filter(n => Number(n.ts || 0) > Number(state.notificationReadAt || 0)).length;
   badge.textContent = unread > 99 ? '99+' : String(unread);
   badge.style.display = unread ? 'inline-flex' : 'none';
 }
 function openNotificationCenter(){
+  if(!canUseNotificationCenter()) return;
   const modal = document.getElementById('notificationModal');
   const content = document.getElementById('notificationModalContent');
   if(!modal || !content) return;
@@ -8196,6 +8207,33 @@ function openLowStockProduct(barcode){
   lookupBarcode(String(barcode || ''));
 }
 
+function getWeeklyLowStockRows(){
+  return getAllRows()
+    .map(function(row){
+      const code = String(row.Barcode || row.Product || '').trim();
+      return { row:row, code:code, qty:Number(effectiveQty(row)) || 0, soldLastWeek:getRecentSaleQty(code, 7) };
+    })
+    .filter(function(item){ return item.code && item.qty < 10 && item.soldLastWeek > 0; })
+    .sort(function(a,b){ return a.qty - b.qty || b.soldLastWeek - a.soldLastWeek || String(a.row.Description || '').localeCompare(String(b.row.Description || '')); });
+}
+
+function openWeeklyLowStockLog(){
+  const items = getWeeklyLowStockRows();
+  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 Low Stock</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">Below 10 pcs and sold during the last 7 days. Brands-synchronized stock.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + items.length + '</span></div>';
+  if(!items.length){
+    html += '<div class="empty" style="padding:22px 8px;">No qualifying low-stock items. Products appear here only after a recorded sale in the last 7 days.</div>';
+  }else{
+    html += '<div style="display:grid;gap:8px;max-height:55vh;overflow:auto;padding-right:2px;">';
+    items.forEach(function(item){
+      const row = item.row;
+      html += '<div class="card" style="margin:0;padding:11px;background:var(--card);"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;flex:1;"><div class="product-title" style="font-size:13px;">' + esc(row.Description || row.Product || item.code) + '</div><div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(item.code) + ' · ' + esc(row.Brand || 'Unbranded') + '</div><div style="font-size:12px;color:var(--muted);margin-top:5px;">Sold ' + fmtInt(item.soldLastWeek) + ' pcs in the last 7 days</div></div><div style="text-align:right;white-space:nowrap;"><div style="font-weight:800;color:var(--accent);">' + fmtInt(item.qty) + ' pcs</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">Current stock</div></div></div></div>';
+    });
+    html += '</div>';
+  }
+  html += '<div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" onclick="closeActionModal()">Close</button></div>';
+  openActionModal(html);
+}
+
 function getDashboardAnalytics(){
   const rows = getAllRows();
   const stockRows = rows.map(row => ({row, qty:Number(effectiveQty(row)) || 0}));
@@ -8213,20 +8251,8 @@ function getDashboardAnalytics(){
 
 function renderScan(){
   let html = '';
-  const lowStockRows = getAllRows().map(row => ({row, qty:Number(effectiveQty(row)) || 0})).filter(item => item.qty < 10).sort((a,b) => a.qty - b.qty || String(a.row.Description || '').localeCompare(String(b.row.Description || '')));
-  if(lowStockRows.length){
-    html += '<div class="card" style="border:1px solid rgba(242,183,5,.45);background:linear-gradient(135deg,rgba(242,183,5,.14),rgba(15,18,28,.88));margin-bottom:12px;">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;"><div><div class="product-title" style="margin-bottom:2px;">⚠️ Low Stock</div><div class="backup-note">' + lowStockRows.length + ' product' + (lowStockRows.length === 1 ? '' : 's') + ' below 10 pcs</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">&lt; 10</span></div>';
-    lowStockRows.slice(0,8).forEach(item => {
-      const row = item.row;
-      const code = String(row.Barcode || row.Product || '');
-      html += '<button type="button" class="brand-card" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid rgba(255,255,255,.08);" onclick="openLowStockProduct(\'' + esc(code).replace(/'/g,"\\'") + '\')"><span style="min-width:0;"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(row.Description || row.Product || code) + '</b><small style="opacity:.68;">' + esc(row.Brand || 'Unbranded') + '</small></span><strong style="color:var(--accent);white-space:nowrap;">' + fmtInt(item.qty) + ' pcs</strong></button>';
-    });
-    if(lowStockRows.length > 8) html += '<div class="backup-note" style="margin-top:8px;">Showing the 8 most urgent items. Use Brands search for the full list.</div>';
-    html += '</div>';
-  }
   const analytics = getDashboardAnalytics();
-  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Analytics</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div><div class="stat-card"><small>Brands</small><b>' + fmtInt(analytics.brandCount) + '</b></div><div class="stat-card"><small>Price Changes (30d)</small><b>' + fmtInt(analytics.recentPriceChanges) + '</b></div></div><div class="backup-note" style="margin-top:8px;">Low stock: ' + fmtInt(analytics.lowStock) + ' products · Most sold: ' + esc(analytics.topSale) + '</div></div>';
+  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Analytics</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div><div class="stat-card"><small>Brands</small><b>' + fmtInt(analytics.brandCount) + '</b></div><div class="stat-card"><small>Price Changes (30d)</small><b>' + fmtInt(analytics.recentPriceChanges) + '</b></div></div><div class="backup-note" style="margin-top:8px;">Brands synchronized · Most sold: ' + esc(analytics.topSale) + '</div></div>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
@@ -10312,6 +10338,9 @@ function renderLog(){
   const selectedParty = state.pricePartyFilter || '';
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || n.partyName || '').trim() === selectedParty) : allVisiblePriceNotifs;
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
+  const weeklyLowStockRows = getWeeklyLowStockRows();
+  html += '<div class="divider-label">Stock Alerts</div>';
+  html += '<button type="button" class="card" style="width:100%;margin-bottom:12px;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openWeeklyLowStockLog()"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">Low Stock</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Below 10 pcs · sold in last 7 days</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + weeklyLowStockRows.length + '</span><span style="color:var(--muted);font-size:18px;">›</span></div></button>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
