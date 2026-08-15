@@ -4,10 +4,9 @@
   "description": "FHL ELECTRONICS - Stock Scanner & Inventory Management App",
   "private": true,
   "scripts": {
-    "start": "cap serve",
-    "build": "cap sync android",
-    "android": "cap open android",
-    "build:android": "cd android && ./gradlew assembleRelease",
+    "sync:android": "echo Android uses app/src/main/assets/public directly; no Capacitor asset copy is required",
+    "build:android": "./gradlew :app:assembleRelease",
+    "build:android:debug": "./gradlew :app:assembleDebug",
     "sync:web": "node scripts/sync-web-assets.mjs",
     "sync:ios": "pnpm run sync:web && cap sync ios",
     "ios": "cap open ios"

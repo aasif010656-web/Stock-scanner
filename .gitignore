@@ -1,0 +1,20 @@
+# Signing credentials must only exist in protected CI secrets or local secure storage.
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+AuthKey_*.p8
+
+# Local Android and Apple build state.
+FHL_NATIVE_APP/local.properties
+FHL_NATIVE_APP/.gradle/
+FHL_NATIVE_APP/build/
+FHL_NATIVE_APP/app/build/
+FHL_NATIVE_APP/node_modules/
+FHL_NATIVE_APP/www/
+FHL_NATIVE_APP/ios/App/Pods/
+FHL_NATIVE_APP/ios/App/Podfile.lock
+
+# Operating-system and editor files.
+.DS_Store
+Thumbs.db
