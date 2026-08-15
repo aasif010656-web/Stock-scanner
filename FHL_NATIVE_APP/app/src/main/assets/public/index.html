@@ -7774,7 +7774,17 @@ function render(){
   closeStaleTransientOverlays();
   if(renderFrame) return;
   const schedule = window.requestAnimationFrame || function(cb){ return setTimeout(cb, 16); };
-  renderFrame = schedule(function(){ renderFrame = 0; renderNow(); });
+  renderFrame = schedule(function(){
+    renderFrame = 0;
+    try {
+      renderNow();
+    } catch (err) {
+      console.error('Render failed', err);
+      try { showToast('Unable to render this section. Please try again.', true); } catch (_) {}
+    } finally {
+      closeStaleTransientOverlays();
+    }
+  });
 }
 function renderNow(){
   const c = document.getElementById('content');
