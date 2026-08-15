@@ -2,6 +2,8 @@ package com.abdulasif.pdtstockscanner;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
@@ -47,6 +49,11 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Match the first HTML frame so WebView initialization does not expose a white splash
+        // or a black handoff before the login/dashboard is ready to render.
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(11, 13, 20)));
+        getWindow().setStatusBarColor(Color.rgb(11, 13, 20));
+        getWindow().setNavigationBarColor(Color.rgb(11, 13, 20));
         setContentView(R.layout.activity_main);
 
         // Register scanner activity launcher
@@ -82,6 +89,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Initialize WebView
         webView = findViewById(R.id.webview);
+        webView.setBackgroundColor(Color.rgb(11, 13, 20));
         setupWebView();
 
         // Create and register JS bridges
