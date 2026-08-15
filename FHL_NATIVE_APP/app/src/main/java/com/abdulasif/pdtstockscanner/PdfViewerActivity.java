@@ -110,7 +110,7 @@ public class PdfViewerActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        try { if (renderer != null) renderer.close(); } catch (IOException ignored) { }
+        try { if (renderer != null) renderer.close(); } catch (Exception ignored) { }
         try { if (descriptor != null) descriptor.close(); } catch (IOException ignored) { }
         super.onDestroy();
     }
