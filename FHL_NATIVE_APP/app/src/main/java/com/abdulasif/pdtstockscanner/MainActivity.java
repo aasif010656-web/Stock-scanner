@@ -118,6 +118,10 @@ public class MainActivity extends AppCompatActivity {
         // HTML input controls retain normal editing behavior through their own keyboard actions.
         webView.setLongClickable(false);
         webView.setHapticFeedbackEnabled(false);
+        // Keep WebView as the only vertical scroller; remove edge glow and scrollbar repaint jitter.
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setHorizontalScrollBarEnabled(false);
+        webView.setVerticalScrollBarEnabled(false);
         webView.setOnLongClickListener(v -> true);
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {

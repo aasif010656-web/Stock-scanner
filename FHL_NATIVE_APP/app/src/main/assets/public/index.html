@@ -431,7 +431,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 /* Full-theme design systems: each theme changes surfaces, geometry, depth, controls, spacing and atmosphere. */
 :root{--ui-radius:18px;--ui-radius-sm:12px;--ui-card-pad:14px;--ui-panel:rgba(255,255,255,.06);--ui-border:rgba(255,255,255,.10);--ui-blur:18px;--ui-shadow:0 14px 32px rgba(0,0,0,.30);--ui-control-radius:13px;--ui-control-height:44px;--ui-font-scale:1;}
 body{background-color:var(--bg)!important;color:var(--text)!important;transition:background-color .35s ease,color .25s ease;}
-#content{contain:layout style;transition:none;scrollbar-gutter:stable;}
+#content{contain:layout style;transition:none;scrollbar-gutter:stable;overflow-anchor:none;}
 .card,.form-card,.ios-group,.bento-tile,.dupwarn,.backup-note,.modal-box-dark{border-radius:var(--ui-radius)!important;background:var(--ui-panel)!important;border:1px solid var(--ui-border)!important;box-shadow:var(--ui-shadow)!important;backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;transition:border-radius .35s ease,box-shadow .35s ease,background .35s ease,transform .2s ease;}
 .card,.form-card{padding:var(--ui-card-pad)!important;}
 .card:hover,.form-card:hover,.bento-tile:hover{transform:translateY(var(--ui-hover-y,0));}
@@ -535,6 +535,11 @@ body.theme-bento .aging-party-header,body.theme-bento .report-header,body.theme-
 /* Native WebView stability: disable expensive background/compositing motion that causes scroll flicker. */
 body.native-performance-mode *,body.native-performance-mode *::before,body.native-performance-mode *::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important;}
 body.native-performance-mode .auth-screen,body.native-performance-mode .ios-group,body.native-performance-mode .report-sheet,body.native-performance-mode .aging-party-header,body.native-performance-mode .report-header{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background-attachment:scroll!important;}
+/* Android scroll stability: avoid expensive compositing and horizontal rubber-band jitter on every section. */
+body.native-performance-mode{background-attachment:scroll!important;overflow-x:hidden!important;overscroll-behavior-x:none!important;overscroll-behavior-y:none!important;touch-action:pan-y!important;}
+body.native-performance-mode #app,body.native-performance-mode #content{min-width:0!important;max-width:100%!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;}
+body.native-performance-mode .card,body.native-performance-mode .form-card,body.native-performance-mode .ios-group,body.native-performance-mode .bento-tile,body.native-performance-mode .report-sheet,body.native-performance-mode .modal-box-dark{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;contain:layout!important;transition:none!important;}
+body.native-performance-mode #brandResultsWrap,body.native-performance-mode #brandProductResultsWrap{contain:layout!important;will-change:auto!important;}
 .promoter-actions-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:0 0 12px;border:1px solid var(--ui-border);border-radius:16px;background:var(--ui-panel);box-shadow:var(--ui-shadow);}
 .promoter-actions-title{font-weight:700;color:var(--text);white-space:nowrap;}
 .promoter-actions-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
