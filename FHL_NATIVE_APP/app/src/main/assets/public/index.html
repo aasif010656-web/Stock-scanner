@@ -7785,7 +7785,7 @@ function renderNow(){
           </label>
         </div>
         <button class="btn auth-login-btn" id="loginButton" type="button" onclick="submitLogin()">Login</button>
-        <button class="btn btn-ghost" type="button" id="biometricLoginButton" style="display:none;margin-top:8px;width:100%;" onclick="beginBiometricLogin()">◉ Use fingerprint / Face ID</button>
+        <button class="btn btn-ghost" type="button" id="biometricLoginButton" style="display:block;margin-top:8px;width:100%;" onclick="beginBiometricLogin()">◉ Use fingerprint / Face ID</button><div id="biometricLoginHint" style="display:block;margin-top:6px;font-size:11px;color:var(--muted);text-align:center;">Uses the fingerprint or face unlock configured on this phone.</div>
         <div class="auth-created">Created By <strong>Abdul Asif</strong></div>
         <div class="message" id="message"></div>
       </div>
