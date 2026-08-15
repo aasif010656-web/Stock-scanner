@@ -42,6 +42,20 @@ public class AndroidNativeBridge {
         this.scannerLauncher = scannerLauncher;
     }
 
+    /** Ensures Android 13+ notification permission is requested before price updates are posted. */
+    @JavascriptInterface
+    public void ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 4021);
+        }
+    }
+
+    /** Returns whether Android notification delivery is currently permitted. */
+    @JavascriptInterface
+    public boolean hasNotificationPermission() {
+        return Build.VERSION.SDK_INT < 33 || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
     /** Posts a grouped price-update summary to Android notification center. */
     @JavascriptInterface
     public void postPriceUpdateNotification(String title, String body) {
@@ -65,9 +79,20 @@ public class AndroidNativeBridge {
                     .setContentText(safeBody)
                     .setStyle(new NotificationCompat.BigTextStyle().bigText(safeBody))
                     .setGroup(PRICE_UPDATES_GROUP)
+                    .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true);
             manager.notify((int)(System.currentTimeMillis() & 0x7fffffff), notification.build());
+
+            NotificationCompat.Builder summary = new NotificationCompat.Builder(activity, channelId)
+                    .setSmallIcon(com.abdulasif.pdtstockscanner.R.mipmap.ic_launcher)
+                    .setContentTitle("Price updates")
+                    .setContentText("Recent promoter price changes")
+                    .setGroup(PRICE_UPDATES_GROUP)
+                    .setGroupSummary(true)
+                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                    .setAutoCancel(true);
+            manager.notify(4022, summary.build());
         });
     }
 

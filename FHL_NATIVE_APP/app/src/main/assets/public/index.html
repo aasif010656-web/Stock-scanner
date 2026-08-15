@@ -5659,6 +5659,25 @@ const APP_VERSION = '6.1';
 const APP_BUILD = '35';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
+function purgeStaleRuntimeCache(){
+  try{
+    const key = 'fhl-runtime-build';
+    const previous = localStorage.getItem(key);
+    localStorage.setItem(key, APP_BUILD);
+    if(previous && String(previous) !== String(APP_BUILD) && window.caches){
+      caches.keys().then(keys => Promise.all(keys.map(cacheName => caches.delete(cacheName)))).catch(()=>{});
+    }
+  }catch(e){}
+}
+purgeStaleRuntimeCache();
+window.__FHL_RUNTIME_DIAGNOSTICS__ = function(){
+  let cachedBuild = '';
+  try{ cachedBuild = localStorage.getItem('fhl-runtime-build') || ''; }catch(e){}
+  return { version: APP_VERSION, build: APP_BUILD, cachedBuild, online: navigator.onLine, nativeScanner: !!(window.AndroidNative && window.AndroidNative.startNativeScanner), serviceWorker: 'serviceWorker' in navigator };
+};
+window.addEventListener('pageshow', () => { closeStaleTransientOverlays(); });
+document.addEventListener('visibilitychange', () => { if(!document.hidden) closeStaleTransientOverlays(); });
+
 // Party codes tracked in the Aging Details section
 const AGING_TARGET_PARTIES = ["SAN029","E0012","A0356","M0080","M0007","INF024","ASH073","J0005","R0036","M0020","F0027"];
 
@@ -6555,7 +6574,14 @@ function stopCamera(){
   if(window.AndroidNative && window.AndroidNative.stopNativeScanner) {
     window.AndroidNative.stopNativeScanner();
   }
+  state.cameraOn = false;
 }
+window.onScanCancelled = function(){
+  state.cameraOn = false;
+  closeAllTransientOverlays();
+  closeStaleTransientOverlays();
+  render();
+};
 async function toggleCamera(){
   if(state.cameraOn) await stopCamera(); else await startCamera();
   render();
