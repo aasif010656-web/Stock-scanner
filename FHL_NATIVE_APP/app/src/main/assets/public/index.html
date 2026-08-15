@@ -554,7 +554,7 @@ body.native-performance-mode #brandResultsWrap,body.native-performance-mode #bra
 .auth-screen::before,.auth-screen::after,.auth-floating-icons,.auth-glow,.auth-wave,.circuit-bg{display:none!important;opacity:0!important;background:none!important;animation:none!important;}
 .auth-screen{background:var(--bg)!important;}
 .auth-screen .auth-glass{position:relative!important;overflow:hidden!important;background:var(--ui-panel)!important;border:1px solid var(--ui-border)!important;box-shadow:var(--ui-shadow)!important;}
-.auth-screen .auth-logo{display:block!important;width:128px!important;height:128px!important;margin:0 auto 16px!important;padding:10px!important;object-fit:contain!important;border-radius:24px!important;background:#fff!important;border:2px solid rgba(255,255,255,.95)!important;box-shadow:0 8px 22px rgba(0,0,0,.24)!important;}
+.auth-screen .auth-logo{display:block!important;width:128px!important;height:128px!important;margin:0 auto 16px!important;padding:12px!important;box-sizing:border-box!important;object-fit:contain!important;border-radius:24px!important;background:#fff!important;border:2px solid rgba(255,255,255,.95)!important;box-shadow:0 8px 22px rgba(0,0,0,.24)!important;}
 body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!important;}
 .report-sheet{border:1px solid var(--ui-border)!important;border-radius:var(--ui-radius)!important;background:var(--ui-panel)!important;box-shadow:var(--ui-shadow)!important;backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;}
 .report-sheet table{color:var(--text)!important;}
@@ -5471,7 +5471,8 @@ async function loadStorage(){
       state.activeSessions = data.activeSessions || state.activeSessions || [];
       handleRemoteSessionRevocation();
       state.appNotifications = data.appNotifications || state.appNotifications || [];
-      state.pdfImports = data.pdfImports || state.pdfImports || [];
+      state.pdfImports = normalizePdfImportCollection(data.pdfImports || state.pdfImports || []);
+      cachePdfImports();
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       a7FirstSnapshot = false;
@@ -5616,7 +5617,8 @@ async function pushToCloud(force, suppressToast){
     state.priceChangeNotifications = mergedPriceNotifs;
     state.stockMovements = mergedStockMovements;
     state.appNotifications = mergedAppNotifications;
-    state.pdfImports = mergedPdfImports;
+    state.pdfImports = normalizePdfImportCollection(mergedPdfImports);
+    cachePdfImports();
     state.activeSessions = mergedActiveSessions;
     rebuildIndex();
 
@@ -5819,7 +5821,7 @@ let state = {
   importProgress: { active: false, current: 0, total: 0, label: '' }, // Brands import progress — shown only in Asif's Settings
   stockMovements: [], // {id, barcode, delta, type:'sale'|'restock'|'ambiguous', ts} — recorded whenever a stock qty changes
   appNotifications: [], // role/party-aware in-app alerts, synchronized through the shared Firestore document
-  pdfImports: [], // staff/admin PDF import metadata and extracted text reports synchronized through Firestore
+  pdfImports: JSON.parse(localStorage.getItem('pdf-imports-cache') || '[]'), // staff/admin PDF import records synchronized through Firestore
   activeSessions: [], // {id, username, role, deviceId, deviceName, loginTs, lastSeen, revokedAt}
   sessionToken: '', // current device session token; never reused across logins
   notificationReadAt: Number(localStorage.getItem('notification-read-at') || 0),
@@ -6074,16 +6076,30 @@ function handleLowStockTransition(barcode, oldQty, newQty){
   const row = (BARCODE_INDEX.get(String(barcode)) || [])[0] || {};
   addAppNotification({type:'low_stock', audience:'staff-promoters', party:String(row.Party || '').trim(), title:'Low stock alert', message:String(row.Description || row.Product || barcode) + ' sold below 10 pcs — current stock: ' + newQty + ' pcs.'});
 }
+function normalizePdfImportCollection(source){
+  const rawItems = Array.isArray(source) ? source : (source && typeof source === 'object' ? Object.keys(source).map(function(key){ return Object.assign({id:key}, source[key] || {}); }) : []);
+  return rawItems.map(function(record, index){
+    if(!record || typeof record !== 'object') return null;
+    const base64 = String(record.base64 || record.dataUrl || record.dataURL || record.fileData || record.content || record.data || '');
+    const name = String(record.name || record.fileName || record.filename || record.title || ('Imported PDF ' + (index + 1) + '.pdf')).trim();
+    const id = String(record.id || record.key || record.docId || ('pdf_legacy_' + index + '_' + name.replace(/[^a-z0-9]+/gi, '_').slice(0,40))).trim();
+    return Object.assign({}, record, {id:id, name:name, base64:base64, mimeType:record.mimeType || record.type || 'application/pdf'});
+  }).filter(Boolean);
+}
+function cachePdfImports(){
+  try{ localStorage.setItem('pdf-imports-cache', JSON.stringify(state.pdfImports || [])); }catch(e){}
+}
 function getVisiblePdfImports(){
   if(!isStaffOrAdmin()) return [];
-  return (state.pdfImports || []).filter(function(record){
-    return record && record.id && record.name && record.base64;
-  }).sort(function(a,b){ return Number(b.ts || 0) - Number(a.ts || 0); });
+  return normalizePdfImportCollection(state.pdfImports).filter(function(record){
+    return record && record.id && record.name;
+  }).sort(function(a,b){ return Number(b.ts || b.updatedAt || 0) - Number(a.ts || a.updatedAt || 0); });
 }
 function openImportedPdf(id){
   if(!isStaffOrAdmin()){ showToast('PDF access is available only for Staff and Admin', true); return; }
   const record = getVisiblePdfImports().find(function(item){ return item.id === id; });
   if(!record){ showToast('This PDF is not available on this device yet. Please sync and try again.', true); return; }
+  if(!record.base64){ showToast('PDF details are synced, but its file content is unavailable. Please import this PDF again once.', true); return; }
   const importer = String(record.importedBy || 'Staff/Admin');
   downloadBase64File(record.base64, record.name, 'Imported PDF', 'Imported by ' + importer, record.mimeType || 'application/pdf');
 }
@@ -6103,6 +6119,7 @@ async function handleImportPdf(fileInput){
     if(!state.pdfImports) state.pdfImports = [];
     state.pdfImports.unshift(record);
     if(state.pdfImports.length > 10) state.pdfImports = state.pdfImports.slice(0,10);
+    cachePdfImports();
     addAuditLog('PDF Imported', 'Imported ' + file.name + ' by ' + state.user.username);
     await pushToCloud(true, true);
     render();
@@ -8220,30 +8237,34 @@ function openLowStockProduct(barcode){
   lookupBarcode(String(barcode || ''));
 }
 
+function isPromoterUser(){ return !!(state.user && state.user.role === 'promoter'); }
+function lowStockPartyCode(row){ return String(row.Party || row.party || row.partyCode || row['Party Code'] || '').trim() || '__unassigned__'; }
+function lowStockPartyName(row, partyCode){ return String(row['Party Name'] || row.partyName || partyCode || '').trim() || 'Unassigned party'; }
+function currentUserPartyCodes(){ return (state.user && Array.isArray(state.user.partyCodes) ? state.user.partyCodes : []).map(function(code){ return String(code || '').trim(); }).filter(Boolean); }
+function canViewLowStockParty(partyCode){ return isAdminUser() || (!isPromoterUser() && currentUserPartyCodes().includes(String(partyCode || '').trim())); }
 function getWeeklyLowStockRows(){
   return getAllRows()
     .map(function(row){
       const code = String(row.Barcode || row.Product || '').trim();
-      return { row:row, code:code, qty:Number(effectiveQty(row)) || 0, soldLastWeek:getRecentSaleQty(code, 7) };
+      const partyCode = lowStockPartyCode(row);
+      return { row:row, code:code, partyCode:partyCode, partyName:lowStockPartyName(row, partyCode), qty:Number(effectiveQty(row)) || 0, soldLastWeek:getRecentSaleQty(code, 7) };
     })
     .filter(function(item){ return item.code && item.qty < 10 && item.soldLastWeek >= 10; })
-    .sort(function(a,b){ return a.qty - b.qty || b.soldLastWeek - a.soldLastWeek || String(a.row.Description || '').localeCompare(String(b.row.Description || '')); });
+    .sort(function(a,b){ return a.partyCode.localeCompare(b.partyCode) || a.qty - b.qty || b.soldLastWeek - a.soldLastWeek || String(a.row.Description || '').localeCompare(String(b.row.Description || '')); });
 }
-
-function openWeeklyLowStockLog(){
-  const items = getWeeklyLowStockRows();
-  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 Low Stock</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">Below 10 pcs and 10+ pcs sold in the last 7 days. Brands-synchronized stock.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + items.length + '</span></div>';
-  if(!items.length){
-    html += '<div class="empty" style="padding:22px 8px;">No qualifying low-stock items. Products appear here only after 10 or more recorded sales in the last 7 days.</div>';
-  }else{
-    html += '<div style="display:grid;gap:8px;max-height:55vh;overflow:auto;padding-right:2px;">';
-    items.forEach(function(item){
-      const row = item.row;
-      html += '<div class="card" style="margin:0;padding:11px;background:var(--card);"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;flex:1;"><div class="product-title" style="font-size:13px;">' + esc(row.Description || row.Product || item.code) + '</div><div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(item.code) + ' · ' + esc(row.Brand || 'Unbranded') + '</div><div style="font-size:12px;color:var(--muted);margin-top:5px;">Sold ' + fmtInt(item.soldLastWeek) + ' pcs in the last 7 days</div></div><div style="text-align:right;white-space:nowrap;"><div style="font-weight:800;color:var(--accent);">' + fmtInt(item.qty) + ' pcs</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">Current stock</div></div></div></div>';
-    });
-    html += '</div>';
-  }
-  html += '<div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" onclick="closeActionModal()">Close</button></div>';
+function getWeeklyLowStockPartyGroups(){
+  const groups = {};
+  getWeeklyLowStockRows().forEach(function(item){ if(!groups[item.partyCode]) groups[item.partyCode] = {partyCode:item.partyCode, partyName:item.partyName, items:[]}; groups[item.partyCode].items.push(item); });
+  return Object.keys(groups).filter(canViewLowStockParty).sort(function(a,b){ return a.localeCompare(b); }).map(function(key){ return groups[key]; });
+}
+function openWeeklyLowStockPartyLog(partyCode){
+  const group = getWeeklyLowStockPartyGroups().find(function(item){ return item.partyCode === String(partyCode || ''); });
+  if(!group){ showToast('This Low Stock folder is not available for your account.', true); return; }
+  const items = group.items;
+  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 ' + esc(group.partyName) + '</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">Low stock for party ' + esc(group.partyCode) + ' · below 10 pcs and 10+ pcs sold in the last 7 days.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + items.length + '</span></div>';
+  html += '<div style="display:grid;gap:8px;max-height:55vh;overflow:auto;padding-right:2px;">';
+  items.forEach(function(item){ const row = item.row; html += '<div class="card" style="margin:0;padding:11px;background:var(--card);"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;flex:1;"><div class="product-title" style="font-size:13px;">' + esc(row.Description || row.Product || item.code) + '</div><div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(item.code) + ' · ' + esc(row.Brand || 'Unbranded') + '</div><div style="font-size:12px;color:var(--muted);margin-top:5px;">Sold ' + fmtInt(item.soldLastWeek) + ' pcs in the last 7 days</div></div><div style="text-align:right;white-space:nowrap;"><div style="font-weight:800;color:var(--accent);">' + fmtInt(item.qty) + ' pcs</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">Current stock</div></div></div></div>'; });
+  html += '</div><div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" onclick="closeActionModal()">Close</button></div>';
   openActionModal(html);
 }
 
@@ -8623,12 +8644,14 @@ async function finishA7Batch(){
 function downloadBase64File(base64, filename, title, text, mimeType){
   mimeType = mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   try{
+    const cleanBase64 = String(base64 || '').replace(/^data:[^;]+;base64,/i, '');
+    if(!cleanBase64) throw new Error('File content is unavailable');
     // 1. Native Android bridge — opens the real "Share to..." sheet on-device (same one used by Aging export)
     if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){
-      window.AndroidNative.shareFile(base64, filename);
+      window.AndroidNative.shareFile(cleanBase64, filename);
       return;
     }
-    const byteChars = atob(base64);
+    const byteChars = atob(cleanBase64);
     const byteNumbers = new Array(byteChars.length);
     for(let i=0;i<byteChars.length;i++) byteNumbers[i] = byteChars.charCodeAt(i);
     const byteArray = new Uint8Array(byteNumbers);
@@ -10324,6 +10347,10 @@ function renderPriceLog(){
 function renderLog(){
   const deviceCount = new Set(scanLog.map(l=>l.deviceId||'unknown')).size;
   let html = '';
+  if(isPromoterUser()){
+    const promoterPriceLog = renderPriceLog();
+    return promoterPriceLog || '<div class="divider-label">Price Log</div><div class="empty">No price updates are available for your assigned party yet.</div>';
+  }
 
   const myA7Excels = (state.a7Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username));
   if(myA7Excels.length){
@@ -10365,9 +10392,13 @@ function renderLog(){
   const selectedParty = state.pricePartyFilter || '';
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(n => String(n.party || n.partyName || '').trim() === selectedParty) : allVisiblePriceNotifs;
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
-  const weeklyLowStockRows = getWeeklyLowStockRows();
+  const weeklyLowStockGroups = getWeeklyLowStockPartyGroups();
   html += '<div class="divider-label">Stock Alerts</div>';
-  html += '<button type="button" class="card" style="width:100%;margin-bottom:12px;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openWeeklyLowStockLog()"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">Low Stock</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Below 10 pcs · 10+ sold in last 7 days</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + weeklyLowStockRows.length + '</span><span style="color:var(--muted);font-size:18px;">›</span></div></button>';
+  if(!weeklyLowStockGroups.length){
+    html += '<div class="empty" style="margin-bottom:12px;">No Low Stock folders are assigned to this account.</div>';
+  }else{
+    weeklyLowStockGroups.forEach(function(group){ const safeParty = esc(group.partyCode).replace(/'/g, "\\'"); html += '<button type="button" class="card" style="width:100%;margin-bottom:10px;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openWeeklyLowStockPartyLog(\'' + safeParty + '\')"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">' + esc(group.partyName) + '</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">' + esc(group.partyCode) + ' · Below 10 pcs · 10+ sold in last 7 days</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + group.items.length + '</span><span style="color:var(--muted);font-size:18px;">›</span></div></button>'; });
+  }
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
