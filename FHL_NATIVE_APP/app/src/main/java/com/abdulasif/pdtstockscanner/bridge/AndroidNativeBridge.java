@@ -226,10 +226,16 @@ public class AndroidNativeBridge {
 
     /**
      * Decodes base64 data to a file and shares it via share intent
-     * Called from JS: window.AndroidNative.shareFile(base64Data, fileName)
+     * Called from JS for Excel exports. PDF viewers use shareFileWithMime so Android
+     * receives the actual document type instead of forcing an Excel association.
      */
     @JavascriptInterface
     public void shareFile(String base64Data, String fileName) {
+        shareFileWithMime(base64Data, fileName, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    @JavascriptInterface
+    public void shareFileWithMime(String base64Data, String fileName, String requestedMimeType) {
         try {
             byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
             File file = new File(activity.getExternalCacheDir(), fileName);
@@ -244,11 +250,14 @@ public class AndroidNativeBridge {
             );
 
             Intent shareIntent = new Intent(Intent.ACTION_SEND);
-            shareIntent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            String mimeType = requestedMimeType != null && requestedMimeType.matches("[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+")
+                    ? requestedMimeType
+                    : "application/octet-stream";
+            shareIntent.setType(mimeType);
             shareIntent.putExtra(Intent.EXTRA_STREAM, contentUri);
             shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-            Intent chooser = Intent.createChooser(shareIntent, "Share Excel Report");
+            Intent chooser = Intent.createChooser(shareIntent, "application/pdf".equals(mimeType) ? "Open or Share PDF" : "Share Excel Report");
             activity.startActivity(chooser);
         } catch (Exception e) {
             e.printStackTrace();
