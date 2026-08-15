@@ -114,6 +114,11 @@ public class MainActivity extends AppCompatActivity {
         settings.setSupportZoom(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
+        // Prevent Android's native copy/paste ActionMode from covering app cards after a long press.
+        // HTML input controls retain normal editing behavior through their own keyboard actions.
+        webView.setLongClickable(false);
+        webView.setHapticFeedbackEnabled(false);
+        webView.setOnLongClickListener(v -> true);
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
