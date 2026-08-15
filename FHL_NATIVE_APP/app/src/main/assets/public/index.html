@@ -6074,6 +6074,19 @@ function handleLowStockTransition(barcode, oldQty, newQty){
   const row = (BARCODE_INDEX.get(String(barcode)) || [])[0] || {};
   addAppNotification({type:'low_stock', audience:'staff-promoters', party:String(row.Party || '').trim(), title:'Low stock alert', message:String(row.Description || row.Product || barcode) + ' sold below 10 pcs — current stock: ' + newQty + ' pcs.'});
 }
+function getVisiblePdfImports(){
+  if(!isStaffOrAdmin()) return [];
+  return (state.pdfImports || []).filter(function(record){
+    return record && record.id && record.name && record.base64;
+  }).sort(function(a,b){ return Number(b.ts || 0) - Number(a.ts || 0); });
+}
+function openImportedPdf(id){
+  if(!isStaffOrAdmin()){ showToast('PDF access is available only for Staff and Admin', true); return; }
+  const record = getVisiblePdfImports().find(function(item){ return item.id === id; });
+  if(!record){ showToast('This PDF is not available on this device yet. Please sync and try again.', true); return; }
+  const importer = String(record.importedBy || 'Staff/Admin');
+  downloadBase64File(record.base64, record.name, 'Imported PDF', 'Imported by ' + importer, record.mimeType || 'application/pdf');
+}
 function triggerImportPdf(){
   if(!isStaffOrAdmin()){ showToast('PDF import is available only for Staff and Admin', true); return; }
   const input = document.getElementById('importPdfInput');
@@ -8213,15 +8226,15 @@ function getWeeklyLowStockRows(){
       const code = String(row.Barcode || row.Product || '').trim();
       return { row:row, code:code, qty:Number(effectiveQty(row)) || 0, soldLastWeek:getRecentSaleQty(code, 7) };
     })
-    .filter(function(item){ return item.code && item.qty < 10 && item.soldLastWeek > 0; })
+    .filter(function(item){ return item.code && item.qty < 10 && item.soldLastWeek >= 10; })
     .sort(function(a,b){ return a.qty - b.qty || b.soldLastWeek - a.soldLastWeek || String(a.row.Description || '').localeCompare(String(b.row.Description || '')); });
 }
 
 function openWeeklyLowStockLog(){
   const items = getWeeklyLowStockRows();
-  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 Low Stock</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">Below 10 pcs and sold during the last 7 days. Brands-synchronized stock.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + items.length + '</span></div>';
+  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 Low Stock</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">Below 10 pcs and 10+ pcs sold in the last 7 days. Brands-synchronized stock.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + items.length + '</span></div>';
   if(!items.length){
-    html += '<div class="empty" style="padding:22px 8px;">No qualifying low-stock items. Products appear here only after a recorded sale in the last 7 days.</div>';
+    html += '<div class="empty" style="padding:22px 8px;">No qualifying low-stock items. Products appear here only after 10 or more recorded sales in the last 7 days.</div>';
   }else{
     html += '<div style="display:grid;gap:8px;max-height:55vh;overflow:auto;padding-right:2px;">';
     items.forEach(function(item){
@@ -8252,7 +8265,7 @@ function getDashboardAnalytics(){
 function renderScan(){
   let html = '';
   const analytics = getDashboardAnalytics();
-  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Analytics</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div><div class="stat-card"><small>Brands</small><b>' + fmtInt(analytics.brandCount) + '</b></div><div class="stat-card"><small>Price Changes (30d)</small><b>' + fmtInt(analytics.recentPriceChanges) + '</b></div></div><div class="backup-note" style="margin-top:8px;">Brands synchronized · Most sold: ' + esc(analytics.topSale) + '</div></div>';
+  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div class="backup-note" style="margin-top:8px;">' + fmtInt(analytics.brandCount) + ' brands synchronized</div></div>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
@@ -9968,6 +9981,20 @@ function renderData(){
   let html = '<div class="section">';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><h2 style="margin-bottom:0;">Data & Excel</h2><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="triggerImportData()">📥 Import Excel</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost" onclick="triggerImportPdf()">📄 Import PDF</button>' : '') + '</div></div>';
   html += '<input id="importDataInput" type="file" accept=".xlsx,.xls" style="display:none" onchange="handleImportData(this)" />';
+  if(isStaffOrAdmin()){
+    const pdfImports = getVisiblePdfImports();
+    html += '<div class="divider-label">Imported PDFs</div>';
+    if(!pdfImports.length){
+      html += '<div class="empty" style="margin-bottom:12px;">No PDFs imported yet.</div>';
+    }else{
+      html += '<div style="display:grid;gap:8px;margin-bottom:14px;">';
+      pdfImports.slice(0,10).forEach(function(record){
+        const importedAt = Number(record.ts || 0) ? new Date(Number(record.ts)).toLocaleString() : 'Recently imported';
+        html += '<button type="button" class="card" style="width:100%;margin:0;padding:12px;text-align:left;cursor:pointer;" onclick="openImportedPdf(\'' + esc(record.id).replace(/'/g,"\\'") + '\')"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📄</span><div style="min-width:0;flex:1;"><div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(record.name) + '</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">' + esc(String(record.importedBy || 'Staff/Admin')) + ' · ' + esc(importedAt) + '</div></div><span style="font-size:12px;color:var(--accent);font-weight:700;">Open</span></div></button>';
+      });
+      html += '</div>';
+    }
+  }
   if(!state.reports || state.reports.length === 0) {
       html += '<div class="empty">No data reports imported yet.</div>';
   } else {
@@ -10340,7 +10367,7 @@ function renderLog(){
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
   const weeklyLowStockRows = getWeeklyLowStockRows();
   html += '<div class="divider-label">Stock Alerts</div>';
-  html += '<button type="button" class="card" style="width:100%;margin-bottom:12px;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openWeeklyLowStockLog()"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">Low Stock</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Below 10 pcs · sold in last 7 days</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + weeklyLowStockRows.length + '</span><span style="color:var(--muted);font-size:18px;">›</span></div></button>';
+  html += '<button type="button" class="card" style="width:100%;margin-bottom:12px;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openWeeklyLowStockLog()"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">Low Stock</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">Below 10 pcs · 10+ sold in last 7 days</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + weeklyLowStockRows.length + '</span><span style="color:var(--muted);font-size:18px;">›</span></div></button>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
