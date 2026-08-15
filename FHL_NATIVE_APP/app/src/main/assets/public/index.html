@@ -7276,7 +7276,7 @@ function isCurrentRelease(data){
   const releaseTag = String(data.releaseTag || '').trim();
   const buildMatch = releaseTag.match(/build[-_](\d+)/i);
   // Every current GitHub/Firestore release has a build tag. Compare its visible
-  // release line first, then build number, so v6.1-build-49 correctly updates
+  // release line first, then build number, so v6.1-build-51 correctly updates
   // any older v6.1 build even though UPDATE_CHECK_VERSION is a test-only identity.
   if(buildMatch){
     const visibleOrder = compareReleaseVersions(latestVersion, visibleVersion);
@@ -7290,7 +7290,7 @@ function isCurrentRelease(data){
 }
 async function checkForUpdates(isAuto){
   const status = document.getElementById('updateStatus');
-  const currentVersion = UPDATE_CHECK_VERSION;
+  const currentVersion = APP_VERSION;
   if(status) status.innerText = "Checking for updates...";
   
   if(!fbReady){
