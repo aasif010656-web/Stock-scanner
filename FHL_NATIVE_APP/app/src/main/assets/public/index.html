@@ -5296,6 +5296,7 @@ const firebaseConfig = {
 let fbDocRef = null;
 let fbExcelDocRef = null;
 let fbPdfDocRef = null;
+let fbPdfPayloadsRef = null;
 let fbReportDocRef = null;
 let fbReportRowsRef = null;
 let fbReady = false;
@@ -5327,6 +5328,7 @@ function initFirebase(){
     fbDocRef = db.collection('stockScannerApp').doc('sharedData');
     fbExcelDocRef = db.collection('stockScannerApp').doc('excelData');
     fbPdfDocRef = db.collection('stockScannerApp').doc('pdfData');
+    fbPdfPayloadsRef = fbPdfDocRef.collection('payloads');
     fbReportDocRef = db.collection('stockScannerApp').doc('reportData');
     fbReportRowsRef = fbReportDocRef.collection('rows');
     fbReady = true;
@@ -5380,6 +5382,53 @@ async function deleteReportRowsFromCloud(report){
   const chunkCount = Number(meta && meta.exists && meta.data() && meta.data().chunkCount) || 0;
   const deletes = [reportDoc.delete()];
   for(let index=0; index<chunkCount; index++) deletes.push(reportDoc.collection('chunks').doc(String(index)).delete());
+  await Promise.all(deletes);
+}
+
+// PDF files are never stored inside the pdfData Firestore document. A large PDF
+// is split into small payload chunks under its own document, avoiding Firestore's
+// 1 MiB document cap while keeping the metadata list fast to load.
+function pdfPayloadId(record){ return String(record && record.id || '').replace(/[^a-z0-9_-]+/gi, '_').slice(0,120); }
+function compactPdfMetadata(record){
+  const copy = Object.assign({}, record || {});
+  delete copy.base64; delete copy.dataUrl; delete copy.dataURL; delete copy.fileData; delete copy.content; delete copy.data;
+  copy.id = pdfPayloadId(copy);
+  copy.payloadStored = true;
+  return copy;
+}
+async function savePdfPayloadToCloud(record){
+  if(!fbPdfPayloadsRef || !record || !record.base64) throw new Error('PDF storage is unavailable');
+  const payload = String(record.base64);
+  const chunkSize = 280000;
+  const chunkCount = Math.max(1, Math.ceil(payload.length / chunkSize));
+  const fileDoc = fbPdfPayloadsRef.doc(pdfPayloadId(record));
+  const writes = [fileDoc.set({id:pdfPayloadId(record), name:String(record.name || 'Imported PDF'), mimeType:String(record.mimeType || 'application/pdf'), size:Number(record.size || 0), chunkCount:chunkCount, updatedAt:Date.now()}, {merge:true})];
+  for(let index=0; index<chunkCount; index++) writes.push(fileDoc.collection('chunks').doc(String(index)).set({data:payload.slice(index * chunkSize, (index + 1) * chunkSize)}));
+  await Promise.all(writes);
+  record.payloadStored = true;
+}
+async function loadPdfPayloadFromCloud(record){
+  if(!fbPdfPayloadsRef || !record) return '';
+  const fileDoc = fbPdfPayloadsRef.doc(pdfPayloadId(record));
+  const meta = await fileDoc.get();
+  const chunkCount = Number(meta.exists && meta.data() && meta.data().chunkCount) || 0;
+  if(!chunkCount) return '';
+  const chunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return fileDoc.collection('chunks').doc(String(index)).get(); }));
+  const payload = chunks.map(function(chunk){ return chunk.exists && chunk.data() ? String(chunk.data().data || '') : ''; }).join('');
+  if(payload){
+    record.base64 = payload;
+    const local = (state.pdfImports || []).find(function(item){ return String(item.id) === String(record.id); });
+    if(local) local.base64 = payload;
+  }
+  return payload;
+}
+async function deletePdfPayloadFromCloud(record){
+  if(!fbPdfPayloadsRef || !record) return;
+  const fileDoc = fbPdfPayloadsRef.doc(pdfPayloadId(record));
+  const meta = await fileDoc.get().catch(function(){ return null; });
+  const chunkCount = Number(meta && meta.exists && meta.data() && meta.data().chunkCount) || 0;
+  const deletes = [fileDoc.delete()];
+  for(let index=0; index<chunkCount; index++) deletes.push(fileDoc.collection('chunks').doc(String(index)).delete());
   await Promise.all(deletes);
 }
 
@@ -5697,7 +5746,11 @@ async function pushToCloud(force, suppressToast){
     // their legacy copies from sharedData. This avoids Firestore's 1 MiB shared
     // document limit while preserving a safe migration path for existing devices.
     if(fbExcelDocRef) await fbExcelDocRef.set({ a7Excels: mergedA7Excels, a4Excels: mergedA4Excels, latestExcelUpdate: state.latestExcelUpdate || null, updatedAt: Date.now() }, { merge: true });
-    if(fbPdfDocRef) await fbPdfDocRef.set({ pdfImports: mergedPdfImports, updatedAt: Date.now() }, { merge: true });
+    // Migrate any legacy inline payloads before writing the compact metadata list.
+    for(const pdfRecord of mergedPdfImports){
+      if(pdfRecord && pdfRecord.base64 && !pdfRecord.payloadStored) await savePdfPayloadToCloud(pdfRecord);
+    }
+    if(fbPdfDocRef) await fbPdfDocRef.set({ pdfImports: mergedPdfImports.map(compactPdfMetadata), updatedAt: Date.now() }, { merge: true });
     if(fbReportDocRef) await fbReportDocRef.set({ reports: mergedReportIndex, updatedAt: Date.now() }, { merge: true });
     const deleteLegacyField = firebase && firebase.firestore && firebase.firestore.FieldValue ? firebase.firestore.FieldValue.delete() : null;
     const sharedPayload = {
@@ -5930,6 +5983,7 @@ let state = {
   stockEditValue: 0,
   editingProductSL: null,
   editProductForm: null,
+  editProductDirty: false,
   addProductOpen: false,
   addForm: { brand:'', description:'', code:'', barcode:'', party:'', partyName:'', stockQty:0 },
   barcodeSuggestions: [],
@@ -5947,6 +6001,8 @@ let state = {
   isImporting: false, importProgress: 0,
   reports: JSON.parse(localStorage.getItem('app-reports') || '[]'),
   openReportIndex: null,
+  reportWorkspaceIndex: null,
+  reportDirty: false,
   editingReportRow: null, // {reportIdx, rowIdx}
   agingMonthly: new Date().getMonth(),
   openAgingParty: null,
@@ -6160,7 +6216,7 @@ function normalizePdfImportCollection(source){
   }).filter(Boolean);
 }
 function cachePdfImports(){
-  try{ localStorage.setItem('pdf-imports-cache', JSON.stringify(state.pdfImports || [])); }catch(e){}
+  try{ localStorage.setItem('pdf-imports-cache', JSON.stringify((state.pdfImports || []).map(compactPdfMetadata))); }catch(e){}
 }
 function getVisiblePdfImports(){
   if(!isStaffOrAdmin()) return [];
@@ -6168,11 +6224,15 @@ function getVisiblePdfImports(){
     return record && record.id && record.name;
   }).sort(function(a,b){ return Number(b.ts || b.updatedAt || 0) - Number(a.ts || a.updatedAt || 0); });
 }
-function openImportedPdf(id){
+async function openImportedPdf(id){
   if(!isStaffOrAdmin()){ showToast('PDF access is available only for Staff and Admin', true); return; }
   const record = getVisiblePdfImports().find(function(item){ return item.id === id; });
   if(!record){ showToast('This PDF is not available on this device yet. Please sync and try again.', true); return; }
-  if(!record.base64){ showToast('PDF details are synced, but its file content is unavailable. Please import this PDF again once.', true); return; }
+  if(!record.base64){
+    showToast('Loading PDF…');
+    try{ await loadPdfPayloadFromCloud(record); }catch(e){}
+  }
+  if(!record.base64){ showToast('PDF file is not available yet. Check internet and try again.', true); return; }
   if(window.AndroidNative && typeof window.AndroidNative.openPdfInApp === 'function'){
     try{ window.AndroidNative.openPdfInApp(String(record.base64), String(record.name || 'Imported PDF')); return; }catch(e){ console.warn('Native PDF viewer unavailable', e); }
   }
@@ -6190,6 +6250,7 @@ async function deleteImportedPdf(id){
   cachePdfImports();
   addAuditLog('PDF Deleted', 'Deleted ' + record.name + ' by ' + ((state.user && state.user.username) || 'Staff/Admin'));
   render();
+  try{ await deletePdfPayloadFromCloud(record); }catch(e){}
   await pushToCloud(true, true);
   showToast(syncStatus === 'synced' ? '✓ PDF deleted from all devices' : 'PDF deleted locally; cloud cleanup will retry', syncStatus !== 'synced');
 }
@@ -6202,18 +6263,18 @@ async function handleImportPdf(fileInput){
   if(!isStaffOrAdmin()){ showToast('PDF import is available only for Staff and Admin', true); if(fileInput) fileInput.value=''; return; }
   const file = fileInput && fileInput.files ? fileInput.files[0] : null;
   if(!file) return;
-  if(file.size > 850000){ showToast('PDF is too large for the shared Firestore document. Please use a PDF below 850 KB.', true); fileInput.value=''; return; }
   try{
     const base64 = await new Promise((resolve,reject)=>{ const reader = new FileReader(); reader.onload=()=>resolve(String(reader.result || '')); reader.onerror=reject; reader.readAsDataURL(file); });
     const record = {id:'pdf_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, mimeType:file.type || 'application/pdf', size:file.size, base64, importedBy:state.user.username, importedRole:state.user.role, ts:Date.now()};
     if(!state.pdfImports) state.pdfImports = [];
     state.pdfImports.unshift(record);
     if(state.pdfImports.length > 10) state.pdfImports = state.pdfImports.slice(0,10);
+    await savePdfPayloadToCloud(record);
     cachePdfImports();
     addAuditLog('PDF Imported', 'Imported ' + file.name + ' by ' + state.user.username);
     await pushToCloud(true, true);
     render();
-    showToast(syncStatus === 'synced' ? '✓ PDF imported and synced to Firestore' : '✓ PDF saved locally; cloud sync will retry', syncStatus !== 'synced');
+    showToast(syncStatus === 'synced' ? '✓ PDF imported and synced' : '✓ PDF imported; cloud sync will retry', syncStatus !== 'synced');
   }catch(e){ showToast('Could not import PDF: ' + e.message, true); }
   fileInput.value = '';
 }
@@ -6467,6 +6528,22 @@ function closeAllTransientOverlays(){
   state._pendingUpdateUrl = '';
 }
 function setTab(tab, fromBack){
+  if(!state._bypassUnsavedGuard && (state.editProductDirty || state.reportDirty)){
+    const targetTab = tab;
+    appConfirm('You have unsaved edits. Save them before leaving?', 'Unsaved Changes').then(async function(save){
+      if(save){
+        if(state.reportDirty) await saveReportWorkspace();
+        if(state.editProductDirty && state.editingProductSL !== null) await saveEditProduct(state.editingProductSL);
+      }else{
+        state.reportDirty = false;
+        state.editProductDirty = false;
+      }
+      state._bypassUnsavedGuard = true;
+      setTab(targetTab, fromBack);
+      state._bypassUnsavedGuard = false;
+    });
+    return;
+  }
   closeAllTransientOverlays();
   if(state.cameraOn) stopCamera();
   if((tab === 'data' || tab === 'log') && state.user && state.user.role === 'promoter'){
@@ -6516,13 +6593,8 @@ function updatePriceLogNotificationBadge(){
 function updateAdminExcelSummary(){
   const el = document.getElementById('adminExcelSummary');
   if(!el) return;
-  const isAdmin = !!(state.user && state.user.username === 'Asif' && state.user.role === 'admin');
-  if(!isAdmin){ el.style.display = 'none'; el.innerHTML = ''; return; }
-  const latest = state.latestExcelUpdate;
-  const latestDate = latest && latest.ts ? new Date(latest.ts).toLocaleString('en-GB', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'}) : 'No Excel update yet';
-  const latestQty = latest && latest.updatedQtyTotal !== undefined ? String(latest.updatedQtyTotal) : '—';
-  el.innerHTML = '<span class="summary-label">Last Excel Update</span><span class="summary-value">' + esc(latestDate) + '</span><span class="summary-label" style="margin-top:2px;">Updated Stock Qty</span><span class="summary-value">' + esc(latestQty) + '</span>';
-  el.style.display = 'flex';
+  el.style.display = 'none';
+  el.innerHTML = '';
 }
 function updateHeaderSub(){
   updateAdminExcelSummary();
@@ -7087,11 +7159,16 @@ function startEditProduct(sl){
     extraBarcodes: (r._extraBarcodes || []).join(', ')
   };
   state.editingStockBarcode = null;
+  state.editProductDirty = false;
   render();
 }
-function cancelEditProduct(){ state.editingProductSL = null; state.editProductForm = null; render(); }
+function cancelEditProduct(){
+  const close = function(){ state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false; render(); };
+  if(state.editProductDirty){ appConfirm('You have unsaved product edits. Save them before closing?', 'Unsaved Changes').then(async function(save){ if(save) await saveEditProduct(state.editingProductSL); else close(); }); return; }
+  close();
+}
 function setEditProductField(field, val){
-  if(state.editProductForm) state.editProductForm[field] = val;
+  if(state.editProductForm){ state.editProductForm[field] = val; state.editProductDirty = true; }
 }
 // Records a stock quantity change so Brands can show a monthly movement ledger and
 // Aging can show recent sale velocity. Reductions of ten or more units in one action
@@ -7106,7 +7183,7 @@ function getRecentSaleQty(barcode, days){
     .reduce((sum, m) => sum + Math.abs(m.delta), 0);
 }
 
-function recordStockMovement(barcode, oldQty, newQty, sourceRow){
+function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTimestamp){
   oldQty = parseFloat(oldQty); if(isNaN(oldQty)) oldQty = 0;
   newQty = parseFloat(newQty); if(isNaN(newQty)) newQty = 0;
   const delta = newQty - oldQty;
@@ -7123,7 +7200,7 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow){
     barcode: barcode,
     delta: delta,
     type: type,
-    ts: Date.now()
+    ts: Number(movementTimestamp) || Date.now()
   });
   if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
 }
@@ -7167,7 +7244,7 @@ async function saveEditProduct(sl){
     }
     // Optimistic: update UI immediately, sync in background
     rebuildIndex();
-    state.editingProductSL = null; state.editProductForm = null;
+    state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
     state.selectedBrand = null;
     updateHeaderSub(); render();
     await saveCustomProducts();
@@ -7214,7 +7291,7 @@ async function saveEditProduct(sl){
     }
     // Optimistic: update UI immediately, sync in background
     rebuildIndex();
-    state.editingProductSL = null; state.editProductForm = null;
+    state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
     state.selectedBrand = null;
     updateHeaderSub(); render();
     await saveCustomProducts();
@@ -7943,7 +8020,9 @@ async function handleImportExcel(fileInput){
 
     let updated = 0, added = 0, skipped = 0, merged = 0, priceCount = 0;
     let latestUpdatedRows = 0, latestUpdatedQtyTotal = 0;
-    const today = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
+    const importDay = new Date();
+    const priorClosing = new Date(importDay.getFullYear(), importDay.getMonth(), importDay.getDate() - 1, 23, 59, 59, 999).getTime();
+    const today = new Date(priorClosing).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
 
     // Map to detect same product code + same party having multiple barcodes (for auto-merge)
     const importCodePartyMap = new Map();
@@ -8000,7 +8079,7 @@ async function handleImportExcel(fileInput){
         // Barcode already exists: just update stock qty
         if(qty !== null){
           const oldQtyForMovement = stockOverrides.hasOwnProperty(barcode) ? stockOverrides[barcode] : effectiveQty(existing[0]);
-	          recordStockMovement(barcode, oldQtyForMovement, qty, r);
+	          recordStockMovement(barcode, oldQtyForMovement, qty, r, priorClosing);
           stockOverrides[barcode] = qty;
           updated++;
           latestUpdatedRows++;
@@ -9780,6 +9859,12 @@ function renderSettings(){
   html += '</div>';
 
   if(state.user.role === 'admin'){
+    const latest = state.latestExcelUpdate;
+    const latestDate = latest && latest.ts ? new Date(latest.ts).toLocaleString('en-GB', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'}) : 'No Excel update yet';
+    const latestQty = latest && latest.updatedQtyTotal !== undefined ? String(latest.updatedQtyTotal) : '—';
+    html += '<div class="ios-section-title">Data Status</div><div class="ios-group">';
+    html += iosRow('📊', 'linear-gradient(#34C759,#2AA84A)', 'Last Excel Update', '<div style="text-align:right;font-size:12px;line-height:1.35;"><strong>' + esc(latestDate) + '</strong><br><span style="color:var(--muted);">Stock qty: ' + esc(latestQty) + '</span></div>');
+    html += '</div>';
     if(state.user.username === 'Asif'){
       html += '<div class="ios-section-title">Admin Control</div>';
       html += '<div class="ios-group">';
@@ -10078,28 +10163,72 @@ function renderData(){
       html += '<div class="empty">No data reports imported yet.</div>';
   } else {
       state.reports.forEach((report, idx) => {
-          const isOpen = state.openReportIndex === idx;
           html += '<div class="card" style="padding:0; overflow:hidden; margin-bottom:10px;">';
-          html += '<div onclick="toggleReport(' + idx + ')" class="report-header" style="padding:14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
+          html += '<div onclick="openReportWorkspace(' + idx + ')" class="report-header" style="padding:14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
           html += '<div><div style="font-weight:700;">' + esc(report.name) + '</div>';
           html += '<div style="font-size:11px; color:var(--muted);">' + Number(report.rowCount || (report.data || []).length || 0) + ' rows · ' + report.date + '</div></div>';
-          html += '<span>' + (isOpen ? '▲' : '▼') + '</span>';
+          html += '<span>Open ›</span>';
           html += '</div>';
-          
-          if(isOpen) {
-              html += '<div style="padding:12px;">';
-              html += '<div class="btn-row" style="margin-bottom:12px;">';
-              html += '<button class="btn btn-ghost" style="font-size:12px; color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button>';
-              html += '</div>';
-              html += '<input type="text" id="reportSearchInput_' + idx + '" placeholder="Search barcode, article, description..." value="' + esc(state.reportSearch[idx]||'') + '" oninput="updateReportSearch(' + idx + ', this.value)" style="width:100%; padding:10px; border:1px solid var(--border2); border-radius:8px; background:var(--card); color:var(--text); box-sizing:border-box; margin-bottom:10px;" />';
-              html += '<div id="reportTableWrap_' + idx + '">' + (state.reportLoadingIndex === idx ? '<div class="empty">Loading report…</div>' : renderReportExcelTable(idx)) + '</div>';
-              html += '</div>';
-          }
           html += '</div>';
       });
   }
   html += '</div>';
   return html;
+}
+
+async function openReportWorkspace(idx){
+  const report = state.reports && state.reports[idx];
+  if(!report) return;
+  if((!Array.isArray(report.data) || !report.data.length) && Number(report.rowCount || 0) > 0){
+    showToast('Loading Excel report…');
+    try{
+      const loaded = await loadReportRowsFromCloud(report);
+      if(!loaded){ showToast('This report is not available yet. Check internet and try again.', true); return; }
+    }catch(e){ showToast('Could not load this report. Check internet and try again.', true); return; }
+  }
+  state.reportWorkspaceIndex = idx;
+  state.reportDirty = false;
+  const modal = document.getElementById('actionModal');
+  const box = modal && modal.querySelector('.modal-box');
+  if(box){ box.dataset.reportWorkspace = '1'; box.style.width='calc(100vw - 18px)'; box.style.maxWidth='none'; box.style.height='calc(100dvh - 18px)'; box.style.maxHeight='none'; box.style.margin='9px'; box.style.overflow='hidden'; }
+  openActionModal(renderReportWorkspace(idx));
+}
+function renderReportWorkspace(idx){
+  const report = state.reports && state.reports[idx];
+  if(!report) return '';
+  return '<div style="display:flex;flex-direction:column;height:calc(100dvh - 36px);min-height:0;">' +
+    '<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">Full Excel workspace · filter, edit, add, remove and save</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div>' +
+    '<div class="report-toolbar" style="margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save changes</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">Delete report</button></div>' +
+    '<input type="text" id="reportSearchInput_' + idx + '" placeholder="Search barcode, article, description…" value="' + esc(state.reportSearch[idx]||'') + '" oninput="updateReportSearch(' + idx + ', this.value)" style="width:100%;padding:11px;border:1px solid var(--border2);border-radius:9px;background:var(--card);color:var(--text);box-sizing:border-box;margin-bottom:10px;" />' +
+    '<div id="reportTableWrap_' + idx + '" style="min-height:0;flex:1;overflow:hidden;">' + renderReportExcelTable(idx) + '</div></div>';
+}
+function refreshReportWorkspace(){
+  const idx = state.reportWorkspaceIndex;
+  const target = document.getElementById('actionModalContent');
+  if(idx !== null && idx !== undefined && target) target.innerHTML = renderReportWorkspace(idx);
+}
+async function saveReportWorkspace(){
+  const idx = state.reportWorkspaceIndex;
+  if(idx === null || idx === undefined || !state.reports[idx]) return;
+  state.editingReportRow = null;
+  state.reports[idx].rowCount = Array.isArray(state.reports[idx].data) ? state.reports[idx].data.length : 0;
+  state.reports[idx].updatedAt = Date.now();
+  state.reportDirty = false;
+  localStorage.setItem('app-reports', JSON.stringify(state.reports));
+  try{ await saveReportRowsToCloud(state.reports[idx]); await pushToCloud(true, true); showToast('✓ Excel report saved and synced'); }
+  catch(e){ showToast('Excel saved locally; cloud sync will retry', true); }
+  refreshReportWorkspace();
+}
+function closeReportWorkspace(){
+  const close = function(){
+    state.reportWorkspaceIndex = null; state.editingReportRow = null; state.reportDirty = false;
+    const modal = document.getElementById('actionModal');
+    const box = modal && modal.querySelector('.modal-box');
+    if(box && box.dataset.reportWorkspace){ box.removeAttribute('data-report-workspace'); box.style.width=''; box.style.maxWidth=''; box.style.height=''; box.style.maxHeight=''; box.style.margin=''; box.style.overflow=''; }
+    closeActionModal();
+  };
+  if(state.reportDirty){ appConfirm('You have unsaved Excel edits. Save them before closing?', 'Unsaved Changes').then(async function(save){ if(save) await saveReportWorkspace(); close(); }); return; }
+  close();
 }
 
 async function toggleReport(idx) {
@@ -10137,13 +10266,12 @@ function startEditReportRow(reportIdx, rowIdx) {
 // no re-render per keystroke, so the field never loses focus/keyboard.
 function updateReportRowField(reportIdx, rowIdx, field, val) {
     state.reports[reportIdx].data[rowIdx][field] = val;
+    state.reportDirty = true;
 }
-
 function finishEditReportRow(reportIdx) {
     state.editingReportRow = null;
-    localStorage.setItem('app-reports', JSON.stringify(state.reports));
-    pushToCloud();
-    refreshReportTable(reportIdx);
+    state.reportDirty = true;
+    refreshReportWorkspace();
 }
 
 function updateReportFilter(idx, field, val) {
@@ -10173,9 +10301,8 @@ function addReportRow(reportIdx){
   const row = {}; headers.forEach(h=>row[h]='');
   report.data.push(row);
   state.editingReportRow = { reportIdx: reportIdx, rowIdx: report.data.length - 1 };
-  localStorage.setItem('app-reports', JSON.stringify(state.reports));
-  pushToCloud();
-  render();
+  state.reportDirty = true;
+  refreshReportWorkspace();
 }
 async function removeReportRow(reportIdx,rowIdx){
   const report = state.reports[reportIdx];
@@ -10183,9 +10310,8 @@ async function removeReportRow(reportIdx,rowIdx){
   if(!(await appConfirm('Remove this row from the report?', 'Remove Report Row'))) return;
   report.data.splice(rowIdx,1);
   state.editingReportRow = null;
-  localStorage.setItem('app-reports', JSON.stringify(state.reports));
-  pushToCloud();
-  render();
+  state.reportDirty = true;
+  refreshReportWorkspace();
 }
 function renderReportExcelTable(idx) {
     const report = state.reports[idx];

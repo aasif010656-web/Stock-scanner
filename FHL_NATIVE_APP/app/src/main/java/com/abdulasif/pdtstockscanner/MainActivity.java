@@ -17,6 +17,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.ValueCallback;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultCallback;
@@ -45,6 +46,8 @@ public class MainActivity extends AppCompatActivity {
     private ValueCallback<Uri[]> filePathCallback;
     private AndroidNativeBridge nativeBridge;
     private UpdateBridge updateBridge;
+    private long lastExitBackPressAt = 0L;
+    private static final long EXIT_BACK_PRESS_WINDOW_MS = 2000L;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -184,9 +187,19 @@ public class MainActivity extends AppCompatActivity {
                 "})()",
                 value -> {
                     if (value == null || value.contains("exit")) {
-                        runOnUiThread(() -> superOnBackPressed());
+                        runOnUiThread(this::requestExitWithDoubleBack);
                     }
                 });
+    }
+
+    private void requestExitWithDoubleBack() {
+        long now = System.currentTimeMillis();
+        if (now - lastExitBackPressAt <= EXIT_BACK_PRESS_WINDOW_MS) {
+            superOnBackPressed();
+            return;
+        }
+        lastExitBackPressAt = now;
+        Toast.makeText(this, "Press Back again to exit", Toast.LENGTH_SHORT).show();
     }
 
     private void superOnBackPressed() {
