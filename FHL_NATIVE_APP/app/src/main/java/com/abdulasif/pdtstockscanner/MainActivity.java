@@ -122,15 +122,23 @@ public class MainActivity extends AppCompatActivity {
         settings.setSupportZoom(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        // Prevent Android's native copy/paste ActionMode from covering app cards after a long press.
-        // HTML input controls retain normal editing behavior through their own keyboard actions.
-        webView.setLongClickable(false);
+        // Keep non-editable app cards free of native ActionMode overlays, while allowing
+        // normal select/copy/cut/paste menus inside every editable HTML control.
+        webView.setLongClickable(true);
         webView.setHapticFeedbackEnabled(false);
         // Keep WebView as the only vertical scroller; remove edge glow and scrollbar repaint jitter.
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.setHorizontalScrollBarEnabled(false);
         webView.setVerticalScrollBarEnabled(false);
-        webView.setOnLongClickListener(v -> true);
+        webView.setOnLongClickListener(v -> {
+            WebView.HitTestResult hit = ((WebView) v).getHitTestResult();
+            int type = hit != null ? hit.getType() : WebView.HitTestResult.UNKNOWN_TYPE;
+            boolean editable = type == WebView.HitTestResult.EDIT_TEXT_TYPE
+                    || type == WebView.HitTestResult.EMAIL_TYPE
+                    || type == WebView.HitTestResult.PHONE_TYPE
+                    || type == WebView.HitTestResult.GEO_TYPE;
+            return !editable;
+        });
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -143,7 +151,8 @@ public class MainActivity extends AppCompatActivity {
                 intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         "application/vnd.ms-excel",
-                        "text/csv"
+                        "text/csv",
+                        "application/pdf"
                 });
                 fileChooserLauncher.launch(intent);
                 return true;

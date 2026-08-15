@@ -224,6 +224,8 @@ body.large-font .detail-value { font-size: 14px; }
   .header-title{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;}
   .app-logo-icon{width:28px;height:28px;border-radius:8px;object-fit:contain;background:var(--accent-dim);padding:2px;}
 .header-sub{font-size:12px;color:var(--muted);margin-top:3px;}
+.header-notifications-btn{position:relative;margin-left:auto;border:1px solid var(--border2);background:var(--panel);color:var(--text);border-radius:12px;min-width:42px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:17px;}
+.header-notifications-badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--red);color:#fff;font-size:10px;font-weight:800;align-items:center;justify-content:center;}
 .header-admin-summary{position:absolute;right:16px;top:10px;display:none;flex-direction:column;align-items:flex-end;gap:2px;max-width:190px;text-align:right;padding:6px 9px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(0,0,0,.16);font-size:10px;line-height:1.2;}
 .header-admin-summary .summary-label{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.4px;}
 .header-admin-summary .summary-value{color:var(--text);font-weight:700;font-size:11px;white-space:nowrap;}
@@ -624,6 +626,7 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
     </div>
     <div class="header-sub" id="headerSub">Loading data...</div>
     <div id="adminExcelSummary" class="header-admin-summary"></div>
+    <button id="headerNotificationsBtn" class="header-notifications-btn" type="button" onclick="openNotificationCenter()" aria-label="Open notifications"><span>🔔</span><span id="headerNotificationsBadge" class="header-notifications-badge" style="display:none;">0</span></button>
   </div>
   <div class="section" id="content"></div>
 	  <button id="backToTopBtn" onclick="scrollToTop()">↑</button>
@@ -654,8 +657,15 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
     <div id="actionModalContent"></div>
   </div>
 </div>
+<div class="modal-overlay" id="notificationModal">
+  <div class="modal-box modal-box-dark" style="max-width:520px;text-align:left;padding:18px 16px;max-height:80vh;overflow:auto;">
+    <div class="modal-close" style="color:var(--text);" onclick="closeNotificationCenter()">✕</div>
+    <div id="notificationModalContent"></div>
+  </div>
+</div>
 <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none;" onchange="handleRestoreFile(this)" />
 <input type="file" id="importDataInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportData(this)" />
+	<input type="file" id="importPdfInput" accept="application/pdf,.pdf" style="display:none;" onchange="handleImportPdf(this)" />
 <input type="file" id="importExcelInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportExcel(this)" />
 <div class="bottom-nav" id="bottomNav" style="display:none;">
   <div class="nav-credit"></div>
@@ -5378,6 +5388,7 @@ async function loadStorage(){
       state.a4Excels = data.a4Excels || state.a4Excels || [];
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
+      state.activeSessions = data.activeSessions || state.activeSessions || [];
       if(data.contactAdminLink !== undefined){ state.contactAdminLink = data.contactAdminLink || ''; try{ localStorage.setItem('contact-admin-link', state.contactAdminLink); }catch(e){} }
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
       state.contactAdminLink = data.contactAdminLink || state.contactAdminLink || '';
@@ -5403,7 +5414,7 @@ async function loadStorage(){
       */
       rebuildIndex();
     } else {
-      await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, a7Excels: [], a4Excels: [], priceChangeNotifications: [], stockMovements: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
+      await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, a7Excels: [], a4Excels: [], priceChangeNotifications: [], stockMovements: [], appNotifications: [], pdfImports: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
     syncStatus = 'synced';
     if(a7TemplateNeedsPush && fbDocRef){
@@ -5457,6 +5468,10 @@ async function loadStorage(){
       }
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
+      state.activeSessions = data.activeSessions || state.activeSessions || [];
+      handleRemoteSessionRevocation();
+      state.appNotifications = data.appNotifications || state.appNotifications || [];
+      state.pdfImports = data.pdfImports || state.pdfImports || [];
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       a7FirstSnapshot = false;
@@ -5488,7 +5503,7 @@ async function loadStorage(){
 
 // Tracks keys that were EXPLICITLY deleted on this device, so a merge-before-push
 // never silently resurrects them just because another device's cloud copy still has them.
-let deletedKeys = { customProducts: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), auditLog: new Set() };
+let deletedKeys = { customProducts: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), appNotifications: new Set(), pdfImports: new Set(), auditLog: new Set() };
 let a7TemplateNeedsPush = false; // set true when the cloud's a7Template is older than A7_TEMPLATE_VERSION
 let scanInputFocusKeeper = null; // keeps manualBarcodeInput focused while on the A7/A4 tabs, so a hardware/native scan always has somewhere to land
 function startScanInputFocusKeeper(){
@@ -5587,8 +5602,10 @@ async function pushToCloud(force, suppressToast){
     const mergedA7Excels = mergeArrayByKey(cloudData.a7Excels, state.a7Excels, x=>x.id, deletedKeys.a7Excels);
     const mergedA4Excels = mergeArrayByKey(cloudData.a4Excels, state.a4Excels, x=>x.id, deletedKeys.a4Excels);
     const mergedPriceNotifs = mergeArrayByKey(cloudData.priceChangeNotifications, state.priceChangeNotifications, x=>x.id, deletedKeys.priceChangeNotifications);
-    const mergedStockMovements = mergeArrayByKey(cloudData.stockMovements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
-
+        const mergedStockMovements = mergeArrayByKey(cloudData.stockMovements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
+    const mergedAppNotifications = mergeArrayByKey(cloudData.appNotifications, state.appNotifications, x=>x.id, deletedKeys.appNotifications);
+    const mergedPdfImports = mergeArrayByKey(cloudData.pdfImports, state.pdfImports, x=>x.id, deletedKeys.pdfImports);
+    const mergedActiveSessions = mergeArrayByKey(cloudData.activeSessions, state.activeSessions, x=>x.id);
     // Adopt the merged results locally too, so THIS device doesn't lose what others added
     customProducts = mergedCustomProducts;
     state.reports = mergedReports;
@@ -5598,6 +5615,9 @@ async function pushToCloud(force, suppressToast){
     state.a4Excels = mergedA4Excels;
     state.priceChangeNotifications = mergedPriceNotifs;
     state.stockMovements = mergedStockMovements;
+    state.appNotifications = mergedAppNotifications;
+    state.pdfImports = mergedPdfImports;
+    state.activeSessions = mergedActiveSessions;
     rebuildIndex();
 
     await fbDocRef.set({ 
@@ -5614,6 +5634,9 @@ async function pushToCloud(force, suppressToast){
       appLocked: !!state.appLocked,
       priceChangeNotifications: mergedPriceNotifs,
       stockMovements: mergedStockMovements,
+      appNotifications: mergedAppNotifications,
+      pdfImports: mergedPdfImports,
+      activeSessions: mergedActiveSessions,
       latestExcelUpdate: state.latestExcelUpdate || null,
       contactAdminLink: state.contactAdminLink || '',
       reports: mergedReports, 
@@ -5795,6 +5818,11 @@ let state = {
   priceChangeNotifications: [], // {id, party, barcode, description, oldPrice, newPrice, ts} — permanent until explicitly deleted
   importProgress: { active: false, current: 0, total: 0, label: '' }, // Brands import progress — shown only in Asif's Settings
   stockMovements: [], // {id, barcode, delta, type:'sale'|'restock'|'ambiguous', ts} — recorded whenever a stock qty changes
+  appNotifications: [], // role/party-aware in-app alerts, synchronized through the shared Firestore document
+  pdfImports: [], // staff/admin PDF import metadata and extracted text reports synchronized through Firestore
+  activeSessions: [], // {id, username, role, deviceId, deviceName, loginTs, lastSeen, revokedAt}
+  sessionToken: '', // current device session token; never reused across logins
+  notificationReadAt: Number(localStorage.getItem('notification-read-at') || 0),
 
   // ---- Create Excel tool ----
   createExcelOpen: false,
@@ -5993,6 +6021,71 @@ function installContextMenuGuards(){
 }
 installDialogGuards();
 installContextMenuGuards();
+
+// ---------- Shared notifications and PDF import ----------
+function notificationVisibleToCurrentUser(item){
+  if(!state.user) return false;
+  if(item.audience === 'staff-admin' && !isStaffOrAdmin()) return false;
+  if(item.audience === 'promoters' && state.user.role !== 'promoter') return false;
+  if(item.audience === 'staff-promoters' && !isStaffOrAdmin() && state.user.role !== 'promoter') return false;
+  if(item.party && !isStaffOrAdmin()) return getUserPartyCodes(state.user.username).includes(item.party);
+  return true;
+}
+function updateNotificationBadge(){
+  const badge = document.getElementById('headerNotificationsBadge');
+  if(!badge) return;
+  const unread = (state.appNotifications || []).filter(notificationVisibleToCurrentUser).filter(n => Number(n.ts || 0) > Number(state.notificationReadAt || 0)).length;
+  badge.textContent = unread > 99 ? '99+' : String(unread);
+  badge.style.display = unread ? 'inline-flex' : 'none';
+}
+function openNotificationCenter(){
+  const modal = document.getElementById('notificationModal');
+  const content = document.getElementById('notificationModalContent');
+  if(!modal || !content) return;
+  const visible = (state.appNotifications || []).filter(notificationVisibleToCurrentUser).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  content.innerHTML = '<div style="font-weight:800;font-size:18px;margin-bottom:12px;">Notifications</div>' + (visible.length ? visible.slice(0,100).map(n => '<div style="padding:12px 0;border-bottom:1px solid var(--ui-border);"><div style="font-weight:700;">' + esc(n.title || 'Notification') + '</div><div style="font-size:13px;line-height:1.45;margin-top:4px;">' + esc(n.message || '') + '</div><div style="font-size:11px;color:var(--muted);margin-top:6px;">' + esc(new Date(Number(n.ts || Date.now())).toLocaleString()) + '</div></div>').join('') : '<div class="empty">No notifications yet.</div>');
+  modal.classList.add('show');
+  state.notificationReadAt = Date.now();
+  try{ localStorage.setItem('notification-read-at', String(state.notificationReadAt)); }catch(e){}
+  updateNotificationBadge();
+}
+function closeNotificationCenter(){ const modal = document.getElementById('notificationModal'); if(modal) modal.classList.remove('show'); }
+function addAppNotification(item){
+  if(!state.appNotifications) state.appNotifications = [];
+  state.appNotifications.unshift(Object.assign({id:'nt_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), ts:Date.now()}, item));
+  if(state.appNotifications.length > 300) state.appNotifications = state.appNotifications.slice(0,300);
+  try{ localStorage.setItem('app-notifications-cache', JSON.stringify(state.appNotifications)); }catch(e){}
+  updateNotificationBadge();
+  if(fbReady && fbDocRef) pushToCloud(true, true).catch(()=>{});
+}
+function handleLowStockTransition(barcode, oldQty, newQty){
+  if(!(oldQty > 10 && newQty < 10)) return;
+  const row = (BARCODE_INDEX.get(String(barcode)) || [])[0] || {};
+  addAppNotification({type:'low_stock', audience:'staff-promoters', party:String(row.Party || '').trim(), title:'Low stock alert', message:String(row.Description || row.Product || barcode) + ' sold below 10 pcs — current stock: ' + newQty + ' pcs.'});
+}
+function triggerImportPdf(){
+  if(!isStaffOrAdmin()){ showToast('PDF import is available only for Staff and Admin', true); return; }
+  const input = document.getElementById('importPdfInput');
+  if(input) input.click();
+}
+async function handleImportPdf(fileInput){
+  if(!isStaffOrAdmin()){ showToast('PDF import is available only for Staff and Admin', true); if(fileInput) fileInput.value=''; return; }
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  if(!file) return;
+  if(file.size > 850000){ showToast('PDF is too large for the shared Firestore document. Please use a PDF below 850 KB.', true); fileInput.value=''; return; }
+  try{
+    const base64 = await new Promise((resolve,reject)=>{ const reader = new FileReader(); reader.onload=()=>resolve(String(reader.result || '')); reader.onerror=reject; reader.readAsDataURL(file); });
+    const record = {id:'pdf_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, mimeType:file.type || 'application/pdf', size:file.size, base64, importedBy:state.user.username, importedRole:state.user.role, ts:Date.now()};
+    if(!state.pdfImports) state.pdfImports = [];
+    state.pdfImports.unshift(record);
+    if(state.pdfImports.length > 10) state.pdfImports = state.pdfImports.slice(0,10);
+    addAuditLog('PDF Imported', 'Imported ' + file.name + ' by ' + state.user.username);
+    await pushToCloud(true, true);
+    render();
+    showToast(syncStatus === 'synced' ? '✓ PDF imported and synced to Firestore' : '✓ PDF saved locally; cloud sync will retry', syncStatus !== 'synced');
+  }catch(e){ showToast('Could not import PDF: ' + e.message, true); }
+  fileInput.value = '';
+}
 function confirmClearLocalOverrides(){
   appConfirm('Clear all local stock changes?', 'Clear Local Overrides').then(function(ok){
     if(!ok) return;
@@ -6901,6 +6994,7 @@ function recordStockMovement(barcode, oldQty, newQty){
     ts: Date.now()
   });
   if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
+  handleLowStockTransition(barcode, oldQty, newQty);
 }
 
 async function saveEditProduct(sl){
@@ -7142,8 +7236,67 @@ function addAuditLog(action, details){
   try{ localStorage.setItem('audit-log-cache', JSON.stringify(state.auditLog)); }catch(e){}
   pushToCloud().catch(()=>{});
 }
+function makeSessionToken(){
+  try{ return crypto.randomUUID(); }catch(e){ return String(Date.now()) + '-' + Math.random().toString(36).slice(2); }
+}
+function currentSessionRecord(){
+  if(!state.user || !state.sessionToken) return null;
+  return { id: state.sessionToken, username: state.user.username, role: state.user.role, deviceId: state.deviceId, deviceName: state.deviceName || '', loginTs: state.sessionLoginTs || Date.now(), lastSeen: Date.now(), revokedAt: 0 };
+}
+async function syncActiveSession(){
+  const record = currentSessionRecord();
+  if(!record || !fbReady || !fbDocRef) return;
+  try{
+    const snap = await fbDocRef.get();
+    const cloud = snap.exists ? (snap.data() || {}) : {};
+    const list = Array.isArray(cloud.activeSessions) ? cloud.activeSessions.slice() : [];
+    const index = list.findIndex(s => s && s.id === record.id);
+    if(index >= 0) list[index] = Object.assign({}, list[index], record, {revokedAt: Number(list[index].revokedAt) || 0});
+    else list.push(record);
+    const trimmed = list.filter(s => s && (!s.revokedAt || Date.now() - Number(s.revokedAt) < 30 * 24 * 60 * 60 * 1000)).slice(-50);
+    state.activeSessions = trimmed;
+    await fbDocRef.set({activeSessions: trimmed}, {merge:true});
+  }catch(e){ console.warn('Session sync unavailable', e); }
+}
+function startSessionHeartbeat(){
+  if(state.sessionHeartbeat) clearInterval(state.sessionHeartbeat);
+  if(!state.user || !state.sessionToken) return;
+  syncActiveSession();
+  state.sessionHeartbeat = setInterval(()=>{ if(state.user && state.sessionToken) syncActiveSession(); }, 60000);
+}
+function handleRemoteSessionRevocation(){
+  if(!state.user || !state.sessionToken) return;
+  const current = (state.activeSessions || []).find(s => s && s.id === state.sessionToken);
+  if(current && Number(current.revokedAt) > Number(state.sessionLoginTs || 0)){
+    if(state.sessionHeartbeat) clearInterval(state.sessionHeartbeat);
+    state.user = null;
+    state.sessionToken = '';
+    state.sessionLoginTs = 0;
+    localStorage.removeItem('app-user');
+    sessionStorage.removeItem('app-user-session');
+    render();
+    showToast('You were logged out from this device by Admin', true);
+  }
+}
+async function revokeActiveSession(id){
+  if(!isAdminUser()){ showToast('Only Admin can manage sessions', true); return; }
+  if(!id || !fbReady || !fbDocRef){ showToast('Session control requires an active Firestore connection', true); return; }
+  try{
+    const snap = await fbDocRef.get();
+    const cloud = snap.exists ? (snap.data() || {}) : {};
+    const list = Array.isArray(cloud.activeSessions) ? cloud.activeSessions.slice() : [];
+    const now = Date.now();
+    const updated = list.map(s => s && s.id === id ? Object.assign({}, s, {revokedAt: now}) : s);
+    await fbDocRef.set({activeSessions: updated}, {merge:true});
+    state.activeSessions = updated;
+    addAuditLog('Remote Session Logout', 'Admin revoked session ' + id);
+    showToast('Session logged out');
+    render();
+  }catch(e){ showToast('Could not revoke session', true); }
+}
+
 function saveLoginSession(remember){
-  const payload = JSON.stringify({ user: state.user, loginTs: Date.now() });
+  const payload = JSON.stringify({ user: state.user, loginTs: state.sessionLoginTs || Date.now(), sessionToken: state.sessionToken || '' });
   if(remember){
     localStorage.setItem('app-user', payload);
     localStorage.setItem('app-remember-me', '1');
@@ -7160,7 +7313,12 @@ function restoreSavedSession(){
     if(raw){
       const parsed = JSON.parse(raw);
       const savedUser = parsed && parsed.user ? parsed.user : parsed;
-      if(savedUser && savedUser.username){ state.user = savedUser; }
+      if(savedUser && savedUser.username){
+        state.user = savedUser;
+        state.sessionToken = parsed.sessionToken || makeSessionToken();
+        state.sessionLoginTs = Number(parsed.loginTs) || Date.now();
+        startSessionHeartbeat();
+      }
       else { localStorage.removeItem('app-user'); sessionStorage.removeItem('app-user-session'); }
     }
   }catch(e){}
@@ -7193,9 +7351,12 @@ function login(username, password, remember){
       const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
       const brandCodes = (roleInfo && Array.isArray(roleInfo.brandCodes)) ? roleInfo.brandCodes : [];
       state.user = { username: 'Asif', role: role, partyCodes: partyCodes, brandCodes: brandCodes, viewingAs: targetKey };
+      state.sessionToken = makeSessionToken();
+      state.sessionLoginTs = Date.now();
       state.operatorName = 'Asif';
       localStorage.setItem('operator-name', 'Asif');
       saveLoginSession(remember);
+      startSessionHeartbeat();
       addAuditLog('Test Login', 'Asif logged in viewing as ' + targetKey + ' (' + role + ')');
       showToast('👁 Viewing as ' + targetKey + ' (' + role + ')');
       updateHeaderSub();
@@ -7213,11 +7374,14 @@ function login(username, password, remember){
     const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
     const brandCodes = (roleInfo && Array.isArray(roleInfo.brandCodes)) ? roleInfo.brandCodes : [];
     state.user = { username: realName, role: role, partyCodes: partyCodes, brandCodes: brandCodes };
+    state.sessionToken = makeSessionToken();
+    state.sessionLoginTs = Date.now();
     if(state.user.role === 'admin') {
       state.operatorName = 'Asif';
       localStorage.setItem('operator-name', 'Asif');
     }
     saveLoginSession(remember);
+    startSessionHeartbeat();
     addAuditLog('Login', 'User ' + realName + ' logged in');
     updateHeaderSub();
     render();
@@ -7984,6 +8148,7 @@ function renderNow(){
   }
   { const bn = document.getElementById('bottomNav'); if(bn) bn.style.display = 'flex'; }
   { const hdr = document.getElementById('appHeader'); if(hdr) hdr.style.display = ''; }
+  updateNotificationBadge();
   // Promoters don't get the Data / Log sections — they get a dedicated party-filtered Price Log instead
   const isPromoter = state.user.role === 'promoter';
   ['navData','navLog'].forEach(id=>{
@@ -8023,8 +8188,45 @@ function renderNow(){
   }
 }
 
+function openLowStockProduct(barcode){
+  state.tab = 'scan';
+  state.manualInput = '';
+  state.barcodeSuggestions = [];
+  state.showSuggestions = false;
+  lookupBarcode(String(barcode || ''));
+}
+
+function getDashboardAnalytics(){
+  const rows = getAllRows();
+  const stockRows = rows.map(row => ({row, qty:Number(effectiveQty(row)) || 0}));
+  const totalQty = stockRows.reduce((sum,item) => sum + item.qty, 0);
+  const stockValue = stockRows.reduce((sum,item) => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return sum + (item.qty * unit); }, 0);
+  const brands = new Set(stockRows.map(item => String(item.row.Brand || '').trim()).filter(Boolean));
+  const sales = {};
+  (state.stockMovements || []).forEach(m => { if(Number(m.delta) < 0) sales[m.barcode] = (sales[m.barcode] || 0) + Math.abs(Number(m.delta)); });
+  const topSale = Object.keys(sales).sort((a,b) => sales[b] - sales[a])[0] || '';
+  const topRow = topSale ? rows.find(r => String(r.Barcode || r.Product || '') === String(topSale)) : null;
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const recentPriceChanges = (state.priceChangeNotifications || []).filter(n => Number(n.ts || 0) >= cutoff).length;
+  return {totalQty, stockValue, brandCount:brands.size, lowStock:stockRows.filter(item => item.qty < 10).length, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
+}
+
 function renderScan(){
   let html = '';
+  const lowStockRows = getAllRows().map(row => ({row, qty:Number(effectiveQty(row)) || 0})).filter(item => item.qty < 10).sort((a,b) => a.qty - b.qty || String(a.row.Description || '').localeCompare(String(b.row.Description || '')));
+  if(lowStockRows.length){
+    html += '<div class="card" style="border:1px solid rgba(242,183,5,.45);background:linear-gradient(135deg,rgba(242,183,5,.14),rgba(15,18,28,.88));margin-bottom:12px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;"><div><div class="product-title" style="margin-bottom:2px;">⚠️ Low Stock</div><div class="backup-note">' + lowStockRows.length + ' product' + (lowStockRows.length === 1 ? '' : 's') + ' below 10 pcs</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">&lt; 10</span></div>';
+    lowStockRows.slice(0,8).forEach(item => {
+      const row = item.row;
+      const code = String(row.Barcode || row.Product || '');
+      html += '<button type="button" class="brand-card" style="width:100%;text-align:left;border:0;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid rgba(255,255,255,.08);" onclick="openLowStockProduct(\'' + esc(code).replace(/'/g,"\\'") + '\')"><span style="min-width:0;"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(row.Description || row.Product || code) + '</b><small style="opacity:.68;">' + esc(row.Brand || 'Unbranded') + '</small></span><strong style="color:var(--accent);white-space:nowrap;">' + fmtInt(item.qty) + ' pcs</strong></button>';
+    });
+    if(lowStockRows.length > 8) html += '<div class="backup-note" style="margin-top:8px;">Showing the 8 most urgent items. Use Brands search for the full list.</div>';
+    html += '</div>';
+  }
+  const analytics = getDashboardAnalytics();
+  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Analytics</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(formatCurrency(analytics.stockValue)) + '</b></div><div class="stat-card"><small>Brands</small><b>' + fmtInt(analytics.brandCount) + '</b></div><div class="stat-card"><small>Price Changes (30d)</small><b>' + fmtInt(analytics.recentPriceChanges) + '</b></div></div><div class="backup-note" style="margin-top:8px;">Low stock: ' + fmtInt(analytics.lowStock) + ' products · Most sold: ' + esc(analytics.topSale) + '</div></div>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
@@ -9336,6 +9538,20 @@ function changeUserRole(u){
   openRoleModal(u);
 }
 
+function renderActiveSessions(){
+  if(!isAdminUser()) return '';
+  const sessions = (state.activeSessions || []).filter(s => s && !s.revokedAt).sort((a,b) => Number(b.lastSeen||0) - Number(a.lastSeen||0));
+  let html = '<div class="divider-label">Active Devices</div>';
+  if(!sessions.length) return html + '<div class="empty">No active device sessions yet.</div>';
+  sessions.forEach(s => {
+    const age = Date.now() - Number(s.lastSeen || 0);
+    const online = age < 2 * 60 * 1000;
+    const label = s.deviceName || s.deviceId || 'Unknown device';
+    const when = s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'never';
+    html += '<div class="settings-item"><div class="settings-label"><span style="color:' + (online ? '#35d07f' : 'var(--dim)') + ';">●</span> ' + esc(label) + ' <span style="font-weight:400;color:var(--dim);">· ' + esc(s.username || '-') + ' · ' + esc(s.role || 'staff') + '<br><small>Last seen: ' + esc(when) + '</small></span></div><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="revokeActiveSession(\'' + esc(s.id).replace(/'/g,"\\'") + '\')">Logout</button></div>';
+  });
+  return html;
+}
 function renderUserMgmt(){
   if(!isAdminUser()) return '<div class="empty">Only Admin can manage users.</div>';
   let html = '<div class="form-card" style="margin-top:12px;">';
@@ -9363,6 +9579,7 @@ function renderUserMgmt(){
     html += '</div>';
     html += '</div>';
   });
+  html += renderActiveSessions();
   html += '</div>';
   return html;
 }
@@ -9723,7 +9940,7 @@ function exportAgingExcel(partyFilter){
 
 function renderData(){
   let html = '<div class="section">';
-  html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><h2 style="margin-bottom:0;">Data & Excel</h2><button class="btn btn-accent" onclick="triggerImportData()">📥 Import Excel</button></div>';
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><h2 style="margin-bottom:0;">Data & Excel</h2><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="triggerImportData()">📥 Import Excel</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost" onclick="triggerImportPdf()">📄 Import PDF</button>' : '') + '</div></div>';
   html += '<input id="importDataInput" type="file" accept=".xlsx,.xls" style="display:none" onchange="handleImportData(this)" />';
   if(!state.reports || state.reports.length === 0) {
       html += '<div class="empty">No data reports imported yet.</div>';
