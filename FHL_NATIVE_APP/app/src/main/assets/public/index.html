@@ -5656,6 +5656,7 @@ function getStoredDeviceName(){
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
+const UPDATE_CHECK_VERSION = '6.1.1';
 const APP_BUILD = '35';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
@@ -5673,7 +5674,7 @@ purgeStaleRuntimeCache();
 window.__FHL_RUNTIME_DIAGNOSTICS__ = function(){
   let cachedBuild = '';
   try{ cachedBuild = localStorage.getItem('fhl-runtime-build') || ''; }catch(e){}
-  return { version: APP_VERSION, build: APP_BUILD, cachedBuild, online: navigator.onLine, nativeScanner: !!(window.AndroidNative && window.AndroidNative.startNativeScanner), serviceWorker: 'serviceWorker' in navigator };
+  return { version: APP_VERSION, updateCheckVersion: UPDATE_CHECK_VERSION, build: APP_BUILD, cachedBuild, online: navigator.onLine, nativeScanner: !!(window.AndroidNative && window.AndroidNative.startNativeScanner), serviceWorker: 'serviceWorker' in navigator };
 };
 window.addEventListener('pageshow', () => { closeStaleTransientOverlays(); });
 document.addEventListener('visibilitychange', () => { if(!document.hidden) closeStaleTransientOverlays(); });
@@ -7242,7 +7243,7 @@ function resolveLatestUpdateUrl(data){
 function isCurrentRelease(data){
   if(!data) return true;
   const latestVersion = String(data.version || '').replace(/^v/i, '').trim();
-  const currentVersion = String(APP_VERSION).replace(/^v/i, '').trim();
+  const currentVersion = String(UPDATE_CHECK_VERSION).replace(/^v/i, '').trim();
   if(!latestVersion || latestVersion !== currentVersion) return false;
   const releaseTag = String(data.releaseTag || '').trim();
   const buildMatch = releaseTag.match(/build[-_](\\d+)/i);
@@ -7250,7 +7251,7 @@ function isCurrentRelease(data){
 }
 async function checkForUpdates(isAuto){
   const status = document.getElementById('updateStatus');
-  const currentVersion = APP_VERSION;
+  const currentVersion = UPDATE_CHECK_VERSION;
   if(status) status.innerText = "Checking for updates...";
   
   if(!fbReady){
