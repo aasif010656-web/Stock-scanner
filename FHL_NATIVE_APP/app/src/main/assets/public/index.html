@@ -7270,14 +7270,23 @@ function compareReleaseVersions(a,b){
 function isCurrentRelease(data){
   if(!data) return true;
   const latestVersion = String(data.version || '').replace(/^v/i, '').trim();
-  const currentVersion = String(UPDATE_CHECK_VERSION).replace(/^v/i, '').trim();
+  const visibleVersion = String(APP_VERSION).replace(/^v/i, '').trim();
+  const legacyCheckVersion = String(UPDATE_CHECK_VERSION).replace(/^v/i, '').trim();
   if(!latestVersion) return true;
-  const versionOrder = compareReleaseVersions(latestVersion, currentVersion);
-  if(versionOrder < 0) return true;
-  if(versionOrder > 0) return false;
   const releaseTag = String(data.releaseTag || '').trim();
-  const buildMatch = releaseTag.match(/build[-_](\\d+)/i);
-  return !buildMatch || Number(buildMatch[1]) <= Number(APP_BUILD);
+  const buildMatch = releaseTag.match(/build[-_](\d+)/i);
+  // Every current GitHub/Firestore release has a build tag. Compare its visible
+  // release line first, then build number, so v6.1-build-49 correctly updates
+  // any older v6.1 build even though UPDATE_CHECK_VERSION is a test-only identity.
+  if(buildMatch){
+    const visibleOrder = compareReleaseVersions(latestVersion, visibleVersion);
+    if(visibleOrder < 0) return true;
+    if(visibleOrder > 0) return false;
+    return Number(buildMatch[1]) <= Number(APP_BUILD);
+  }
+  // Preserve 6.1.1 as the comparison identity only for legacy metadata that
+  // does not provide a build tag.
+  return compareReleaseVersions(latestVersion, legacyCheckVersion) <= 0;
 }
 async function checkForUpdates(isAuto){
   const status = document.getElementById('updateStatus');
