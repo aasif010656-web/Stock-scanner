@@ -22,6 +22,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+html,body,#app{ -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+button,a,.card,.ios-row,.ios-group,.bento-tile,.modal-overlay,.nav-item{ -webkit-user-select:none; user-select:none; }
+input,textarea,select,[contenteditable="true"]{ -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
 :root{
   --bg:#0B0D14; --panel:#1B1F2C; --border:#262B3B; --border2:#333A4F;
   --text:#EEF0F6; --muted:#9BA3B7; --dim:#6C7488; --accent:#6C7DFF; --accent-dim:rgba(108,125,255,0.16);
@@ -5937,7 +5940,18 @@ function appConfirm(message, title){
 function resolveAppConfirm(result){
   if(state._confirmRequest) state._confirmRequest(!!result);
 }
+function installContextMenuGuards(){
+  document.addEventListener('contextmenu', function(event){
+    const target = event.target && event.target.closest ? event.target.closest('input,textarea,select,[contenteditable="true"]') : null;
+    if(!target) event.preventDefault();
+  }, true);
+  document.addEventListener('selectstart', function(event){
+    const target = event.target && event.target.closest ? event.target.closest('input,textarea,select,[contenteditable="true"]') : null;
+    if(!target) event.preventDefault();
+  }, true);
+}
 installDialogGuards();
+installContextMenuGuards();
 function confirmClearLocalOverrides(){
   appConfirm('Clear all local stock changes?', 'Clear Local Overrides').then(function(ok){
     if(!ok) return;
