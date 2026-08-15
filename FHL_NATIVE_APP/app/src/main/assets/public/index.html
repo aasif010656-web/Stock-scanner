@@ -5156,6 +5156,33 @@ let BARCODE_INDEX = new Map();
 
 function getAllRows(){ return ALL_ROWS.filter(r=>!r._hidden).concat(customProducts); }
 
+// Read-only bridge for the website AI search panel. It searches the same cached
+// product rows already loaded by the legacy app and never writes or mutates data.
+function legacyAISearch(filters){
+  const query = String(filters?.text || '').trim().toLowerCase();
+  const limit = Math.min(Math.max(Number(filters?.limit) || 20, 1), 50);
+  if(!query) return [];
+  return getAllRows().filter(row => {
+    const haystack = [row.Description, row.Product, row.Brand, row.Barcode, row.ProductCode, row.Party, row['Party Name']]
+      .filter(Boolean).join(' ').toLowerCase();
+    const qty = Number(String(row['Stock Qty'] ?? row.stockQty ?? row.Stock ?? '').replace(/[^0-9.-]/g, '')) || 0;
+    const lowStock = /low|kurann|kurav|കുറഞ്ഞ/.test(query) && qty <= 5;
+    return haystack.includes(query) || (lowStock && /stock|സ്റ്റോക്ക്/.test(query));
+  }).slice(0, limit).map(row => ({
+    Description: row.Description || row.Product || '',
+    Product: row.Product || row.Description || '',
+    Brand: row.Brand || '',
+    Barcode: row.Barcode || '',
+    'Stock Qty': row['Stock Qty'] ?? row.stockQty ?? row.Stock ?? '',
+    WAC: row.WAC ?? row.wac ?? row.Price ?? '',
+    'read-only': true
+  }));
+}
+window.addEventListener('message', function(event){
+  if(event.origin !== window.location.origin || !event.data || event.data.type !== 'FHL_AI_PRODUCT_SEARCH_REQUEST') return;
+  const results = legacyAISearch(event.data.filters || {});
+  event.source?.postMessage({ type:'FHL_AI_PRODUCT_SEARCH_RESULT', results }, event.origin);
+});
 
 function cleanBC(bc){ return String(bc||'').replace(/^0+/, ''); }
 // Converts a 12-digit (UPC-A style) numeric barcode to 13-digit by adding a leading zero,
