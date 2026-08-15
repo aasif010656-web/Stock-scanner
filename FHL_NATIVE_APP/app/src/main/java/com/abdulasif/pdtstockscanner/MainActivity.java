@@ -58,6 +58,8 @@ public class MainActivity extends AppCompatActivity {
                         if (result.getResultCode() == RESULT_OK && result.getData() != null) {
                             String code = result.getData().getStringExtra("BARCODE");
                             onBarcodeScanned(code);
+                        } else if (webView != null) {
+                            webView.post(() -> webView.evaluateJavascript("window.onScanCancelled && window.onScanCancelled();", null));
                         }
                     }
                 }
