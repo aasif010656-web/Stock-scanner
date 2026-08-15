@@ -365,7 +365,8 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .detail-value-clickable{cursor:pointer;color:var(--accent);text-decoration:underline;text-decoration-style:dotted;}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,12,.7);backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center;padding:20px;}
 .modal-overlay.show{display:flex;}
-.modal-box{background:#ffffff;border-radius:18px;padding:20px 18px;max-width:96vw;width:100%;position:relative;text-align:center;color:#111;box-shadow:0 24px 60px rgba(0,0,0,0.5);}
+.modal-box{background:var(--panel,#171a27);border-radius:18px;padding:20px 18px;max-width:96vw;width:min(96vw,520px);max-height:86vh;overflow:auto;position:relative;text-align:center;color:var(--text,#f5f7ff);box-shadow:0 24px 60px rgba(0,0,0,0.5);}
+#barcodeModal .modal-box{background:#ffffff;color:#111;max-height:92vh;}
 .modal-box-dark{background:var(--panel);color:var(--text);border:1px solid var(--border2);}
 .modal-box svg{background:#ffffff !important;display:block;margin:0 auto;}
 .modal-close{position:absolute;top:8px;right:10px;font-size:18px;color:#333;cursor:pointer;font-weight:700;padding:4px 8px;}
@@ -6334,6 +6335,7 @@ window.onBarcodeScanned = function(code){
   if(!code) return;
   if(state.tab === 'a7'){ addA7Barcode(code); return; }
   if(state.tab === 'a4'){ addA4Barcode(code.replace(/[^0-9]/g,'')); return; }
+  if(state.tab === 'createExcel'){ addCERow(code); return; }
   lookupBarcode(code);
 };
 
@@ -7772,6 +7774,15 @@ function renderNow(){
         <div class="message" id="message"></div>
       </div>
     </div>`;
+    const loginBioBtn = document.getElementById('biometricLoginButton');
+    if(loginBioBtn){
+      loginBioBtn.style.display = 'block';
+      loginBioBtn.disabled = !!state._biometricBusy;
+      let loginBioAvailable = false;
+      try{ loginBioAvailable = !!(window.AndroidNative && window.AndroidNative.isBiometricAvailable && window.AndroidNative.isBiometricAvailable()); }catch(e){ loginBioAvailable = false; }
+      loginBioBtn.style.opacity = loginBioAvailable ? '1' : '.72';
+      loginBioBtn.title = loginBioAvailable ? 'Unlock with fingerprint or Face ID' : 'Set up fingerprint or Face ID in Android settings first';
+    }
     return;
   }
   { const bn = document.getElementById('bottomNav'); if(bn) bn.style.display = 'flex'; }
@@ -7799,7 +7810,14 @@ function renderNow(){
   else if(state.tab==='a4') c.innerHTML = renderA4();
   else if(state.tab==='createExcel') c.innerHTML = renderCreateExcel();
   const bioBtn = document.getElementById('biometricLoginButton');
-  if(bioBtn && window.AndroidNative && window.AndroidNative.isBiometricAvailable){ try{ const available = !!window.AndroidNative.isBiometricAvailable(); bioBtn.style.display = available ? 'block' : 'none'; bioBtn.disabled = !!state._biometricBusy; }catch(e){ bioBtn.style.display='none'; } }
+  if(bioBtn){
+    bioBtn.style.display = 'block';
+    bioBtn.disabled = !!state._biometricBusy;
+    let available = false;
+    try{ available = !!(window.AndroidNative && window.AndroidNative.isBiometricAvailable && window.AndroidNative.isBiometricAvailable()); }catch(e){ available = false; }
+    bioBtn.style.opacity = available ? '1' : '.72';
+    bioBtn.title = available ? 'Unlock with fingerprint or Face ID' : 'Set up fingerprint or Face ID in Android settings first';
+  }
   // Restore focus to the previously focused input to keep keyboard open
   if(focusedId){
     const newInput = document.getElementById(focusedId);
@@ -8791,10 +8809,12 @@ function renderCreateExcel(){
   });
   html += '</div>';
 
-  html += '<div class="search-wrap" style="position:relative;">';
-  html += '<input type="text" id="ceBarcodeInput" value="' + esc(state.createExcelInput) + '" oninput="state.createExcelInput=this.value; if(isCompleteBarcodeLength(this.value)){ addCERow(this.value); }" onkeydown="if(event.key===\'Enter\'){ addCERow(this.value); }" placeholder="Scan or type barcode / ART CODE..." />';
+  html += '<div class="btn-row" style="align-items:center;margin-top:2px;">';
+  html += '<div class="search-wrap" style="position:relative;flex:1;">';
+  html += '<input type="tel" inputmode="numeric" pattern="[0-9]*" id="ceBarcodeInput" class="compact-barcode-input" value="' + esc(state.createExcelInput) + '" oninput="state.createExcelInput=this.value; if(isCompleteBarcodeLength(this.value)){ addCERow(this.value); }" onkeydown="if(event.key===\'Enter\'){ addCERow(this.value); }" placeholder="Barcode / ART Code" autocomplete="off" enterkeyhint="done" />';
   html += '</div>';
-
+  html += '<button class="btn btn-accent" style="flex:0 0 auto;padding:10px 12px;font-size:13px;" onclick="startCamera()">▣ Scan</button>';
+  html += '</div>';
   html += '<div class="btn-row" style="margin-top:10px;">';
   html += '<button class="btn btn-accent" onclick="downloadCreateExcel()">⬇ Download / Share Excel</button>';
   html += '<button class="btn btn-ghost" onclick="clearCERows()">🗑 Clear All</button>';
