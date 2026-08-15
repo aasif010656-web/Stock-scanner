@@ -142,8 +142,8 @@ public class MainActivity extends AppCompatActivity {
     private void onBarcodeScanned(String code) {
         if (code == null) return;
 
-        String escapedCode = code.replace("'", "\\'");
-        String js = "if(typeof window.lookupBarcode==='function') window.lookupBarcode('" + escapedCode + "');";
+        String escapedCode = code.replace("\\", "\\\\").replace("'", "\\'");
+        String js = "if(typeof window.onBarcodeScanned==='function') window.onBarcodeScanned('" + escapedCode + "'); else if(typeof window.lookupBarcode==='function') window.lookupBarcode('" + escapedCode + "');";
         webView.evaluateJavascript(js, null);
 
         android.widget.Toast.makeText(this, "Scanned: " + code, android.widget.Toast.LENGTH_SHORT).show();
