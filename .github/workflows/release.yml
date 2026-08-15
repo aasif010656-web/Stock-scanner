@@ -4,8 +4,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'FHL_NATIVE_APP/**'
-      - '.github/workflows/release.yml'
+      - 'FHL_NATIVE_APP/app/**'
+      - 'FHL_NATIVE_APP/gradle/**'
+      - 'FHL_NATIVE_APP/build.gradle'
+      - 'FHL_NATIVE_APP/settings.gradle'
+      - 'FHL_NATIVE_APP/gradle.properties'
+      - 'FHL_NATIVE_APP/gradlew'
+      - 'FHL_NATIVE_APP/gradlew.bat'
   workflow_dispatch:
 
 permissions:

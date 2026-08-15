@@ -71,7 +71,7 @@ pnpm run sync:ios
 open ios/App/App.xcworkspace
 ```
 
-For personal on-device testing, select a signing team in Xcode and use a compatible Apple ID. TestFlight distribution requires an Apple Developer Program membership, an App Store Connect record for `com.abdulasif.pdtstockscanner`, and the Apple distribution credentials described in [`TESTFLIGHT_SETUP.md`](TESTFLIGHT_SETUP.md). The automation is already at [`.github/workflows/ios-release.yml`](../../.github/workflows/ios-release.yml); it will remain intentionally blocked until those protected values exist.
+For personal on-device testing, select a signing team in Xcode and use a compatible Apple ID. TestFlight distribution requires an Apple Developer Program membership, an App Store Connect record for `com.abdulasif.pdtstockscanner`, and the Apple distribution credentials described in [`TESTFLIGHT_SETUP.md`](TESTFLIGHT_SETUP.md). The automation is already at [`.github/workflows/ios-release.yml`](../../.github/workflows/ios-release.yml); it is deliberately run manually and will remain blocked until those protected values exist.
 
 | GitHub Secret or Variable | Purpose |
 |---|---|

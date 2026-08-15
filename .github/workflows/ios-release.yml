@@ -1,11 +1,6 @@
 name: iOS TestFlight
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'FHL_NATIVE_APP/**'
-      - '.github/workflows/ios-release.yml'
   workflow_dispatch:
 
 permissions:

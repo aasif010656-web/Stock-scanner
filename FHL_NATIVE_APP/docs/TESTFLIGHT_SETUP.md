@@ -1,6 +1,6 @@
 # FHL ELECTRONICS v6.1 — TestFlight Setup
 
-The iOS source is configured for the bundle identifier `com.abdulasif.pdtstockscanner`, iOS 18.0, and the visible marketing version **6.1**. The GitHub workflow at `.github/workflows/ios-release.yml` creates a signed IPA and uploads it to TestFlight whenever `main` receives a change under `FHL_NATIVE_APP/`, or when it is run manually.
+The iOS source is configured for the bundle identifier `com.abdulasif.pdtstockscanner`, iOS 18.0, and the visible marketing version **6.1**. The GitHub workflow at `.github/workflows/ios-release.yml` creates a signed IPA and uploads it to TestFlight only when an authorized maintainer deliberately selects **Run workflow** on the `main` branch. This prevents ordinary source or documentation commits from producing unintended uploads or expected failures before Apple credentials exist.
 
 ## One-time Apple setup
 
