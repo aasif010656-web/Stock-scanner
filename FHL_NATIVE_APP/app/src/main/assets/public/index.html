@@ -5291,6 +5291,8 @@ const firebaseConfig = {
   appId: "1:771000209228:web:60af0496fab8ca0ba809e9"
 };
 let fbDocRef = null;
+let fbExcelDocRef = null;
+let fbPdfDocRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error
 let stockCacheLoaded = false;
@@ -5318,6 +5320,8 @@ function initFirebase(){
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
     fbDocRef = db.collection('stockScannerApp').doc('sharedData');
+    fbExcelDocRef = db.collection('stockScannerApp').doc('excelData');
+    fbPdfDocRef = db.collection('stockScannerApp').doc('pdfData');
     fbReady = true;
   }catch(e){
     fbReady = false;
@@ -5371,6 +5375,8 @@ async function loadStorage(){
 
   try{
     const snap = await fbDocRef.get();
+    const excelSnap = fbExcelDocRef ? await fbExcelDocRef.get().catch(()=>null) : null;
+    const pdfSnap = fbPdfDocRef ? await fbPdfDocRef.get().catch(()=>null) : null;
     clearTimeout(loadingTimeout);
     if(snap.exists){
       const data = snap.data();
@@ -5391,6 +5397,8 @@ async function loadStorage(){
       state.activeSessions = data.activeSessions || state.activeSessions || [];
       if(data.contactAdminLink !== undefined){ state.contactAdminLink = data.contactAdminLink || ''; try{ localStorage.setItem('contact-admin-link', state.contactAdminLink); }catch(e){} }
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
+      if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
+      if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = normalizePdfImportCollection(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
       state.contactAdminLink = data.contactAdminLink || state.contactAdminLink || '';
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       // If the cloud's saved template predates our current built-in one, use the
@@ -5499,6 +5507,8 @@ async function loadStorage(){
       updateHeaderSub();
       render();
     }, ()=>{ syncStatus = 'offline'; updateHeaderSub(); });
+    if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
+    if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = normalizePdfImportCollection(data.pdfImports || []); cachePdfImports(); render(); });
   }catch(e){}
 }
 
@@ -5642,8 +5652,10 @@ async function pushToCloud(force, suppressToast){
       latestExcelUpdate: state.latestExcelUpdate || null,
       contactAdminLink: state.contactAdminLink || '',
       reports: mergedReports, 
-      prices: state.prices || {} 
+      prices: state.prices || {}
     }, { merge: true });
+    if(fbExcelDocRef) await fbExcelDocRef.set({ a7Excels: mergedA7Excels, a4Excels: mergedA4Excels, latestExcelUpdate: state.latestExcelUpdate || null, updatedAt: Date.now() }, { merge: true });
+    if(fbPdfDocRef) await fbPdfDocRef.set({ pdfImports: mergedPdfImports, updatedAt: Date.now() }, { merge: true });
     syncStatus = 'synced';
     checkForceLogout();
     render();
@@ -8241,7 +8253,7 @@ function isPromoterUser(){ return !!(state.user && state.user.role === 'promoter
 function lowStockPartyCode(row){ return String(row.Party || row.party || row.partyCode || row['Party Code'] || '').trim() || '__unassigned__'; }
 function lowStockPartyName(row, partyCode){ return String(row['Party Name'] || row.partyName || partyCode || '').trim() || 'Unassigned party'; }
 function currentUserPartyCodes(){ return (state.user && Array.isArray(state.user.partyCodes) ? state.user.partyCodes : []).map(function(code){ return String(code || '').trim(); }).filter(Boolean); }
-function canViewLowStockParty(partyCode){ return isAdminUser() || (!isPromoterUser() && currentUserPartyCodes().includes(String(partyCode || '').trim())); }
+function canViewLowStockParty(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(String(partyCode || '').trim()); }
 function getWeeklyLowStockRows(){
   return getAllRows()
     .map(function(row){
