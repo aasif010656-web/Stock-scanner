@@ -33,6 +33,7 @@ import java.io.FileOutputStream;
  */
 public class AndroidNativeBridge {
 
+    private static final String PRICE_UPDATES_GROUP = "price_updates_group";
     private final MainActivity activity;
     private final ActivityResultLauncher<Intent> scannerLauncher;
 
@@ -63,6 +64,7 @@ public class AndroidNativeBridge {
                     .setContentTitle(title == null ? "Price update" : title)
                     .setContentText(safeBody)
                     .setStyle(new NotificationCompat.BigTextStyle().bigText(safeBody))
+                    .setGroup(PRICE_UPDATES_GROUP)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setAutoCancel(true);
             manager.notify((int)(System.currentTimeMillis() & 0x7fffffff), notification.build());
