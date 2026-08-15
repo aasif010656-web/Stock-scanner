@@ -5224,9 +5224,7 @@ function legacyAISearch(filters){
   return getAllRows().filter(row => {
     const haystack = [row.Description, row.Product, row.Brand, row.Barcode, row.ProductCode, row.Party, row['Party Name']]
       .filter(Boolean).join(' ').toLowerCase();
-    const qty = Number(String(row['Stock Qty'] ?? row.stockQty ?? row.Stock ?? '').replace(/[^0-9.-]/g, '')) || 0;
-    const lowStock = /low|kurann|kurav|കുറഞ്ഞ/.test(query) && qty <= 5;
-    return haystack.includes(query) || (lowStock && /stock|സ്റ്റോക്ക്/.test(query));
+    return haystack.includes(query);
   }).slice(0, limit).map(row => ({
     Description: row.Description || row.Product || '',
     Product: row.Product || row.Description || '',
@@ -5299,6 +5297,7 @@ let fbDocRef = null;
 let fbExcelDocRef = null;
 let fbPdfDocRef = null;
 let fbReportDocRef = null;
+let fbReportRowsRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error
 let stockCacheLoaded = false;
@@ -5329,11 +5328,59 @@ function initFirebase(){
     fbExcelDocRef = db.collection('stockScannerApp').doc('excelData');
     fbPdfDocRef = db.collection('stockScannerApp').doc('pdfData');
     fbReportDocRef = db.collection('stockScannerApp').doc('reportData');
+    fbReportRowsRef = fbReportDocRef.collection('rows');
     fbReady = true;
   }catch(e){
     fbReady = false;
     syncStatus = 'error';
   }
+}
+
+function reportCloudId(report){
+  return String((report && (report.id || report.name)) || '').trim().replace(/[^a-z0-9_-]+/gi, '_').slice(0,120);
+}
+function reportMetadata(report){
+  const rows = Array.isArray(report && report.data) ? report.data : [];
+  return { id: reportCloudId(report), name: String((report && report.name) || 'Imported report'), date: String((report && report.date) || ''), rowCount: Number((report && report.rowCount) || rows.length || 0), updatedAt: Number((report && report.updatedAt) || Date.now()) };
+}
+function mergeReportMetadata(source){
+  const existing = new Map((state.reports || []).map(function(report){ return [reportCloudId(report), report]; }));
+  return (Array.isArray(source) ? source : []).map(function(meta){
+    const local = existing.get(reportCloudId(meta));
+    return Object.assign({}, meta, { id: reportCloudId(meta), data: local && Array.isArray(local.data) ? local.data : (Array.isArray(meta.data) ? meta.data : []) });
+  });
+}
+async function saveReportRowsToCloud(report){
+  if(!fbReportRowsRef) return;
+  const reportId = reportCloudId(report);
+  const rows = Array.isArray(report && report.data) ? report.data : [];
+  const chunkSize = 120;
+  const chunkCount = Math.max(1, Math.ceil(rows.length / chunkSize));
+  const reportDoc = fbReportRowsRef.doc(reportId);
+  const writes = [reportDoc.set(Object.assign(reportMetadata(report), {chunkCount:chunkCount}), {merge:true})];
+  for(let index=0; index<chunkCount; index++) writes.push(reportDoc.collection('chunks').doc(String(index)).set({rows:rows.slice(index * chunkSize, (index + 1) * chunkSize)}));
+  await Promise.all(writes);
+}
+async function loadReportRowsFromCloud(report){
+  if(!fbReportRowsRef || !report) return false;
+  const reportDoc = fbReportRowsRef.doc(reportCloudId(report));
+  const meta = await reportDoc.get();
+  const chunkCount = Number(meta.exists && meta.data() && meta.data().chunkCount) || 0;
+  if(!chunkCount) return false;
+  const chunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return reportDoc.collection('chunks').doc(String(index)).get(); }));
+  report.data = chunks.reduce(function(all, chunk){ const rows = chunk.exists && chunk.data() ? chunk.data().rows : []; return all.concat(Array.isArray(rows) ? rows : []); }, []);
+  report.rowCount = report.data.length;
+  try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(e){}
+  return true;
+}
+async function deleteReportRowsFromCloud(report){
+  if(!fbReportRowsRef || !report) return;
+  const reportDoc = fbReportRowsRef.doc(reportCloudId(report));
+  const meta = await reportDoc.get().catch(function(){ return null; });
+  const chunkCount = Number(meta && meta.exists && meta.data() && meta.data().chunkCount) || 0;
+  const deletes = [reportDoc.delete()];
+  for(let index=0; index<chunkCount; index++) deletes.push(reportDoc.collection('chunks').doc(String(index)).delete());
+  await Promise.all(deletes);
 }
 
 async function loadStorage(){
@@ -5394,7 +5441,7 @@ async function loadStorage(){
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || scanLog;
       customProducts = data.customProducts || customProducts;
-      state.reports = data.reports || state.reports || [];
+      state.reports = mergeReportMetadata(data.reports || state.reports || []);
       state.prices = data.prices || state.prices || {};
       state.appUsers = data.appUsers || state.appUsers || { 'Asif': '949531', 'AJMAL': '6832', 'NIYAS': '1234', 'Das':'1234','Newton':'1234','Rao':'1234','Hussain':'1234','Abu':'1234','Ameer':'1234','Liptu':'1234','Ashmy':'1234','Habeeb':'1234','Mukeeth':'1234' };
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
@@ -5407,7 +5454,7 @@ async function loadStorage(){
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
       if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
       if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = normalizePdfImportCollection(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
-      if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = reportData.reports || state.reports || []; try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
+      if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
       state.contactAdminLink = data.contactAdminLink || state.contactAdminLink || '';
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       // If the cloud's saved template predates our current built-in one, use the
@@ -5460,7 +5507,7 @@ async function loadStorage(){
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || [];
       customProducts = data.customProducts || [];
-      state.reports = data.reports || state.reports || [];
+      state.reports = mergeReportMetadata(data.reports || state.reports || []);
       state.prices = data.prices || state.prices || {};
       state.appUsers = data.appUsers || state.appUsers || { 'Asif': '949531', 'AJMAL': '6832', 'NIYAS': '1234', 'Das':'1234','Newton':'1234','Rao':'1234','Hussain':'1234','Abu':'1234','Ameer':'1234','Liptu':'1234','Ashmy':'1234','Habeeb':'1234','Mukeeth':'1234' };
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
@@ -5518,7 +5565,7 @@ async function loadStorage(){
     }, ()=>{ syncStatus = 'offline'; updateHeaderSub(); });
     if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
     if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = normalizePdfImportCollection(data.pdfImports || []); cachePdfImports(); render(); });
-    if(fbReportDocRef) fbReportDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.reports = data.reports || []; try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} render(); });
+    if(fbReportDocRef) fbReportDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.reports = mergeReportMetadata(data.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} render(); });
   }catch(e){}
 }
 
@@ -5620,7 +5667,8 @@ async function pushToCloud(force, suppressToast){
     try{ if(fbReportDocRef){ const snap = await fbReportDocRef.get(); if(snap.exists) cloudReportData = snap.data() || {}; } }catch(e){}
 
     const mergedCustomProducts = unionExtraBarcodes(cloudData.customProducts, customProducts, mergeArrayByKey(cloudData.customProducts, customProducts, x=>x.SL, deletedKeys.customProducts));
-    const mergedReports = mergeArrayByKey(cloudReportData.reports || cloudData.reports, state.reports, x=>x.name, deletedKeys.reports);
+    const mergedReports = mergeArrayByKey(cloudReportData.reports || cloudData.reports, state.reports, x=>reportCloudId(x), deletedKeys.reports);
+    const mergedReportIndex = mergedReports.map(reportMetadata);
     const mergedScanLog = mergeArrayByKey(cloudData.scanLog, scanLog, x=>x.id);
     const mergedAuditLog = mergeArrayByKey(cloudData.auditLog, state.auditLog, x=>x.id || (x.action+'|'+x.detail+'|'+x.ts), deletedKeys.auditLog);
     const mergedA7Excels = mergeArrayByKey(cloudExcelData.a7Excels || cloudData.a7Excels, state.a7Excels, x=>x.id, deletedKeys.a7Excels);
@@ -5650,7 +5698,7 @@ async function pushToCloud(force, suppressToast){
     // document limit while preserving a safe migration path for existing devices.
     if(fbExcelDocRef) await fbExcelDocRef.set({ a7Excels: mergedA7Excels, a4Excels: mergedA4Excels, latestExcelUpdate: state.latestExcelUpdate || null, updatedAt: Date.now() }, { merge: true });
     if(fbPdfDocRef) await fbPdfDocRef.set({ pdfImports: mergedPdfImports, updatedAt: Date.now() }, { merge: true });
-    if(fbReportDocRef) await fbReportDocRef.set({ reports: mergedReports, updatedAt: Date.now() }, { merge: true });
+    if(fbReportDocRef) await fbReportDocRef.set({ reports: mergedReportIndex, updatedAt: Date.now() }, { merge: true });
     const deleteLegacyField = firebase && firebase.firestore && firebase.firestore.FieldValue ? firebase.firestore.FieldValue.delete() : null;
     const sharedPayload = {
       stockOverrides,
@@ -6101,12 +6149,6 @@ function addAppNotification(item){
   updateNotificationBadge();
   if(fbReady && fbDocRef) pushToCloud(true, true).catch(()=>{});
 }
-function handleLowStockTransition(barcode, oldQty, newQty, movementType){
-  if(movementType && movementType !== 'sale') return;
-  if(!(oldQty > 10 && newQty < 10)) return;
-  const row = (BARCODE_INDEX.get(String(barcode)) || [])[0] || {};
-  addAppNotification({type:'low_stock', audience:'staff-promoters', party:String(row.Party || '').trim(), title:'Low stock alert', message:String(row.Description || row.Product || barcode) + ' sold below 10 pcs — current stock: ' + newQty + ' pcs.'});
-}
 function normalizePdfImportCollection(source){
   const rawItems = Array.isArray(source) ? source : (source && typeof source === 'object' ? Object.keys(source).map(function(key){ return Object.assign({id:key}, source[key] || {}); }) : []);
   return rawItems.map(function(record, index){
@@ -6131,8 +6173,12 @@ function openImportedPdf(id){
   const record = getVisiblePdfImports().find(function(item){ return item.id === id; });
   if(!record){ showToast('This PDF is not available on this device yet. Please sync and try again.', true); return; }
   if(!record.base64){ showToast('PDF details are synced, but its file content is unavailable. Please import this PDF again once.', true); return; }
-  const importer = String(record.importedBy || 'Staff/Admin');
-  downloadBase64File(record.base64, record.name, 'Imported PDF', 'Imported by ' + importer, record.mimeType || 'application/pdf');
+  if(window.AndroidNative && typeof window.AndroidNative.openPdfInApp === 'function'){
+    try{ window.AndroidNative.openPdfInApp(String(record.base64), String(record.name || 'Imported PDF')); return; }catch(e){ console.warn('Native PDF viewer unavailable', e); }
+  }
+  const dataUrl = String(record.base64).indexOf('data:') === 0 ? String(record.base64) : 'data:' + (record.mimeType || 'application/pdf') + ';base64,' + String(record.base64);
+  const title = esc(record.name || 'Imported PDF');
+  openActionModal('<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;"><div style="min-width:0;"><div style="font-weight:800;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">PDF preview</div></div><button class="btn btn-ghost btn-sm" onclick="closeActionModal()">Close</button></div><iframe title="' + title + '" src="' + dataUrl + '#view=FitH" style="width:100%;height:68vh;border:1px solid var(--border);border-radius:12px;background:#fff;"></iframe>');
 }
 async function deleteImportedPdf(id){
   if(!isStaffOrAdmin()){ showToast('PDF delete is available only for Staff and Admin', true); return; }
@@ -7080,7 +7126,6 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow){
     ts: Date.now()
   });
   if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
-  handleLowStockTransition(barcode, oldQty, newQty, type);
 }
 
 async function saveEditProduct(sl){
@@ -8274,55 +8319,10 @@ function renderNow(){
   }
 }
 
-function openLowStockProduct(barcode){
-  state.tab = 'scan';
-  state.manualInput = '';
-  state.barcodeSuggestions = [];
-  state.showSuggestions = false;
-  lookupBarcode(String(barcode || ''));
-}
-
 function isPromoterUser(){ return !!(state.user && state.user.role === 'promoter'); }
 function normalizedPartyCode(value){ return String(value || '').trim().toUpperCase(); }
-function lowStockPartyCode(row){ return String(row.Party || row.party || row.partyCode || row['Party Code'] || '').trim() || '__unassigned__'; }
-function lowStockPartyName(row, partyCode){ return String(row['Party Name'] || row.partyName || partyCode || '').trim() || 'Unassigned party'; }
 function currentUserPartyCodes(){ return (state.user && Array.isArray(state.user.partyCodes) ? state.user.partyCodes : []).map(normalizedPartyCode).filter(Boolean); }
-function canViewLowStockParty(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(normalizedPartyCode(partyCode)); }
-function getWeeklyLowStockRows(){
-  return getAllRows()
-    .map(function(row){
-      const code = String(row.Barcode || row.Product || '').trim();
-      const partyCode = lowStockPartyCode(row);
-      return { row:row, code:code, partyCode:partyCode, partyName:lowStockPartyName(row, partyCode), qty:Number(effectiveQty(row)) || 0, soldLastWeek:getRecentSaleQty(code, 7) };
-    })
-    .filter(function(item){ return item.code && item.qty < 10 && item.soldLastWeek >= 10; })
-    .sort(function(a,b){ return a.partyCode.localeCompare(b.partyCode) || a.qty - b.qty || b.soldLastWeek - a.soldLastWeek || String(a.row.Description || '').localeCompare(String(b.row.Description || '')); });
-}
-function getWeeklyLowStockPartyGroups(){
-  const groups = {};
-  getWeeklyLowStockRows().forEach(function(item){ if(!groups[item.partyCode]) groups[item.partyCode] = {partyCode:item.partyCode, partyName:item.partyName, items:[]}; groups[item.partyCode].items.push(item); });
-  return Object.keys(groups).filter(canViewLowStockParty).sort(function(a,b){ return a.localeCompare(b); }).map(function(key){ return groups[key]; });
-}
-function openUnifiedWeeklyLowStockLog(){
-  const groups = getWeeklyLowStockPartyGroups();
-  if(!groups.length){ showToast('No LOW STOCK items are available for this account.', true); return; }
-  const total = groups.reduce(function(sum, group){ return sum + group.items.length; }, 0);
-  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 LOW STOCK</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">All parties · below 10 pcs and 10+ pcs sold in the last 7 days.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + total + '</span></div>';
-  html += '<div style="display:grid;gap:10px;max-height:55vh;overflow:auto;padding-right:2px;">';
-  groups.forEach(function(group){ html += '<div class="card" style="margin:0;padding:11px;background:var(--card);"><div style="font-weight:800;font-size:14px;">' + esc(group.partyName) + '</div><div style="font-size:11px;color:var(--muted);margin:3px 0 7px;">' + esc(group.partyCode) + ' · ' + group.items.length + ' item(s)</div>'; group.items.forEach(function(item){ const row=item.row; html += '<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid var(--border);"><div style="min-width:0;"><div class="product-title" style="font-size:12px;">' + esc(row.Description || row.Product || item.code) + '</div><div style="font-size:11px;color:var(--muted);">Sold ' + fmtInt(item.soldLastWeek) + ' pcs · ' + esc(item.code) + '</div></div><strong style="color:var(--accent);white-space:nowrap;">' + fmtInt(item.qty) + ' pcs</strong></div>'; }); html += '</div>'; });
-  html += '</div><div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" onclick="closeActionModal()">Close</button></div>';
-  openActionModal(html);
-}
-function openWeeklyLowStockPartyLog(partyCode){
-  const group = getWeeklyLowStockPartyGroups().find(function(item){ return item.partyCode === String(partyCode || ''); });
-  if(!group){ showToast('This Low Stock folder is not available for your account.', true); return; }
-  const items = group.items;
-  let html = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;"><div><div style="font-weight:800;font-size:18px;">📁 ' + esc(group.partyName) + '</div><div style="font-size:12px;color:var(--muted);margin-top:3px;">Low stock for party ' + esc(group.partyCode) + ' · below 10 pcs and 10+ pcs sold in the last 7 days.</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);white-space:nowrap;">' + items.length + '</span></div>';
-  html += '<div style="display:grid;gap:8px;max-height:55vh;overflow:auto;padding-right:2px;">';
-  items.forEach(function(item){ const row = item.row; html += '<div class="card" style="margin:0;padding:11px;background:var(--card);"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;"><div style="min-width:0;flex:1;"><div class="product-title" style="font-size:13px;">' + esc(row.Description || row.Product || item.code) + '</div><div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(item.code) + ' · ' + esc(row.Brand || 'Unbranded') + '</div><div style="font-size:12px;color:var(--muted);margin-top:5px;">Sold ' + fmtInt(item.soldLastWeek) + ' pcs in the last 7 days</div></div><div style="text-align:right;white-space:nowrap;"><div style="font-weight:800;color:var(--accent);">' + fmtInt(item.qty) + ' pcs</div><div style="font-size:10px;color:var(--muted);margin-top:3px;">Current stock</div></div></div></div>'; });
-  html += '</div><div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" onclick="closeActionModal()">Close</button></div>';
-  openActionModal(html);
-}
+function canViewPartyScopedPriceLog(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(normalizedPartyCode(partyCode)); }
 
 function getDashboardAnalytics(){
   const rows = getAllRows();
@@ -8336,7 +8336,7 @@ function getDashboardAnalytics(){
   const topRow = topSale ? rows.find(r => String(r.Barcode || r.Product || '') === String(topSale)) : null;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const recentPriceChanges = (state.priceChangeNotifications || []).filter(n => Number(n.ts || 0) >= cutoff).length;
-  return {totalQty, stockValue, brandCount:brands.size, lowStock:stockRows.filter(item => item.qty < 10).length, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
+  return {totalQty, stockValue, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
 }
 
 function renderScan(){
@@ -9371,12 +9371,9 @@ function productMatches(r, q){
   const raw = normalizeSearchText(q);
   if(!raw) return true;
   const haystack = normalizeSearchText([r.Description, r.Product, r.Barcode, (r.Brand||'OTHERS / UNBRANDED'), r.Party, r['Party Name']].filter(Boolean).join(' '));
-  const qty = effectiveQty(r);
-  const lowStockWords = /(?:low\s*stock|lowstock|stock\s*(?:low|kurav|kuravaaya|kuravulla)|kuravulla\s*stock|kuravaya\s*stock|കുറവ്|കുറവുള്ള)/i;
-  if(lowStockWords.test(raw) && !(qty <= 0 || qty <= 5)) return false;
   const lastBarcode = raw.match(/(?:last\s*barcode|barcode\s*(?:ending|last)|അവസാന\s*barcode)\s*[:#-]?\s*(\d{2,})/i);
   if(lastBarcode && !String(r.Barcode||'').endsWith(lastBarcode[1])) return false;
-  let query = raw.replace(lowStockWords,' ').replace(/(?:last\s*barcode|barcode\s*(?:ending|last)|അവസാന\s*barcode)\s*[:#-]?\s*\d{2,}/ig,' ');
+  let query = raw.replace(/(?:last\s*barcode|barcode\s*(?:ending|last)|അവസാന\s*barcode)\s*[:#-]?\s*\d{2,}/ig,' ');
   query = query.replace(/\b(please|show|find|products?|ulla|ullathu|varunna|varunn|last|barcode|stock|kurav|kuravaaya|kuravulla|with|having|the|a|an)\b/ig,' ');
   const tokens = query.split(/\s+/).filter(Boolean);
   if(!tokens.length) return true;
@@ -10085,7 +10082,7 @@ function renderData(){
           html += '<div class="card" style="padding:0; overflow:hidden; margin-bottom:10px;">';
           html += '<div onclick="toggleReport(' + idx + ')" class="report-header" style="padding:14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
           html += '<div><div style="font-weight:700;">' + esc(report.name) + '</div>';
-          html += '<div style="font-size:11px; color:var(--muted);">' + report.data.length + ' rows · ' + report.date + '</div></div>';
+          html += '<div style="font-size:11px; color:var(--muted);">' + Number(report.rowCount || (report.data || []).length || 0) + ' rows · ' + report.date + '</div></div>';
           html += '<span>' + (isOpen ? '▲' : '▼') + '</span>';
           html += '</div>';
           
@@ -10095,7 +10092,7 @@ function renderData(){
               html += '<button class="btn btn-ghost" style="font-size:12px; color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button>';
               html += '</div>';
               html += '<input type="text" id="reportSearchInput_' + idx + '" placeholder="Search barcode, article, description..." value="' + esc(state.reportSearch[idx]||'') + '" oninput="updateReportSearch(' + idx + ', this.value)" style="width:100%; padding:10px; border:1px solid var(--border2); border-radius:8px; background:var(--card); color:var(--text); box-sizing:border-box; margin-bottom:10px;" />';
-              html += '<div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
+              html += '<div id="reportTableWrap_' + idx + '">' + (state.reportLoadingIndex === idx ? '<div class="empty">Loading report…</div>' : renderReportExcelTable(idx)) + '</div>';
               html += '</div>';
           }
           html += '</div>';
@@ -10105,19 +10102,30 @@ function renderData(){
   return html;
 }
 
-function toggleReport(idx) {
-    state.openReportIndex = (state.openReportIndex === idx) ? null : idx;
+async function toggleReport(idx) {
+    const opening = state.openReportIndex !== idx;
+    state.openReportIndex = opening ? idx : null;
+    const report = state.reports && state.reports[idx];
+    if(opening && report && (!Array.isArray(report.data) || !report.data.length) && Number(report.rowCount || 0) > 0){
+      state.reportLoadingIndex = idx;
+      render();
+      try{
+        const loaded = await loadReportRowsFromCloud(report);
+        if(!loaded) showToast('This report data is not available yet. Please import it again on the source device.', true);
+      }catch(e){ showToast('Could not load this report. Check internet and try again.', true); }
+      state.reportLoadingIndex = null;
+    }
     render();
 }
 
 async function deleteReport(idx) {
     if(!(await appConfirm('Delete this report?', 'Delete Report'))) return;
     const rep = state.reports[idx];
-    if(rep && rep.name) deletedKeys.reports.add(rep.name);
+    if(rep) deletedKeys.reports.add(reportCloudId(rep));
     state.reports.splice(idx, 1);
     localStorage.setItem('app-reports', JSON.stringify(state.reports));
     render();
-    pushToCloud(true, true).catch(()=>{ showToast("Sync failed — check internet", true); });
+    try{ await deleteReportRowsFromCloud(rep); await pushToCloud(true, true); }catch(e){ showToast('Report deleted locally; cloud cleanup will retry when online.', true); }
 }
 
 function startEditReportRow(reportIdx, rowIdx) {
@@ -10264,6 +10272,7 @@ async function handleImportData(fileInput){
     const file = fileInput.files[0];
     if(!file) return;
     render();
+    let importedLocally = false;
     try {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, {type:'array'});
@@ -10304,20 +10313,24 @@ async function handleImportData(fileInput){
         
         if(!state.reports) state.reports = [];
         const existingIdx = state.reports.findIndex(r => r.name === file.name);
-        const reportObj = { name: file.name, data: rows, date: new Date().toLocaleString() };
+        const reportObj = { id:'report_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, data:rows, rowCount:rows.length, date:new Date().toLocaleString(), updatedAt:Date.now() };
         if(existingIdx >= 0) {
+            reportObj.id = state.reports[existingIdx].id || reportCloudId(state.reports[existingIdx]);
             state.reports[existingIdx] = reportObj;
             showToast("✓ Report updated: " + file.name);
         } else {
             state.reports.push(reportObj);
             showToast("✓ New report imported");
         }
-        localStorage.setItem('app-reports', JSON.stringify(state.reports)); render();
+        localStorage.setItem('app-reports', JSON.stringify(state.reports)); importedLocally = true; render();
         
-        // Ensure price is pushed to cloud immediately
-        await pushToCloud(true); render();
+        // Keep row data in bounded report chunks; only compact metadata enters the report index.
+        await saveReportRowsToCloud(reportObj);
+        await pushToCloud(true, true); render();
+        showToast('✓ Excel imported and synced');
     } catch(e) {
-        showToast("Import failed: " + e.message, true);
+        console.error('Excel import sync error', e);
+        showToast(importedLocally ? '✓ Excel imported on this device. Cloud sync will retry when online.' : 'Import failed: ' + e.message, !importedLocally);
     }
     fileInput.value = '';
 }
@@ -10393,23 +10406,12 @@ function getPricePartyOptions(notifications){
   return Array.from(new Set((notifications || []).map(n => String(n.party || n.partyName || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
 }
 function renderPriceLog(){
-  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewLowStockParty(notification.party || notification.partyName); });
+  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewPartyScopedPriceLog(notification.party || notification.partyName); });
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(function(notification){ return normalizedPartyCode(notification.party || notification.partyName) === normalizedPartyCode(selectedParty); }) : allVisiblePriceNotifs;
   let html = '';
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
-  if(isPromoterUser()){
-    const myLowStockGroups = getWeeklyLowStockPartyGroups();
-    if(myLowStockGroups.length){
-      html += '<div class="divider-label">LOW STOCK</div><div style="display:grid;gap:8px;margin-bottom:12px;">';
-      myLowStockGroups.forEach(function(group){
-        const safeParty = esc(group.partyCode).replace(/'/g, "\\'");
-        html += '<button type="button" class="card" style="width:100%;margin:0;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openWeeklyLowStockPartyLog(\'' + safeParty + '\')"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">LOW STOCK</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">' + esc(group.partyName) + ' · ' + esc(group.partyCode) + ' · below 10 pcs</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + group.items.length + '</span></div></button>';
-      });
-      html += '</div>';
-    }
-  }
   return html;
 }
 function renderLog(){
@@ -10454,19 +10456,11 @@ function renderLog(){
     });
   }
 
-	const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewLowStockParty(notification.party || notification.partyName); });
+	const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewPartyScopedPriceLog(notification.party || notification.partyName); });
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
 	const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(function(notification){ return normalizedPartyCode(notification.party || notification.partyName) === normalizedPartyCode(selectedParty); }) : allVisiblePriceNotifs;
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
-  const weeklyLowStockGroups = getWeeklyLowStockPartyGroups();
-  html += '<div class="divider-label">Stock Alerts</div>';
-  if(!weeklyLowStockGroups.length){
-    html += '<div class="empty" style="margin-bottom:12px;">No Low Stock folders are assigned to this account.</div>';
-  }else{
-    const totalLow = weeklyLowStockGroups.reduce(function(sum, group){ return sum + group.items.length; }, 0);
-    html += '<button type="button" class="card" style="width:100%;margin-bottom:10px;padding:12px;border:1px solid rgba(242,183,5,.36);background:linear-gradient(135deg,rgba(242,183,5,.12),var(--card));text-align:left;cursor:pointer;" onclick="openUnifiedWeeklyLowStockLog()"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📁</span><div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">LOW STOCK</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">All parties · Below 10 pcs · 10+ sold in last 7 days</div></div><span class="badge" style="background:rgba(242,183,5,.2);color:var(--accent);">' + totalLow + '</span><span style="color:var(--muted);font-size:18px;">›</span></div></button>';
-  }
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';

@@ -49,6 +49,11 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
+        <activity
+            android:name=".PdfViewerActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBarLaunch" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.abdulasif.pdtstockscanner.fixed.fileprovider"

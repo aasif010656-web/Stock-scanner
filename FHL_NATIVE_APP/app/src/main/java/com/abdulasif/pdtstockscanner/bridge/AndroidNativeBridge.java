@@ -21,6 +21,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.core.content.FileProvider;
 
 import com.abdulasif.pdtstockscanner.MainActivity;
+import com.abdulasif.pdtstockscanner.PdfViewerActivity;
 import com.abdulasif.pdtstockscanner.ScannerActivity;
 
 import java.io.File;
@@ -261,6 +262,31 @@ public class AndroidNativeBridge {
             activity.startActivity(chooser);
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    /** Opens an imported PDF inside FHL ELECTRONICS without requiring another app. */
+    @JavascriptInterface
+    public void openPdfInApp(String base64Data, String fileName) {
+        try {
+            String encoded = base64Data == null ? "" : base64Data;
+            int comma = encoded.indexOf(',');
+            if (encoded.startsWith("data:") && comma >= 0) encoded = encoded.substring(comma + 1);
+            byte[] decodedBytes = Base64.decode(encoded, Base64.DEFAULT);
+            File cacheDir = activity.getCacheDir();
+            File file = new File(cacheDir, "fhl_pdf_" + System.currentTimeMillis() + ".pdf");
+            try (FileOutputStream output = new FileOutputStream(file)) {
+                output.write(decodedBytes);
+                output.flush();
+            }
+            activity.runOnUiThread(() -> {
+                Intent intent = new Intent(activity, PdfViewerActivity.class);
+                intent.putExtra(PdfViewerActivity.EXTRA_FILE_PATH, file.getAbsolutePath());
+                intent.putExtra(PdfViewerActivity.EXTRA_TITLE, fileName == null ? "Imported PDF" : fileName);
+                activity.startActivity(intent);
+            });
+        } catch (Exception exception) {
+            Log.e("AndroidNativeBridge", "Could not open imported PDF", exception);
         }
     }
 }
