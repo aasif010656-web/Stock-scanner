@@ -7907,6 +7907,9 @@ function renderNow(){
   { const el = document.getElementById('navPriceLog'); if(el) el.style.display = isPromoter ? '' : 'none'; }
   // Preserve focus state before re-rendering to prevent keyboard from closing
   const activeEl = document.activeElement;
+  const sameTab = state._renderedTab === state.tab;
+  const savedScrollX = sameTab ? window.scrollX : 0;
+  const savedScrollY = sameTab ? window.scrollY : 0;
   const focusedId = (activeEl && activeEl.id && (activeEl.tagName==='INPUT'||activeEl.tagName==='TEXTAREA')) ? activeEl.id : null;
   const savedSelStart = focusedId ? activeEl.selectionStart : null;
   const savedSelEnd = focusedId ? activeEl.selectionEnd : null;
@@ -7927,6 +7930,10 @@ function renderNow(){
       newInput.focus();
       try{ newInput.setSelectionRange(savedSelStart, savedSelEnd); }catch(e){}
     }
+  }
+  state._renderedTab = state.tab;
+  if(sameTab && (savedScrollX || savedScrollY)){
+    requestAnimationFrame(function(){ window.scrollTo(savedScrollX, savedScrollY); });
   }
 }
 
