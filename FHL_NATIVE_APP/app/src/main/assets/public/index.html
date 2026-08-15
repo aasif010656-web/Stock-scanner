@@ -570,16 +570,52 @@ body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!importa
 
 
 
-/* Brands long-scroll stability: avoid repaint/compositing flicker on large lists. */
-body.brands-scroll-stable{background-attachment:scroll!important;}
-body.brands-scroll-stable #brandResultsWrap,body.brands-scroll-stable #brandProductResultsWrap{contain:layout;transform:none;-webkit-transform:none;}
-body.brands-scroll-stable .brand-card{backface-visibility:visible;-webkit-backface-visibility:visible;transform:none;-webkit-transform:none;will-change:auto;}
-body.brands-scroll-stable .brand-card,body.brands-scroll-stable .ios-group{transition:none!important;}
+	/* Brands long-scroll stability: avoid repaint/compositing flicker on large lists. */
+	body.brands-scroll-stable{background-attachment:scroll!important;}
+	body.brands-scroll-stable #brandResultsWrap,body.brands-scroll-stable #brandProductResultsWrap{contain:layout;transform:none;-webkit-transform:none;}
+	body.brands-scroll-stable .brand-card{backface-visibility:visible;-webkit-backface-visibility:visible;transform:none;-webkit-transform:none;will-change:auto;}
+	body.brands-scroll-stable .brand-card,body.brands-scroll-stable .ios-group{transition:none!important;}
+	body.native-barcode-scanning{background:transparent!important;}
+	body.native-barcode-scanning #app{visibility:hidden!important;}
+#nativeScannerCancel{display:none;position:fixed;z-index:2147483647;top:max(18px,env(safe-area-inset-top));right:16px;padding:10px 14px;border:1px solid rgba(255,255,255,.9);border-radius:999px;background:rgba(10,10,12,.86);color:#fff;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35);}
+body.native-barcode-scanning #nativeScannerCancel{display:block;}
 
 </style>
 </head>
 <body>
 <script>if(window.AndroidNative||window.UpdateBridge){document.body.classList.add("native-performance-mode");}</script>
+<script>
+  (function(){
+    if(window.AndroidNative || !window.Capacitor || !window.Capacitor.Plugins) return;
+    const plugins = window.Capacitor.Plugins;
+    if(!plugins.Filesystem || !plugins.Share) return;
+    window.AndroidNative = {
+      shareFile: function(base64Data, requestedName){
+        const fileName = String(requestedName || 'FHL_ELECTRONICS_report.xlsx').replace(/[^a-zA-Z0-9._-]/g, '_');
+        (async function(){
+          try{
+            const written = await plugins.Filesystem.writeFile({
+              path: 'fhl-exports/' + fileName,
+              data: String(base64Data || ''),
+              directory: 'CACHE',
+              recursive: true
+            });
+            await plugins.Share.share({
+              title: 'FHL ELECTRONICS',
+              text: fileName,
+              url: written.uri,
+              dialogTitle: 'Share Excel report'
+            });
+          }catch(error){
+            if(typeof window.showToast === 'function') window.showToast('Could not open the iOS share sheet.', true);
+          }
+        })();
+      }
+    };
+    document.body.classList.add('native-performance-mode');
+  })();
+</script>
+<button id="nativeScannerCancel" type="button" onclick="stopCamera();render();">Cancel scan</button>
 <div id="app">
   <div class="header" id="appHeader" style="display:none;">
     <div class="header-title">
@@ -6182,12 +6218,12 @@ function queuePartyPriceNotification(party, description){
       const open = function(){ try{ setTab('priceLog'); }catch(e){} };
       if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification){ try{ window.AndroidNative.postPriceUpdateNotification(title, body); }catch(e){} }
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
-        try{ const ln=window.Capacitor.Plugins.LocalNotifications; if(ln.requestPermissions) ln.requestPermissions(); ln.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'priceLog'}}]}); }catch(e){}
-      }
-      if('Notification' in window){
         try{
-          if(Notification.permission === 'granted'){ const n = new Notification(title,{body:body}); n.onclick=open; }
-          else if(Notification.permission === 'default'){ Notification.requestPermission(); }
+          const ln=window.Capacitor.Plugins.LocalNotifications;
+          (async function(){
+            const permission = ln.requestPermissions ? await ln.requestPermissions() : {display:'granted'};
+            if(permission && permission.display === 'granted') await ln.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'priceLog'}}]});
+          })().catch(function(){});
         }catch(e){}
       }
       showToast('🔔 ' + body, false);
@@ -6582,18 +6618,54 @@ async function saveAddProduct(){
 
 // ---------- Camera ----------
 
-function startCamera(){
+function getCapacitorBarcodeScanner(){
+  try{return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BarcodeScanner ? window.Capacitor.Plugins.BarcodeScanner : null;}catch(e){return null;}
+}
+async function startCamera(){
   if(window.AndroidNative && window.AndroidNative.startNativeScanner) {
     window.AndroidNative.startNativeScanner();
+    state.cameraOn = true;
+    return;
+  }
+  const scanner = getCapacitorBarcodeScanner();
+  if(scanner && scanner.start && scanner.requestPermissions){
+    try{
+      state.cameraOn = true;
+      state.torchOn = false;
+      const permission = await scanner.requestPermissions({permissions:['camera']});
+      if(!permission || permission.camera !== 'granted') throw new Error('Camera access was not granted');
+      document.body.classList.add('native-barcode-scanning');
+      await scanner.start({formats:['CODE_128','CODE_39','CODE_93','CODA_BAR','EAN_13','EAN_8','ITF','UPC_A','UPC_E'],cameraDirection:'back'}, async function(result, error){
+        if(error){
+          await stopCamera();
+          showToast('Scanner could not read the barcode. Please try again.', true);
+          render();
+          return;
+        }
+        if(!result || !result.content) return;
+        const code = String(result.content).trim();
+        if(!code) return;
+        await stopCamera();
+        if(typeof window.onBarcodeScanned === 'function') window.onBarcodeScanned(code);
+        render();
+      });
+    }catch(error){
+      state.cameraOn = false;
+      document.body.classList.remove('native-barcode-scanning');
+      showToast('Camera permission is required to scan barcodes.', true);
+    }
   } else {
     showToast("Native camera not available in this environment", true);
   }
 }
 function startNativeScanner(){ return startCamera(); }
-function stopCamera(){
+async function stopCamera(){
   if(window.AndroidNative && window.AndroidNative.stopNativeScanner) {
     window.AndroidNative.stopNativeScanner();
   }
+  const scanner = getCapacitorBarcodeScanner();
+  if(scanner && scanner.stop){ try{ await scanner.stop(); }catch(e){} }
+  document.body.classList.remove('native-barcode-scanning');
   state.cameraOn = false;
 }
 window.onScanCancelled = function(){
