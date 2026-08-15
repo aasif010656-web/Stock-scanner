@@ -13,7 +13,9 @@
     </style>
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="android:background">@drawable/splash</item>
+        <!-- Match the first web frame; do not show the retired white Capacitor splash. -->
+        <item name="android:windowBackground">@color/launch_background</item>
+        <item name="android:colorBackground">@color/launch_background</item>
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
     </style>
