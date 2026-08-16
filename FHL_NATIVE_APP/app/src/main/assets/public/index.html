@@ -564,7 +564,7 @@ body.native-performance-mode #brandResultsWrap,body.native-performance-mode #bra
 .auth-screen::before,.auth-screen::after,.auth-floating-icons,.auth-glow,.auth-wave,.circuit-bg{display:none!important;opacity:0!important;background:none!important;animation:none!important;}
 .auth-screen{background:var(--bg)!important;}
 .auth-screen .auth-glass{position:relative!important;overflow:hidden!important;background:var(--ui-panel)!important;border:1px solid var(--ui-border)!important;box-shadow:var(--ui-shadow)!important;}
-.auth-screen .auth-logo{display:block!important;width:128px!important;height:128px!important;margin:0 auto 16px!important;padding:12px!important;box-sizing:border-box!important;object-fit:contain!important;border-radius:24px!important;background:#fff!important;border:2px solid rgba(255,255,255,.95)!important;box-shadow:0 8px 22px rgba(0,0,0,.24)!important;}
+.auth-screen .auth-logo{display:block!important;width:164px!important;height:164px!important;margin:0 auto 18px!important;padding:0!important;box-sizing:border-box!important;object-fit:cover!important;border-radius:28px!important;background:transparent!important;border:0!important;box-shadow:0 12px 28px rgba(0,0,0,.28)!important;clip-path:inset(14% round 22%);transform:scale(1.39);transform-origin:center;}
 body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!important;}
 .report-sheet{border:1px solid var(--ui-border)!important;border-radius:var(--ui-radius)!important;background:var(--ui-panel)!important;box-shadow:var(--ui-shadow)!important;backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;}
 .report-sheet table{color:var(--text)!important;}
@@ -5361,7 +5361,7 @@ function reportCloudId(report){
 }
 function reportMetadata(report){
   const rows = Array.isArray(report && report.data) ? report.data : [];
-  return { id: reportCloudId(report), name: String((report && report.name) || 'Imported report'), date: String((report && report.date) || ''), rowCount: Number((report && report.rowCount) || rows.length || 0), updatedAt: Number((report && report.updatedAt) || Date.now()) };
+  return { id: reportCloudId(report), name: String((report && report.name) || 'Imported report'), date: String((report && report.date) || ''), rowCount: Number((report && report.rowCount) || rows.length || 0), updatedAt: Number((report && report.updatedAt) || Date.now()), audience: String((report && report.audience) || 'staff_admin'), payloadStored: !!(report && report.payloadStored) };
 }
 function mergeReportMetadata(source){
   const existing = new Map((state.reports || []).map(function(report){ return [reportCloudId(report), report]; }));
@@ -5395,9 +5395,12 @@ async function saveReportRowsToCloud(report){
   const chunkSize = 120;
   const chunkCount = Math.max(1, Math.ceil(rows.length / chunkSize));
   const reportDoc = fbReportRowsRef.doc(reportId);
-  const writes = [reportDoc.set(Object.assign(reportMetadata(report), {chunkCount:chunkCount}), {merge:true})];
+  const writes = [reportDoc.set(Object.assign(reportMetadata(report), {chunkCount:chunkCount, payloadStored:true}), {merge:true})];
   for(let index=0; index<chunkCount; index++) writes.push(reportDoc.collection('chunks').doc(String(index)).set({rows:rows.slice(index * chunkSize, (index + 1) * chunkSize)}));
   await Promise.all(writes);
+  report.payloadStored = true;
+  report.chunkCount = chunkCount;
+  cacheReportRowsLocal(report);
 }
 async function loadReportRowsFromCloud(report){
   if(!fbReportRowsRef || !report) return false;
@@ -5406,6 +5409,7 @@ async function loadReportRowsFromCloud(report){
   const chunkCount = Number(meta.exists && meta.data() && meta.data().chunkCount) || 0;
   if(!chunkCount) return false;
   const chunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return reportDoc.collection('chunks').doc(String(index)).get(); }));
+  if(chunks.some(function(chunk){ return !chunk.exists; })) return false;
   report.data = chunks.reduce(function(all, chunk){ const rows = chunk.exists && chunk.data() ? chunk.data().rows : []; return all.concat(Array.isArray(rows) ? rows : []); }, []);
   report.rowCount = report.data.length;
   cacheReportRowsLocal(report);
@@ -5420,8 +5424,11 @@ async function ensureReportRowsAvailable(report){
     return true;
   }
   try{
-    const loaded = await loadReportRowsFromCloud(report);
-    if(loaded && Array.isArray(report.data) && report.data.length) return true;
+    for(let attempt=0; attempt<3; attempt++){
+      const loaded = await loadReportRowsFromCloud(report);
+      if(loaded && Array.isArray(report.data) && report.data.length) return true;
+      if(attempt < 2) await new Promise(function(resolve){ setTimeout(resolve, 350); });
+    }
   }catch(e){
     // A network or partial-chunk error must not stop an already cached workbook.
     if(restoreReportRowsLocal(report)){
@@ -5554,14 +5561,14 @@ async function loadStorage(){
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
-      state.pdfImports = normalizePdfImportCollection(data.pdfImports || state.pdfImports || []);
+      state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
       cachePdfImports();
       state.activeSessions = data.activeSessions || state.activeSessions || [];
       handleRemoteSessionRevocation();
       if(data.contactAdminLink !== undefined){ state.contactAdminLink = data.contactAdminLink || ''; try{ localStorage.setItem('contact-admin-link', state.contactAdminLink); }catch(e){} }
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
       if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
-      if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = normalizePdfImportCollection(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
+      if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
       if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
       state.contactAdminLink = data.contactAdminLink || state.contactAdminLink || '';
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
@@ -5589,7 +5596,7 @@ async function loadStorage(){
       await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
     if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
-    if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = normalizePdfImportCollection(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
+    if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
     // Keep cached workbook rows when the dedicated report document returns metadata only.
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
@@ -5644,18 +5651,20 @@ async function loadStorage(){
         }
       }
       const prevPriceNotifs = state.priceChangeNotifications || [];
-      const prevStockUpdatedAt = Number(state._websiteLastStockUpdateAt || data.stockDataUpdatedAt || 0);
+      const prevStockAdditionId = String(state._websiteLastStockAdditionId || (state.stockAdditionNotice && state.stockAdditionNotice.id) || '');
       const prevExcelSignature = state._websiteLastExcelSignature || (state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName)) || '';
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
-      state.pdfImports = normalizePdfImportCollection(data.pdfImports || state.pdfImports || []);
+      state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
       cachePdfImports();
       state.activeSessions = data.activeSessions || state.activeSessions || [];
       handleRemoteSessionRevocation();
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
+      state.stockAdditionNotice = data.stockAdditionNotice || state.stockAdditionNotice || null;
       const latestExcelSignature = state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName) || '';
-      const nextStockUpdatedAt = Number(data.stockDataUpdatedAt || 0);
+      const nextStockAddition = state.stockAdditionNotice || null;
+      const nextStockAdditionId = String(nextStockAddition && nextStockAddition.id || '');
       if(!a7FirstSnapshot){
         const newPriceItems = state.priceChangeNotifications.filter(function(item){ return !prevPriceNotifs.some(function(prev){ return prev.id === item.id; }); });
         const priceGroups = newPriceItems.reduce(function(groups, item){ const key=item.party || 'General'; (groups[key]||(groups[key]=[])).push(item); return groups; }, {});
@@ -5669,11 +5678,13 @@ async function loadStorage(){
           const latest = state.latestExcelUpdate || {};
           addWebsiteNotification({ id:'import-' + latestExcelSignature, category:'import', tab:'data', ts:Number(latest.ts||Date.now()), title:'Excel import completed', body:(latest.fileName || 'Stock data') + ' was imported by ' + (latest.uploadedBy || 'a team member') + '.' });
         }
-        if(!newPriceItems.length && !importChanged && nextStockUpdatedAt && prevStockUpdatedAt && nextStockUpdatedAt > prevStockUpdatedAt){
-          addWebsiteNotification({ id:'stock-' + nextStockUpdatedAt, category:'stock', tab:'brands', ts:nextStockUpdatedAt, title:'Stock data updated', body:'Latest stock quantities are now available.' });
+        if(nextStockAdditionId && nextStockAdditionId !== prevStockAdditionId){
+          const addedQty = Number(nextStockAddition.addedQty || 0);
+          const productName = nextStockAddition.product || nextStockAddition.barcode || 'Brand stock';
+          addWebsiteNotification({ id:'stock-' + nextStockAdditionId, category:'stock', tab:'brands', ts:Number(nextStockAddition.ts || Date.now()), title:'Stock added · Brands', body:productName + (addedQty > 0 ? ' increased by ' + addedQty + ' pcs.' : ' was increased.') });
         }
       }
-      state._websiteLastStockUpdateAt = nextStockUpdatedAt || prevStockUpdatedAt;
+      state._websiteLastStockAdditionId = nextStockAdditionId || prevStockAdditionId;
       state._websiteLastExcelSignature = latestExcelSignature || prevExcelSignature;
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       a7FirstSnapshot = false;
@@ -5701,7 +5712,7 @@ async function loadStorage(){
       render();
     }, ()=>{ syncStatus = 'offline'; updateHeaderSub(); });
     if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
-    if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = normalizePdfImportCollection(data.pdfImports || []); cachePdfImports(); render(); });
+    if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = mergePdfMetadata(data.pdfImports || []); cachePdfImports(); render(); });
     if(fbReportDocRef) fbReportDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.reports = mergeReportMetadata(data.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} render(); });
   }catch(e){}
 }
@@ -5805,6 +5816,9 @@ async function pushToCloud(force, suppressToast){
 
     const mergedCustomProducts = unionExtraBarcodes(cloudData.customProducts, customProducts, mergeArrayByKey(cloudData.customProducts, customProducts, x=>x.SL, deletedKeys.customProducts));
     const mergedReports = mergeArrayByKey(cloudReportData.reports || cloudData.reports, state.reports, x=>reportCloudId(x), deletedKeys.reports);
+    for(const report of mergedReports){
+      if(Array.isArray(report.data) && report.data.length && !report.payloadStored) await saveReportRowsToCloud(report);
+    }
     const mergedReportIndex = mergedReports.map(reportMetadata);
     const mergedScanLog = mergeArrayByKey(cloudData.scanLog, scanLog, x=>x.id);
     const mergedAuditLog = mergeArrayByKey(cloudData.auditLog, state.auditLog, x=>x.id || (x.action+'|'+x.detail+'|'+x.ts), deletedKeys.auditLog);
@@ -5829,7 +5843,7 @@ async function pushToCloud(force, suppressToast){
     state.priceChangeNotifications = mergedPriceNotifs;
     state.stockMovements = mergedStockMovements;
     state.appNotifications = mergedAppNotifications;
-    state.pdfImports = normalizePdfImportCollection(mergedPdfImports);
+    state.pdfImports = mergePdfMetadata(mergedPdfImports);
     cachePdfImports();
     state.activeSessions = mergedActiveSessions;
     rebuildIndex();
@@ -5853,6 +5867,7 @@ async function pushToCloud(force, suppressToast){
       appNotifications: mergedAppNotifications,
       activeSessions: mergedActiveSessions,
       latestExcelUpdate: state.latestExcelUpdate || null,
+      stockAdditionNotice: state.stockAdditionNotice || null,
       contactAdminLink: state.contactAdminLink || '',
       prices: state.prices || {}
     };
@@ -5940,7 +5955,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '77';
+const APP_BUILD = '78';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -6289,6 +6304,15 @@ function normalizePdfImportCollection(source){
     return Object.assign({}, record, {id:id, name:name, base64:base64, mimeType:record.mimeType || record.type || 'application/pdf'});
   }).filter(Boolean);
 }
+function mergePdfMetadata(source){
+  const existing = new Map(normalizePdfImportCollection(state.pdfImports || []).map(function(record){ return [record.id, record]; }));
+  return normalizePdfImportCollection(source).map(function(record){
+    const local = existing.get(record.id);
+    const merged = Object.assign({}, local || {}, record);
+    if(local && local.base64 && !record.base64) merged.base64 = local.base64;
+    return merged;
+  });
+}
 function cachePdfImports(){
   try{ localStorage.setItem('pdf-imports-cache', JSON.stringify(state.pdfImports || [])); }catch(e){}
 }
@@ -6304,7 +6328,13 @@ async function openImportedPdf(id){
   if(!record){ showToast('This PDF is not available on this device yet. Please sync and try again.', true); return; }
   if(!record.base64 && record.payloadStored){
     showToast('Loading PDF…');
-    try{ await loadPdfPayloadFromCloud(record); cachePdfImports(); }catch(e){ console.warn('PDF payload load failed', e); }
+    try{
+      for(let attempt=0; attempt<3 && !record.base64; attempt++){
+        await loadPdfPayloadFromCloud(record);
+        if(!record.base64 && attempt < 2) await new Promise(function(resolve){ setTimeout(resolve, 350); });
+      }
+      cachePdfImports();
+    }catch(e){ console.warn('PDF payload load failed', e); }
   }
   if(!record.base64){ showToast('PDF details are synced, but its file content is unavailable. Please import this PDF again once.', true); return; }
   if(window.AndroidNative && typeof window.AndroidNative.openPdfInApp === 'function'){
@@ -6340,7 +6370,7 @@ async function handleImportPdf(fileInput){
   if(!file) return;
   try{
     const base64 = await new Promise((resolve,reject)=>{ const reader = new FileReader(); reader.onload=()=>resolve(String(reader.result || '')); reader.onerror=reject; reader.readAsDataURL(file); });
-    const record = {id:'pdf_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, mimeType:file.type || 'application/pdf', size:file.size, base64, importedBy:state.user.username, importedRole:state.user.role, ts:Date.now()};
+    const record = {id:'pdf_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, mimeType:file.type || 'application/pdf', size:file.size, base64, importedBy:state.user.username, importedRole:state.user.role, audience:'staff_admin', payloadStored:false, ts:Date.now()};
     if(!state.pdfImports) state.pdfImports = [];
     state.pdfImports.unshift(record);
     if(state.pdfImports.length > 10) state.pdfImports = state.pdfImports.slice(0,10);
@@ -7385,6 +7415,18 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTs){
   });
   if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
 }
+function recordBrandsStockAddition(row, oldQty, newQty){
+  const addedQty = Number(newQty || 0) - Number(oldQty || 0);
+  if(!(addedQty > 0)) return;
+  state.stockAdditionNotice = {
+    id:'stock_add_' + Date.now() + '_' + Math.random().toString(36).slice(2,8),
+    ts:Date.now(),
+    barcode:String((row && row.Barcode) || ''),
+    product:String((row && (row.Description || row.Product || row.Brand)) || 'Brand stock'),
+    addedQty:addedQty,
+    addedBy:String((state.user && state.user.username) || 'a team member')
+  };
+}
 
 async function saveEditProduct(sl){
   const f = state.editProductForm;
@@ -7420,7 +7462,9 @@ async function saveEditProduct(sl){
     }
     const newQty = parseFloat(f.stockQty);
     if(!isNaN(newQty) && newQty >= 0){
-      recordStockMovement(normBarcode, effectiveQty(old), newQty);
+      const oldQty = effectiveQty(old);
+      recordStockMovement(normBarcode, oldQty, newQty);
+      recordBrandsStockAddition(Object.assign({}, old, {Barcode:normBarcode, Description:f.description.trim(), Brand:f.brand.trim()}), oldQty, newQty);
       stockOverrides[normBarcode] = newQty;
     }
     // Optimistic: update UI immediately, sync in background
@@ -7467,7 +7511,9 @@ async function saveEditProduct(sl){
     }
     const newQty = parseFloat(f.stockQty);
     if(!isNaN(newQty) && newQty >= 0){
-      recordStockMovement(normBarcode, effectiveQty(r), newQty);
+      const oldQty = effectiveQty(r);
+      recordStockMovement(normBarcode, oldQty, newQty);
+      recordBrandsStockAddition(Object.assign({}, r, {Barcode:normBarcode, Description:f.description.trim(), Brand:f.brand.trim()}), oldQty, newQty);
       stockOverrides[normBarcode] = newQty;
     }
     // Optimistic: update UI immediately, sync in background
@@ -8527,7 +8573,7 @@ function renderNow(){
     const remembered = localStorage.getItem('app-remember-me') === '1';
     c.innerHTML = `<div class="auth-screen">
       <div class="auth-glass">
-        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PCmfiIHQLDeSCfCz.jpg" alt="FHL Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.background='#fff';this.style.padding='12px';" />
+        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PCmfiIHQLDeSCfCz.jpg" alt="FHL Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');" />
         <h2 class="auth-title">Login</h2>
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
@@ -10644,7 +10690,7 @@ async function handleImportData(fileInput){
         
         if(!state.reports) state.reports = [];
         const existingIdx = state.reports.findIndex(r => r.name === file.name);
-        const reportObj = { id:'report_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, data:rows, rowCount:rows.length, date:displayDateTime(Date.now()), updatedAt:Date.now() };
+        const reportObj = { id:'report_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, data:rows, rowCount:rows.length, date:displayDateTime(Date.now()), updatedAt:Date.now(), audience:'staff_admin', payloadStored:false, importedBy:String((state.user && state.user.username) || 'Staff/Admin') };
         if(existingIdx >= 0) {
             reportObj.id = state.reports[existingIdx].id || reportCloudId(state.reports[existingIdx]);
             state.reports[existingIdx] = reportObj;
