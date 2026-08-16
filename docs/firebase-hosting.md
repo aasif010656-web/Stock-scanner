@@ -2,11 +2,15 @@
 
 The same canonical browser bundle used by the Android Capacitor app is deployed as a static website from `FHL_NATIVE_APP/app/src/main/assets/public`.
 
+## Live website
+
+The first live deployment completed successfully on 16 August 2026. The website is available at **https://stock-take-9a67a.web.app/**. The GitHub Actions deployment run was `31940915709`.
+
 ## One-time activation
 
-1. Open the Firebase Console for the `stock-take-9a67a` project and enable **Hosting**. The first activation creates the default Hosting site and its `web.app`/`firebaseapp.com` address.
-2. In the GitHub repository **Settings → Secrets and variables → Actions**, confirm that `FIREBASE_SERVICE_ACCOUNT_JSON` is available. The existing Android release workflow already uses this secret for Firestore release metadata. It must be a Firebase service-account JSON key authorized to deploy to Hosting.
-3. Run the **Deploy FHL Electronics Website** workflow manually once, or push the prepared files to `main`. The workflow deploys the `live` Firebase Hosting channel.
+1. Firebase Hosting has already been enabled for the `stock-take-9a67a` project and the default Hosting site is live.
+2. In the GitHub repository **Settings → Secrets and variables → Actions**, retain `FIREBASE_SERVICE_ACCOUNT_JSON`. The existing Android release workflow already uses this secret for Firestore release metadata, and the Hosting workflow uses it to deploy the website.
+3. Future eligible pushes to `main`, or a manual **Deploy FHL Electronics Website** workflow run, deploy the `live` Firebase Hosting channel.
 4. Optionally add a custom domain in **Firebase Console → Hosting → Add custom domain** and complete the DNS verification steps shown there.
 
 ## Automatic deployments
