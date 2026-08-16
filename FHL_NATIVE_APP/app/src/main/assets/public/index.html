@@ -5590,7 +5590,9 @@ async function loadStorage(){
     }
     if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
     if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = normalizePdfImportCollection(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
-    if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = reportData.reports || state.reports || []; try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
+    // Keep cached workbook rows when the dedicated report document returns metadata only.
+    // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
+    if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
     syncStatus = 'synced';
     if(a7TemplateNeedsPush && fbDocRef){
       fbDocRef.set({ a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION }, { merge: true }).catch(()=>{});
@@ -5938,7 +5940,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '76';
+const APP_BUILD = '77';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
