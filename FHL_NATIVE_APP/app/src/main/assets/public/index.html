@@ -638,6 +638,7 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 	      <img src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png" class="app-logo-icon" alt="FHL Electronics logo">
 	      <span id="tabTitle">📷 Barcode Scan</span>
 	    </div>
+	    <button id="nativeUpdateButton" class="notification-bell" type="button" style="display:none;width:auto;padding:0 8px;font-size:11px;gap:4px;" aria-label="Check for app updates" title="Check for app updates">⬆️ <span>Update</span></button>
 	    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications">🔔<span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
 	  </div>
 	    <div class="header-sub" id="headerSub">Loading data...</div>
@@ -5894,7 +5895,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '70';
+const APP_BUILD = '71';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -6598,11 +6599,31 @@ function updateWebsiteNotificationBadge(){
   }
   bell.style.display = '';
   const unread = (state.websiteNotifications || []).filter(function(note){ return !note.read && canSeeWebsiteNotification(note); }).length;
-  badge.textContent = unread > 99 ? '99+' : String(unread);
-  badge.style.display = unread ? 'inline-flex' : 'none';
-  bell.setAttribute('aria-label', unread ? unread + ' unread notifications' : 'Open notifications');
-}
-function formatWebsiteNotificationTime(ts){
+	  badge.textContent = unread > 99 ? '99+' : String(unread);
+	  badge.style.display = unread ? 'inline-flex' : 'none';
+	  bell.setAttribute('aria-label', unread ? unread + ' unread notifications' : 'Open notifications');
+	  refreshNativeUpdateButton();
+	}
+	function refreshNativeUpdateButton(){
+	  const button = document.getElementById('nativeUpdateButton');
+	  if(!button) return;
+	  const supportsNativeUpdate = !!((window.UpdateBridge && typeof window.UpdateBridge.openUpdate === 'function') || (window.AndroidNative && typeof window.AndroidNative.installApk === 'function'));
+	  if(!supportsNativeUpdate || !state.user){ button.style.display = 'none'; return; }
+	  const available = state.availableUpdate;
+	  button.style.display = 'inline-flex';
+	  button.innerHTML = available ? '⬆️ <span>Update</span>' : '⬆️ <span>Check</span>';
+	  button.title = available ? ('Install ' + (available.releaseTag || available.version || 'available update')) : 'Check for app updates';
+	  button.setAttribute('aria-label', button.title);
+	  button.onclick = function(){
+	    if(state.availableUpdate && state.availableUpdate.url) downloadAndInstallUpdate(state.availableUpdate.url);
+	    else checkForUpdates(false);
+	  };
+	  if(!state._nativeUpdateCheckStarted){
+	    state._nativeUpdateCheckStarted = true;
+	    setTimeout(function(){ checkForUpdates(true); }, 700);
+	  }
+	}
+	function formatWebsiteNotificationTime(ts){
   try{ return new Date(ts).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; }
 }
 function openWebsiteNotificationCenter(){
@@ -7859,18 +7880,22 @@ async function checkForUpdates(isAuto){
     const updateDoc = await firebase.firestore().collection('appSettings').doc('updateInfo').get();
     if(updateDoc.exists){
       const data = updateDoc.data();
-      const latestUrl = resolveLatestUpdateUrl(data);
-      const releaseLabel = String(data.releaseTag || ('v' + data.version));
-      if(!isCurrentRelease(data) && data.version && latestUrl){
-        const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
+	      const latestUrl = resolveLatestUpdateUrl(data);
+	      const releaseLabel = String(data.releaseTag || ('v' + data.version));
+	      if(!isCurrentRelease(data) && data.version && latestUrl){
+	        state.availableUpdate = { url: latestUrl, version: data.version, releaseTag: releaseLabel };
+	        refreshNativeUpdateButton();
+	        const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
         addWebsiteNotification({ id:'update-' + releaseLabel, category:'update', tab:'settings', ts:Number(data.updatedAt || Date.now()), title:'App update available', body:msg, silent:true });
         if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
         if(isAuto && !state._updateNotified){
           state._updateNotified = true;
           openUpdatePrompt(msg, latestUrl);
-        }
-      } else {
-        if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
+	        }
+	      } else {
+	        state.availableUpdate = null;
+	        refreshNativeUpdateButton();
+	        if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
       }
     } else {
       if(status) status.innerText = "No update information found.";
