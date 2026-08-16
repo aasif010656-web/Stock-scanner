@@ -635,7 +635,7 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
   <div class="header" id="appHeader" style="display:none;">
 	  <div class="header-main">
 	    <div class="header-title">
-      <img src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png?v=73" class="app-logo-icon" alt="FHL Electronics logo" onerror="this.onerror=null;this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');">
+      <img src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PCmfiIHQLDeSCfCz.jpg" class="app-logo-icon" alt="FHL Electronics logo" onerror="this.onerror=null;this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');">
 	      <span id="tabTitle">📷 Barcode Scan</span>
 	    </div>
 	    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications">🔔<span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
@@ -5184,6 +5184,7 @@ function fmtInt(v){ const n=parseFloat(v); if(isNaN(n)) return v; return Math.ro
 // Display-only business date adjustment: stored timestamps remain unchanged.
 function displayDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; d.setDate(d.getDate() - 1); return d.toLocaleString(undefined, options); }
 function displayDate(value, options){ return displayDateTime(value, options); }
+function originalDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined, options); }
 function getStockColorClass(qty){
   if(qty > 20) return 'stock-green';
   if(qty >= 5) return 'stock-yellow';
@@ -5915,7 +5916,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '74';
+const APP_BUILD = '75';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -8502,7 +8503,7 @@ function renderNow(){
     const remembered = localStorage.getItem('app-remember-me') === '1';
     c.innerHTML = `<div class="auth-screen">
       <div class="auth-glass">
-        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png?v=73" alt="FHL Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.background='#fff';this.style.padding='12px';" />
+        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PCmfiIHQLDeSCfCz.jpg" alt="FHL Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.background='#fff';this.style.padding='12px';" />
         <h2 class="auth-title">Login</h2>
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
@@ -10037,7 +10038,7 @@ function renderSettings(){
     if(state.latestExcelUpdate){
       const lastExcel = state.latestExcelUpdate;
       const importer = lastExcel.uploadedBy || 'Unknown';
-      const importedAt = displayDateTime(lastExcel.ts, {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true});
+      const importedAt = originalDateTime(lastExcel.ts, {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true});
       const updatedQty = Number(lastExcel.updatedQtyTotal || 0);
       const updatedValue = Number(lastExcel.updatedValueTotal || 0);
       html += '<div class="ios-section-title">Last Excel Update</div><div class="ios-group" style="padding:12px 14px;">';
