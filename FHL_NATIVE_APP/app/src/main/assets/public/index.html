@@ -207,6 +207,8 @@ input,textarea,select,[contenteditable="true"]{ -webkit-user-select:text; user-s
 .btn-whatsapp{background:#25D366;color:#fff;border:none;}
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 html,body{
+  /* Native launch background: preserve a seamless first frame while the WebView initializes. */
+  background-color:#0B0D14;
   -webkit-font-smoothing:antialiased;
   overscroll-behavior-y:none;margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif; transition: font-size 0.2s; }
 /* ---- Background variants, one per theme "mood" ---- */
@@ -221,13 +223,19 @@ body.large-font .product-title { font-size: 18px; }
 body.large-font .detail-value { font-size: 14px; }
 #app{max-width:520px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;padding-bottom:64px;}
 .header { padding: 16px 16px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; background: rgba(15, 17, 26, 0.62); backdrop-filter: blur(28px) saturate(190%); -webkit-backdrop-filter: blur(28px) saturate(190%); }
-  .header-title{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;}
+  .header-main{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .header-title{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;min-width:0;}
   .app-logo-icon{width:28px;height:28px;border-radius:8px;object-fit:contain;background:var(--accent-dim);padding:2px;}
+  .notification-bell{position:relative;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border2);border-radius:13px;background:var(--panel);color:var(--text);font-size:18px;flex-shrink:0;box-shadow:var(--shadow-btn,0 4px 12px rgba(0,0,0,.2));}
+  .notification-bell:active{transform:scale(.96);}
+  .notification-bell-badge{position:absolute;right:-4px;top:-4px;min-width:17px;height:17px;padding:0 4px;display:none;align-items:center;justify-content:center;border-radius:99px;background:#FF453A;color:#fff;font-size:10px;font-weight:800;border:2px solid var(--bg);}
+  .notification-list{display:flex;flex-direction:column;gap:9px;text-align:left;max-height:58vh;overflow:auto;padding-right:2px;}
+  .notification-item{border:1px solid var(--border2);border-radius:14px;padding:12px;background:rgba(255,255,255,.035);cursor:pointer;}
+  .notification-item.unread{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%, transparent);}
+  .notification-item-title{font-weight:800;font-size:13px;line-height:1.25;}
+  .notification-item-body{font-size:12px;line-height:1.45;color:var(--muted);margin-top:4px;}
+  .notification-item-time{font-size:10px;color:var(--muted);margin-top:7px;}
 .header-sub{font-size:12px;color:var(--muted);margin-top:3px;}
-	.header-notifications-btn{position:relative;margin-left:auto;border:1px solid var(--border2);background:var(--panel);color:var(--text);border-radius:12px;min-width:42px;height:38px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:17px;}
-	.header.promoter-notification-corner .header-title,.header.promoter-notification-corner .header-sub{padding-right:54px;}
-	.header.promoter-notification-corner .header-notifications-btn{position:absolute;right:16px;top:16px;margin:0;z-index:2;}
-.header-notifications-badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--red);color:#fff;font-size:10px;font-weight:800;align-items:center;justify-content:center;}
 .header-admin-summary{position:absolute;right:16px;top:10px;display:none;flex-direction:column;align-items:flex-end;gap:2px;max-width:190px;text-align:right;padding:6px 9px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(0,0,0,.16);font-size:10px;line-height:1.2;}
 .header-admin-summary .summary-label{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.4px;}
 .header-admin-summary .summary-value{color:var(--text);font-weight:700;font-size:11px;white-space:nowrap;}
@@ -574,7 +582,7 @@ body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!importa
 
 
 
-	/* Brands long-scroll stability: avoid repaint/compositing flicker on large lists. */
+/* Brands long-scroll stability: avoid repaint/compositing flicker on large lists. */
 	body.brands-scroll-stable{background-attachment:scroll!important;}
 	body.brands-scroll-stable #brandResultsWrap,body.brands-scroll-stable #brandProductResultsWrap{contain:layout;transform:none;-webkit-transform:none;}
 	body.brands-scroll-stable .brand-card{backface-visibility:visible;-webkit-backface-visibility:visible;transform:none;-webkit-transform:none;will-change:auto;}
@@ -625,14 +633,15 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 <button id="nativeScannerCancel" type="button" onclick="stopCamera();render();">Cancel scan</button>
 <div id="app">
   <div class="header" id="appHeader" style="display:none;">
-    <div class="header-title">
-      <img src="fhl-electronics-logo.png" class="app-logo-icon" alt="logo">
-      <span id="tabTitle">📷 Barcode Scan</span>
-    </div>
-    <div class="header-sub" id="headerSub">Loading data...</div>
-    <div id="adminExcelSummary" class="header-admin-summary"></div>
-    <button id="headerNotificationsBtn" class="header-notifications-btn" type="button" onclick="openNotificationCenter()" aria-label="Open notifications"><span>🔔</span><span id="headerNotificationsBadge" class="header-notifications-badge" style="display:none;">0</span></button>
-  </div>
+	  <div class="header-main">
+	    <div class="header-title">
+	      <img src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png" class="app-logo-icon" alt="FHL Electronics logo">
+	      <span id="tabTitle">📷 Barcode Scan</span>
+	    </div>
+	    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications">🔔<span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
+	  </div>
+	    <div class="header-sub" id="headerSub">Loading data...</div>
+	  </div>
   <div class="section" id="content"></div>
 	  <button id="backToTopBtn" onclick="scrollToTop()">↑</button>
 	</div>
@@ -657,9 +666,14 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
   </div>
 </div>
 <div class="modal-overlay" id="actionModal">
-  <div class="modal-box modal-box-dark" style="max-width:480px;text-align:left;padding:18px 16px;">
+  <div class="modal-box modal-box-dark" style="max-width:420px;width:min(92vw,420px);text-align:left;padding:18px 16px;">
     <div class="modal-close" style="color:var(--text);" onclick="closeActionModal()">✕</div>
     <div id="actionModalContent"></div>
+  </div>
+</div>
+<div class="modal-overlay" id="reportWorkspaceModal">
+  <div class="modal-box modal-box-dark" style="width:min(98vw,1180px);max-width:none;height:min(92vh,1000px);text-align:left;padding:16px;overflow:auto;">
+    <div id="reportWorkspaceContent"></div>
   </div>
 </div>
 <div class="modal-overlay" id="notificationModal">
@@ -5167,6 +5181,9 @@ function parseData(raw){
 }
 function fmtMoney(v){ const n=parseFloat(v); if(isNaN(n)) return "0.00"; return n.toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtInt(v){ const n=parseFloat(v); if(isNaN(n)) return v; return Math.round(n).toLocaleString("en-IN"); }
+// Display-only business date adjustment: stored timestamps remain unchanged.
+function displayDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; d.setDate(d.getDate() - 1); return d.toLocaleString(undefined, options); }
+function displayDate(value, options){ return displayDateTime(value, options); }
 function getStockColorClass(qty){
   if(qty > 20) return 'stock-green';
   if(qty >= 5) return 'stock-yellow';
@@ -5317,7 +5334,7 @@ function hasTrustedOfflineStock(){
 function offlineStockLabel(){
   if(syncStatus !== 'offline') return '';
   if(!stockCacheLoaded) return ' · ⚠ Offline stock snapshot not available';
-  const d = new Date(stockCacheUpdatedAt).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  const d = displayDateTime(stockCacheUpdatedAt, {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
   return ' · ⚠ Last trusted stock sync ' + d;
 }
 
@@ -5385,9 +5402,8 @@ async function deleteReportRowsFromCloud(report){
   await Promise.all(deletes);
 }
 
-// PDF files are never stored inside the pdfData Firestore document. A large PDF
-// is split into small payload chunks under its own document, avoiding Firestore's
-// 1 MiB document cap while keeping the metadata list fast to load.
+// Large PDF bytes never live in the pdfData Firestore document. The metadata list
+// remains compact while the payload is saved as bounded chunks under its own record.
 function pdfPayloadId(record){ return String(record && record.id || '').replace(/[^a-z0-9_-]+/gi, '_').slice(0,120); }
 function compactPdfMetadata(record){
   const copy = Object.assign({}, record || {});
@@ -5398,8 +5414,7 @@ function compactPdfMetadata(record){
 }
 async function savePdfPayloadToCloud(record){
   if(!fbPdfPayloadsRef || !record || !record.base64) throw new Error('PDF storage is unavailable');
-  const payload = String(record.base64);
-  const chunkSize = 280000;
+  const payload = String(record.base64), chunkSize = 280000;
   const chunkCount = Math.max(1, Math.ceil(payload.length / chunkSize));
   const fileDoc = fbPdfPayloadsRef.doc(pdfPayloadId(record));
   const writes = [fileDoc.set({id:pdfPayloadId(record), name:String(record.name || 'Imported PDF'), mimeType:String(record.mimeType || 'application/pdf'), size:Number(record.size || 0), chunkCount:chunkCount, updatedAt:Date.now()}, {merge:true})];
@@ -5415,11 +5430,7 @@ async function loadPdfPayloadFromCloud(record){
   if(!chunkCount) return '';
   const chunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return fileDoc.collection('chunks').doc(String(index)).get(); }));
   const payload = chunks.map(function(chunk){ return chunk.exists && chunk.data() ? String(chunk.data().data || '') : ''; }).join('');
-  if(payload){
-    record.base64 = payload;
-    const local = (state.pdfImports || []).find(function(item){ return String(item.id) === String(record.id); });
-    if(local) local.base64 = payload;
-  }
+  if(payload) record.base64 = payload;
   return payload;
 }
 async function deletePdfPayloadFromCloud(record){
@@ -5498,7 +5509,11 @@ async function loadStorage(){
       state.a4Excels = data.a4Excels || state.a4Excels || [];
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
+      state.appNotifications = data.appNotifications || state.appNotifications || [];
+      state.pdfImports = normalizePdfImportCollection(data.pdfImports || state.pdfImports || []);
+      cachePdfImports();
       state.activeSessions = data.activeSessions || state.activeSessions || [];
+      handleRemoteSessionRevocation();
       if(data.contactAdminLink !== undefined){ state.contactAdminLink = data.contactAdminLink || ''; try{ localStorage.setItem('contact-admin-link', state.contactAdminLink); }catch(e){} }
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
       if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
@@ -5529,6 +5544,9 @@ async function loadStorage(){
     } else {
       await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
+    if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
+    if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = normalizePdfImportCollection(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
+    if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = reportData.reports || state.reports || []; try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
     syncStatus = 'synced';
     if(a7TemplateNeedsPush && fbDocRef){
       fbDocRef.set({ a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION }, { merge: true }).catch(()=>{});
@@ -5579,14 +5597,38 @@ async function loadStorage(){
           showToast('📩 New A4 PDF from ' + newA4Ones.map(e=>e.sender).join(', '));
         }
       }
+      const prevPriceNotifs = state.priceChangeNotifications || [];
+      const prevStockUpdatedAt = Number(state._websiteLastStockUpdateAt || data.stockDataUpdatedAt || 0);
+      const prevExcelSignature = state._websiteLastExcelSignature || (state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName)) || '';
       state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
       state.stockMovements = data.stockMovements || state.stockMovements || [];
-      state.activeSessions = data.activeSessions || state.activeSessions || [];
-      handleRemoteSessionRevocation();
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = normalizePdfImportCollection(data.pdfImports || state.pdfImports || []);
       cachePdfImports();
+      state.activeSessions = data.activeSessions || state.activeSessions || [];
+      handleRemoteSessionRevocation();
       state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
+      const latestExcelSignature = state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName) || '';
+      const nextStockUpdatedAt = Number(data.stockDataUpdatedAt || 0);
+      if(!a7FirstSnapshot){
+        const newPriceItems = state.priceChangeNotifications.filter(function(item){ return !prevPriceNotifs.some(function(prev){ return prev.id === item.id; }); });
+        const priceGroups = newPriceItems.reduce(function(groups, item){ const key=item.party || 'General'; (groups[key]||(groups[key]=[])).push(item); return groups; }, {});
+        Object.keys(priceGroups).forEach(function(party){
+          const items = priceGroups[party];
+          const latest = items.reduce(function(max,item){ return Math.max(max, Number(item.ts||0)); }, 0);
+          addWebsiteNotification({ id:'price-' + party + '-' + latest, category:'price', party:party, tab:'priceLog', ts:latest || Date.now(), title:'Price update · ' + party, body:items.length + ' product price' + (items.length===1?' was':'s were') + ' updated.' });
+        });
+        const importChanged = !!latestExcelSignature && latestExcelSignature !== prevExcelSignature;
+        if(importChanged){
+          const latest = state.latestExcelUpdate || {};
+          addWebsiteNotification({ id:'import-' + latestExcelSignature, category:'import', tab:'data', ts:Number(latest.ts||Date.now()), title:'Excel import completed', body:(latest.fileName || 'Stock data') + ' was imported by ' + (latest.uploadedBy || 'a team member') + '.' });
+        }
+        if(!newPriceItems.length && !importChanged && nextStockUpdatedAt && prevStockUpdatedAt && nextStockUpdatedAt > prevStockUpdatedAt){
+          addWebsiteNotification({ id:'stock-' + nextStockUpdatedAt, category:'stock', tab:'brands', ts:nextStockUpdatedAt, title:'Stock data updated', body:'Latest stock quantities are now available.' });
+        }
+      }
+      state._websiteLastStockUpdateAt = nextStockUpdatedAt || prevStockUpdatedAt;
+      state._websiteLastExcelSignature = latestExcelSignature || prevExcelSignature;
       try{ if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
       a7FirstSnapshot = false;
       if((data.a7TemplateVersion || 0) < A7_TEMPLATE_VERSION){
@@ -5726,6 +5768,10 @@ async function pushToCloud(force, suppressToast){
         const mergedStockMovements = mergeArrayByKey(cloudData.stockMovements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
     const mergedAppNotifications = mergeArrayByKey(cloudData.appNotifications, state.appNotifications, x=>x.id, deletedKeys.appNotifications);
     const mergedPdfImports = mergeArrayByKey(cloudPdfData.pdfImports || cloudData.pdfImports, state.pdfImports, x=>x.id, deletedKeys.pdfImports);
+    for(const pdfRecord of mergedPdfImports){
+      if(pdfRecord && pdfRecord.base64 && !pdfRecord.payloadStored) await savePdfPayloadToCloud(pdfRecord);
+    }
+    const mergedPdfIndex = mergedPdfImports.map(compactPdfMetadata);
     const mergedActiveSessions = mergeArrayByKey(cloudData.activeSessions, state.activeSessions, x=>x.id);
     // Adopt the merged results locally too, so THIS device doesn't lose what others added
     customProducts = mergedCustomProducts;
@@ -5742,15 +5788,8 @@ async function pushToCloud(force, suppressToast){
     state.activeSessions = mergedActiveSessions;
     rebuildIndex();
 
-    // Write bulky Excel/PDF/report payloads to dedicated documents before removing
-    // their legacy copies from sharedData. This avoids Firestore's 1 MiB shared
-    // document limit while preserving a safe migration path for existing devices.
     if(fbExcelDocRef) await fbExcelDocRef.set({ a7Excels: mergedA7Excels, a4Excels: mergedA4Excels, latestExcelUpdate: state.latestExcelUpdate || null, updatedAt: Date.now() }, { merge: true });
-    // Migrate any legacy inline payloads before writing the compact metadata list.
-    for(const pdfRecord of mergedPdfImports){
-      if(pdfRecord && pdfRecord.base64 && !pdfRecord.payloadStored) await savePdfPayloadToCloud(pdfRecord);
-    }
-    if(fbPdfDocRef) await fbPdfDocRef.set({ pdfImports: mergedPdfImports.map(compactPdfMetadata), updatedAt: Date.now() }, { merge: true });
+    if(fbPdfDocRef) await fbPdfDocRef.set({ pdfImports: mergedPdfIndex, updatedAt: Date.now() }, { merge: true });
     if(fbReportDocRef) await fbReportDocRef.set({ reports: mergedReportIndex, updatedAt: Date.now() }, { merge: true });
     const deleteLegacyField = firebase && firebase.firestore && firebase.firestore.FieldValue ? firebase.firestore.FieldValue.delete() : null;
     const sharedPayload = {
@@ -5855,7 +5894,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '35';
+const APP_BUILD = '69';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -5945,16 +5984,17 @@ let state = {
   a4Queue: [], // items collected across multiple 5-slot fills, waiting to be turned into one PDF
   a4Excels: [], // cloud-synced list of {id, name, sender, senderRole, ts, base64 (pdf), rows:[{barcode,description,price}], pageCount}
 
-  // ---- Price-change notifications (from Brands excel import) ----
-  priceChangeNotifications: [], // {id, party, barcode, description, oldPrice, newPrice, ts} — permanent until explicitly deleted
-  importProgress: { active: false, current: 0, total: 0, label: '' }, // Brands import progress — shown only in Asif's Settings
-  stockMovements: [], // {id, barcode, delta, type:'sale'|'restock'|'ambiguous', ts} — recorded whenever a stock qty changes
+	  // ---- Price-change notifications (from Brands excel import) ----
+	  priceChangeNotifications: [], // {id, party, barcode, description, oldPrice, newPrice, ts} — permanent until explicitly deleted
+	  websiteNotifications: (function(){ try{ const saved=localStorage.getItem('fhl-website-notifications'); return Array.isArray(JSON.parse(saved)) ? JSON.parse(saved) : []; }catch(e){ return []; } })(),
+	  importProgress: { active: false, current: 0, total: 0, label: '' }, // Brands import progress — shown only in Asif's Settings
+    stockMovements: [], // {id, barcode, delta, type:'sale'|'restock'|'ambiguous', ts} — recorded whenever a stock qty changes
   appNotifications: [], // role/party-aware in-app alerts, synchronized through the shared Firestore document
   pdfImports: JSON.parse(localStorage.getItem('pdf-imports-cache') || '[]'), // staff/admin PDF import records synchronized through Firestore
   activeSessions: [], // {id, username, role, deviceId, deviceName, loginTs, lastSeen, revokedAt}
-  sessionToken: '', // current device session token; never reused across logins
+  sessionToken: '',
+  sessionLoginTs: 0,
   notificationReadAt: Number(localStorage.getItem('notification-read-at') || 0),
-
   // ---- Create Excel tool ----
   createExcelOpen: false,
   createExcelInput: '',
@@ -6157,11 +6197,8 @@ installDialogGuards();
 installContextMenuGuards();
 
 // ---------- Shared notifications and PDF import ----------
-function canUseNotificationCenter(){
-  return !!(state.user && state.user.role !== 'admin');
-}
 function notificationVisibleToCurrentUser(item){
-  if(!canUseNotificationCenter()) return false;
+  if(!state.user) return false;
   if(item.audience === 'staff-admin' && !isStaffOrAdmin()) return false;
   if(item.audience === 'promoters' && state.user.role !== 'promoter') return false;
   if(item.audience === 'staff-promoters' && !isStaffOrAdmin() && state.user.role !== 'promoter') return false;
@@ -6170,27 +6207,17 @@ function notificationVisibleToCurrentUser(item){
 }
 function updateNotificationBadge(){
   const badge = document.getElementById('headerNotificationsBadge');
-  const button = document.getElementById('headerNotificationsBtn');
-  const header = document.getElementById('appHeader');
-  if(!badge || !button) return;
-  if(header) header.classList.toggle('promoter-notification-corner', !!(state.user && state.user.role === 'promoter'));
-  if(!canUseNotificationCenter()){
-    button.style.display = 'none';
-    badge.style.display = 'none';
-    return;
-  }
-  button.style.display = '';
+  if(!badge) return;
   const unread = (state.appNotifications || []).filter(notificationVisibleToCurrentUser).filter(n => Number(n.ts || 0) > Number(state.notificationReadAt || 0)).length;
   badge.textContent = unread > 99 ? '99+' : String(unread);
   badge.style.display = unread ? 'inline-flex' : 'none';
 }
 function openNotificationCenter(){
-  if(!canUseNotificationCenter()) return;
   const modal = document.getElementById('notificationModal');
   const content = document.getElementById('notificationModalContent');
   if(!modal || !content) return;
   const visible = (state.appNotifications || []).filter(notificationVisibleToCurrentUser).sort((a,b)=>(b.ts||0)-(a.ts||0));
-  content.innerHTML = '<div style="font-weight:800;font-size:18px;margin-bottom:12px;">Notifications</div>' + (visible.length ? visible.slice(0,100).map(n => '<div style="padding:12px 0;border-bottom:1px solid var(--ui-border);"><div style="font-weight:700;">' + esc(n.title || 'Notification') + '</div><div style="font-size:13px;line-height:1.45;margin-top:4px;">' + esc(n.message || '') + '</div><div style="font-size:11px;color:var(--muted);margin-top:6px;">' + esc(new Date(Number(n.ts || Date.now())).toLocaleString()) + '</div></div>').join('') : '<div class="empty">No notifications yet.</div>');
+  content.innerHTML = '<div style="font-weight:800;font-size:18px;margin-bottom:12px;">Notifications</div>' + (visible.length ? visible.slice(0,100).map(n => '<div style="padding:12px 0;border-bottom:1px solid var(--ui-border);"><div style="font-weight:700;">' + esc(n.title || 'Notification') + '</div><div style="font-size:13px;line-height:1.45;margin-top:4px;">' + esc(n.message || '') + '</div><div style="font-size:11px;color:var(--muted);margin-top:6px;">' + esc(displayDateTime(Number(n.ts || Date.now()))) + '</div></div>').join('') : '<div class="empty">No notifications yet.</div>');
   modal.classList.add('show');
   state.notificationReadAt = Date.now();
   try{ localStorage.setItem('notification-read-at', String(state.notificationReadAt)); }catch(e){}
@@ -6216,7 +6243,7 @@ function normalizePdfImportCollection(source){
   }).filter(Boolean);
 }
 function cachePdfImports(){
-  try{ localStorage.setItem('pdf-imports-cache', JSON.stringify((state.pdfImports || []).map(compactPdfMetadata))); }catch(e){}
+  try{ localStorage.setItem('pdf-imports-cache', JSON.stringify(state.pdfImports || [])); }catch(e){}
 }
 function getVisiblePdfImports(){
   if(!isStaffOrAdmin()) return [];
@@ -6228,17 +6255,18 @@ async function openImportedPdf(id){
   if(!isStaffOrAdmin()){ showToast('PDF access is available only for Staff and Admin', true); return; }
   const record = getVisiblePdfImports().find(function(item){ return item.id === id; });
   if(!record){ showToast('This PDF is not available on this device yet. Please sync and try again.', true); return; }
-  if(!record.base64){
+  if(!record.base64 && record.payloadStored){
     showToast('Loading PDF…');
-    try{ await loadPdfPayloadFromCloud(record); }catch(e){}
+    try{ await loadPdfPayloadFromCloud(record); cachePdfImports(); }catch(e){ console.warn('PDF payload load failed', e); }
   }
-  if(!record.base64){ showToast('PDF file is not available yet. Check internet and try again.', true); return; }
+  if(!record.base64){ showToast('PDF details are synced, but its file content is unavailable. Please import this PDF again once.', true); return; }
   if(window.AndroidNative && typeof window.AndroidNative.openPdfInApp === 'function'){
     try{ window.AndroidNative.openPdfInApp(String(record.base64), String(record.name || 'Imported PDF')); return; }catch(e){ console.warn('Native PDF viewer unavailable', e); }
   }
+  const importer = String(record.importedBy || 'Staff/Admin');
   const dataUrl = String(record.base64).indexOf('data:') === 0 ? String(record.base64) : 'data:' + (record.mimeType || 'application/pdf') + ';base64,' + String(record.base64);
   const title = esc(record.name || 'Imported PDF');
-  openActionModal('<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;"><div style="min-width:0;"><div style="font-weight:800;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">PDF preview</div></div><button class="btn btn-ghost btn-sm" onclick="closeActionModal()">Close</button></div><iframe title="' + title + '" src="' + dataUrl + '#view=FitH" style="width:100%;height:68vh;border:1px solid var(--border);border-radius:12px;background:#fff;"></iframe>');
+  openActionModal('<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;"><div style="min-width:0;"><div style="font-weight:800;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + title + '</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">PDF preview · Imported by ' + esc(importer) + '</div></div><button class="btn btn-ghost btn-sm" onclick="closeActionModal()">Close</button></div><iframe title="' + title + '" src="' + dataUrl + '#view=FitH" style="width:100%;height:68vh;border:1px solid var(--border);border-radius:12px;background:#fff;"></iframe>');
 }
 async function deleteImportedPdf(id){
   if(!isStaffOrAdmin()){ showToast('PDF delete is available only for Staff and Admin', true); return; }
@@ -6250,7 +6278,7 @@ async function deleteImportedPdf(id){
   cachePdfImports();
   addAuditLog('PDF Deleted', 'Deleted ' + record.name + ' by ' + ((state.user && state.user.username) || 'Staff/Admin'));
   render();
-  try{ await deletePdfPayloadFromCloud(record); }catch(e){}
+  try{ await deletePdfPayloadFromCloud(record); }catch(e){ console.warn('PDF payload cleanup will retry', e); }
   await pushToCloud(true, true);
   showToast(syncStatus === 'synced' ? '✓ PDF deleted from all devices' : 'PDF deleted locally; cloud cleanup will retry', syncStatus !== 'synced');
 }
@@ -6269,12 +6297,12 @@ async function handleImportPdf(fileInput){
     if(!state.pdfImports) state.pdfImports = [];
     state.pdfImports.unshift(record);
     if(state.pdfImports.length > 10) state.pdfImports = state.pdfImports.slice(0,10);
-    await savePdfPayloadToCloud(record);
     cachePdfImports();
     addAuditLog('PDF Imported', 'Imported ' + file.name + ' by ' + state.user.username);
+    if(fbReady && fbPdfPayloadsRef) await savePdfPayloadToCloud(record);
     await pushToCloud(true, true);
     render();
-    showToast(syncStatus === 'synced' ? '✓ PDF imported and synced' : '✓ PDF imported; cloud sync will retry', syncStatus !== 'synced');
+    showToast(syncStatus === 'synced' ? '✓ PDF imported and synced to Firestore' : '✓ PDF saved locally; cloud sync will retry', syncStatus !== 'synced');
   }catch(e){ showToast('Could not import PDF: ' + e.message, true); }
   fileInput.value = '';
 }
@@ -6500,7 +6528,7 @@ function queuePartyPriceNotification(party, description){
       const count = groups[p].length;
       const title = 'Price update · ' + p;
       const body = 'Your ' + count + ' product' + (count===1?'':'s') + ' prices are changed';
-      const open = function(){ try{ setTab('priceLog'); }catch(e){} };
+      addWebsiteNotification({ id:'price-local-' + p + '-' + Date.now(), category:'price', party:p, tab:'priceLog', ts:Date.now(), title:title, body:body, silent:true });
       if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification){ try{ window.AndroidNative.postPriceUpdateNotification(title, body); }catch(e){} }
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
         try{
@@ -6514,6 +6542,91 @@ function queuePartyPriceNotification(party, description){
       showToast('🔔 ' + body, false);
     });
   }, 900);
+}
+function websiteNotificationStorageKey(){
+  const username = state.user && state.user.username ? String(state.user.username).toLowerCase() : 'guest';
+  return 'fhl-website-notifications-' + username;
+}
+function saveWebsiteNotifications(){
+  try{ localStorage.setItem(websiteNotificationStorageKey(), JSON.stringify((state.websiteNotifications || []).slice(0,80))); }catch(e){}
+}
+function loadWebsiteNotificationsForUser(){
+  try{
+    const saved = localStorage.getItem(websiteNotificationStorageKey());
+    state.websiteNotifications = saved && Array.isArray(JSON.parse(saved)) ? JSON.parse(saved) : [];
+  }catch(e){ state.websiteNotifications = []; }
+  updateWebsiteNotificationBadge();
+}
+function canUseWebsiteNotifications(){
+  return !!state.user;
+}
+function canSeeWebsiteNotification(note){
+  if(!canUseWebsiteNotifications() || !note) return false;
+  if(note.party && !isStaffOrAdmin()){
+    const partyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
+    return partyCodes.includes(note.party);
+  }
+  return true;
+}
+function addWebsiteNotification(note){
+  if(!note || !note.id) return;
+  const notifications = state.websiteNotifications || (state.websiteNotifications = []);
+  const index = notifications.findIndex(function(item){ return item.id === note.id; });
+  const normalized = {
+    id: String(note.id), category: note.category || 'system', title: String(note.title || 'FHL update'),
+    body: String(note.body || ''), tab: note.tab || '', party: note.party || '',
+    ts: Number(note.ts || Date.now()), read: false
+  };
+  if(index >= 0){
+    notifications[index] = Object.assign({}, notifications[index], normalized, { read: notifications[index].read && normalized.read !== false });
+  }else{
+    notifications.unshift(normalized);
+    if(notifications.length > 80) notifications.length = 80;
+    if(!note.silent && canSeeWebsiteNotification(normalized)) showToast('🔔 ' + normalized.title, false);
+  }
+  saveWebsiteNotifications();
+  updateWebsiteNotificationBadge();
+}
+function updateWebsiteNotificationBadge(){
+  const badge = document.getElementById('notificationBellBadge');
+  const bell = document.getElementById('notificationBell');
+  if(!badge || !bell) return;
+  if(!canUseWebsiteNotifications()){
+    bell.style.display = 'none';
+    badge.style.display = 'none';
+    return;
+  }
+  bell.style.display = '';
+  const unread = (state.websiteNotifications || []).filter(function(note){ return !note.read && canSeeWebsiteNotification(note); }).length;
+  badge.textContent = unread > 99 ? '99+' : String(unread);
+  badge.style.display = unread ? 'inline-flex' : 'none';
+  bell.setAttribute('aria-label', unread ? unread + ' unread notifications' : 'Open notifications');
+}
+function formatWebsiteNotificationTime(ts){
+  try{ return new Date(ts).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; }
+}
+function openWebsiteNotificationCenter(){
+  if(!canUseWebsiteNotifications()) return;
+  const visible = (state.websiteNotifications || []).filter(canSeeWebsiteNotification).sort(function(a,b){ return Number(b.ts||0)-Number(a.ts||0); });
+  visible.forEach(function(note){ note.read = true; });
+  saveWebsiteNotifications(); updateWebsiteNotificationBadge();
+  const list = visible.length ? visible.map(function(note){
+    const action = note.tab ? ' onclick="openWebsiteNotificationItem(\'' + esc(note.id) + '\')"' : '';
+    return '<div class="notification-item' + (note.read ? '' : ' unread') + '"' + action + '>' +
+      '<div class="notification-item-title">' + esc(note.title) + '</div>' +
+      '<div class="notification-item-body">' + esc(note.body) + '</div>' +
+      '<div class="notification-item-time">' + esc(formatWebsiteNotificationTime(note.ts)) + '</div></div>';
+  }).join('') : '<div style="padding:20px 4px;color:var(--muted);font-size:13px;text-align:center;">No notifications yet. Price, stock, import, and app-update events will appear here automatically.</div>';
+  openActionModal('<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px;"><div style="font-weight:800;font-size:18px;">Notifications</div><button class="btn btn-ghost btn-sm" onclick="clearWebsiteNotifications()">Clear all</button></div><div class="notification-list">' + list + '</div>');
+}
+function openWebsiteNotificationItem(id){
+  const note = (state.websiteNotifications || []).find(function(item){ return item.id === id; });
+  closeActionModal();
+  if(note && note.tab) setTab(note.tab);
+}
+function clearWebsiteNotifications(){
+  state.websiteNotifications = [];
+  saveWebsiteNotifications(); updateWebsiteNotificationBadge(); closeActionModal(); showToast('Notifications cleared');
 }
 function closeAllTransientOverlays(){
   ['barcodeModal','a7PreviewModal','themeModal','actionModal'].forEach(function(id){
@@ -6560,7 +6673,7 @@ function setTab(tab, fromBack){
   if(tab === 'aging') refreshAgingMovements();
   state.matchedRow = null; state.multiMatches=null; state.notFoundCode=null; state.manualInput=''; state.duplicateWarning=null;
   state.addProductOpen = false; state.editingStockBarcode = null; state.editingLogId = null;
-  state.editingProductSL = null; state.editProductForm = null;
+  state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
   state.barcodeSuggestions = []; state.showSuggestions = false;
   
   const navIds = ['navScan', 'navBrands', 'navAging', 'navPriceLog', 'navData', 'navLog', 'navSettings'];
@@ -6590,15 +6703,9 @@ function updatePriceLogNotificationBadge(){
   badge.textContent = count > 99 ? '99+' : String(count);
   badge.style.display = count ? 'inline-flex' : 'none';
 }
-function updateAdminExcelSummary(){
-  const el = document.getElementById('adminExcelSummary');
-  if(!el) return;
-  el.style.display = 'none';
-  el.innerHTML = '';
-}
 function updateHeaderSub(){
-  updateAdminExcelSummary();
   updatePriceLogNotificationBadge();
+  updateWebsiteNotificationBadge();
   const sub = document.getElementById('headerSub');
   if(!storageReady){ sub.textContent = "Loading data..."; return; }
   if(state.user && state.user.viewingAs){
@@ -7162,17 +7269,20 @@ function startEditProduct(sl){
   state.editProductDirty = false;
   render();
 }
-function cancelEditProduct(){
-  const close = function(){ state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false; render(); };
-  if(state.editProductDirty){ appConfirm('You have unsaved product edits. Save them before closing?', 'Unsaved Changes').then(async function(save){ if(save) await saveEditProduct(state.editingProductSL); else close(); }); return; }
-  close();
+async function cancelEditProduct(){
+  if(state.editProductDirty && state.editingProductSL !== null){
+    const save = await appConfirm('Save product edits before closing?', 'Unsaved Changes');
+    if(save){ await saveEditProduct(state.editingProductSL); return; }
+  }
+  state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false; render();
 }
 function setEditProductField(field, val){
   if(state.editProductForm){ state.editProductForm[field] = val; state.editProductDirty = true; }
 }
 // Records a stock quantity change so Brands can show a monthly movement ledger and
 // Aging can show recent sale velocity. Reductions of ten or more units in one action
-// are classified as SR/SA (supplier return / stock adjustment), never as sales.
+// are SR/SA (supplier return / stock adjustment), never sales; smaller reductions are
+// sales unless their imported movement marker explicitly identifies an SR/SA action.
 // Sums how many units were logged as "sale" for a barcode in the last N days —
 // replaces the old plain sold/not-sold tick in the Aging report with an actual figure.
 function getRecentSaleQty(barcode, days){
@@ -7183,7 +7293,7 @@ function getRecentSaleQty(barcode, days){
     .reduce((sum, m) => sum + Math.abs(m.delta), 0);
 }
 
-function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTimestamp){
+function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTs){
   oldQty = parseFloat(oldQty); if(isNaN(oldQty)) oldQty = 0;
   newQty = parseFloat(newQty); if(isNaN(newQty)) newQty = 0;
   const delta = newQty - oldQty;
@@ -7200,7 +7310,7 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTimesta
     barcode: barcode,
     delta: delta,
     type: type,
-    ts: Number(movementTimestamp) || Date.now()
+    ts: Number(movementTs) || Date.now()
   });
   if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
 }
@@ -7244,7 +7354,7 @@ async function saveEditProduct(sl){
     }
     // Optimistic: update UI immediately, sync in background
     rebuildIndex();
-    state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
+    state.editingProductSL = null; state.editProductForm = null;
     state.selectedBrand = null;
     updateHeaderSub(); render();
     await saveCustomProducts();
@@ -7291,7 +7401,7 @@ async function saveEditProduct(sl){
     }
     // Optimistic: update UI immediately, sync in background
     rebuildIndex();
-    state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
+    state.editingProductSL = null; state.editProductForm = null;
     state.selectedBrand = null;
     updateHeaderSub(); render();
     await saveCustomProducts();
@@ -7563,6 +7673,7 @@ function login(username, password, remember){
       state.sessionLoginTs = Date.now();
       state.operatorName = 'Asif';
       localStorage.setItem('operator-name', 'Asif');
+      loadWebsiteNotificationsForUser();
       saveLoginSession(remember);
       startSessionHeartbeat();
       addAuditLog('Test Login', 'Asif logged in viewing as ' + targetKey + ' (' + role + ')');
@@ -7588,6 +7699,7 @@ function login(username, password, remember){
       state.operatorName = 'Asif';
       localStorage.setItem('operator-name', 'Asif');
     }
+    loadWebsiteNotificationsForUser();
     saveLoginSession(remember);
     startSessionHeartbeat();
     addAuditLog('Login', 'User ' + realName + ' logged in');
@@ -7751,6 +7863,7 @@ async function checkForUpdates(isAuto){
       const releaseLabel = String(data.releaseTag || ('v' + data.version));
       if(!isCurrentRelease(data) && data.version && latestUrl){
         const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
+        addWebsiteNotification({ id:'update-' + releaseLabel, category:'update', tab:'settings', ts:Number(data.updatedAt || Date.now()), title:'App update available', body:msg, silent:true });
         if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
         if(isAuto && !state._updateNotified){
           state._updateNotified = true;
@@ -8020,9 +8133,8 @@ async function handleImportExcel(fileInput){
 
     let updated = 0, added = 0, skipped = 0, merged = 0, priceCount = 0;
     let latestUpdatedRows = 0, latestUpdatedQtyTotal = 0;
-    const importDay = new Date();
-    const priorClosing = new Date(importDay.getFullYear(), importDay.getMonth(), importDay.getDate() - 1, 23, 59, 59, 999).getTime();
-    const today = new Date(priorClosing).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
+    const today = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
+    const priorDayClosingTs = (()=>{ const cutoff = new Date(); cutoff.setHours(0,0,0,0); return cutoff.getTime() - 1; })();
 
     // Map to detect same product code + same party having multiple barcodes (for auto-merge)
     const importCodePartyMap = new Map();
@@ -8079,7 +8191,7 @@ async function handleImportExcel(fileInput){
         // Barcode already exists: just update stock qty
         if(qty !== null){
           const oldQtyForMovement = stockOverrides.hasOwnProperty(barcode) ? stockOverrides[barcode] : effectiveQty(existing[0]);
-	          recordStockMovement(barcode, oldQtyForMovement, qty, r, priorClosing);
+          recordStockMovement(barcode, oldQtyForMovement, qty, r, priorDayClosingTs);
           stockOverrides[barcode] = qty;
           updated++;
           latestUpdatedRows++;
@@ -8326,7 +8438,7 @@ function renderNow(){
     const remembered = localStorage.getItem('app-remember-me') === '1';
     c.innerHTML = `<div class="auth-screen">
       <div class="auth-glass">
-        <img class="auth-logo" src="fhl-electronics-logo.png" onerror="this.style.display='none';" alt="" />
+        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png" alt="FHL Electronics logo" />
         <h2 class="auth-title">Login</h2>
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
@@ -8401,7 +8513,7 @@ function renderNow(){
 function isPromoterUser(){ return !!(state.user && state.user.role === 'promoter'); }
 function normalizedPartyCode(value){ return String(value || '').trim().toUpperCase(); }
 function currentUserPartyCodes(){ return (state.user && Array.isArray(state.user.partyCodes) ? state.user.partyCodes : []).map(normalizedPartyCode).filter(Boolean); }
-function canViewPartyScopedPriceLog(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(normalizedPartyCode(partyCode)); }
+function canViewParty(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(normalizedPartyCode(partyCode)); }
 
 function getDashboardAnalytics(){
   const rows = getAllRows();
@@ -8410,7 +8522,7 @@ function getDashboardAnalytics(){
   const stockValue = stockRows.reduce((sum,item) => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return sum + (item.qty * unit); }, 0);
   const brands = new Set(stockRows.map(item => String(item.row.Brand || '').trim()).filter(Boolean));
   const sales = {};
-	(state.stockMovements || []).forEach(m => { if(Number(m.delta) < 0 && m.type === 'sale') sales[m.barcode] = (sales[m.barcode] || 0) + Math.abs(Number(m.delta)); });
+  (state.stockMovements || []).forEach(m => { if(Number(m.delta) < 0 && m.type === 'sale') sales[m.barcode] = (sales[m.barcode] || 0) + Math.abs(Number(m.delta)); });
   const topSale = Object.keys(sales).sort((a,b) => sales[b] - sales[a])[0] || '';
   const topRow = topSale ? rows.find(r => String(r.Barcode || r.Product || '') === String(topSale)) : null;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
@@ -8850,8 +8962,8 @@ function openStockMovementModal(barcode, description){
       const dstr = String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getFullYear()).slice(2);
       let label, color;
       if(m.type === 'sale'){ label = 'Sale'; color = '#B3261E'; }
-	      else if(m.type === 'restock'){ label = 'New Stock'; color = '#1B7F3A'; }
-	      else if(m.type === 'sr_sa'){ label = 'SR / SA'; color = '#7A4E00'; }
+      else if(m.type === 'restock'){ label = 'New Stock'; color = '#1B7F3A'; }
+      else if(m.type === 'sr_sa'){ label = 'SR / SA'; color = '#7A4E00'; }
       else { label = 'CR / NS'; color = '#946200'; }
       html += '<tr><td style="border:1px solid #ddd;padding:7px;">' + dstr + '</td><td style="border:1px solid #ddd;padding:7px;text-align:right;font-weight:700;color:' + color + ';">' + (m.delta>0?'+':'') + m.delta + ' pcs</td><td style="border:1px solid #ddd;padding:7px;color:' + color + ';font-weight:600;">' + label + '</td></tr>';
     });
@@ -8867,7 +8979,7 @@ function openA7Preview(id){
   if(!entry) return;
   const rows = entry.rows || [];
   let html = '<div style="font-weight:700;font-size:15px;margin-bottom:2px;color:#111;">' + esc(entry.name) + '</div>';
-  html += '<div style="font-size:11px;color:#666;margin-bottom:10px;">' + rows.length + ' item(s) · ' + new Date(entry.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
+  html += '<div style="font-size:11px;color:#666;margin-bottom:10px;">' + rows.length + ' item(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
   html += '<div style="overflow:auto; max-height:60vh; -webkit-overflow-scrolling:touch; border:1px solid #ccc; border-radius:10px; background:#ffffff;">';
   html += '<table style="width:100%; border-collapse:collapse; font-size:12.5px; color:#111111;">';
   html += '<thead><tr style="background:#e8e8e8;"><th style="border:1px solid #ccc;padding:6px;text-align:left;">Description</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">Price</th></tr></thead><tbody>';
@@ -9201,7 +9313,7 @@ function openA4Preview(id){
   if(!entry) return;
   const rows = entry.rows || [];
   let html = '<div style="font-weight:700;font-size:15px;margin-bottom:2px;color:#111;">' + esc(entry.name) + '</div>';
-  html += '<div style="font-size:11px;color:#666;margin-bottom:10px;">' + rows.length + ' item(s) · ' + entry.pageCount + ' page(s) · ' + new Date(entry.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
+  html += '<div style="font-size:11px;color:#666;margin-bottom:10px;">' + rows.length + ' item(s) · ' + entry.pageCount + ' page(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
   html += '<div style="overflow:auto; max-height:55vh; -webkit-overflow-scrolling:touch; border:1px solid #ccc; border-radius:10px; background:#ffffff;">';
   html += '<table style="width:100%; border-collapse:collapse; font-size:12.5px; color:#111111;">';
   html += '<thead><tr style="background:#e8e8e8;"><th style="border:1px solid #ccc;padding:6px;text-align:left;">Barcode</th><th style="border:1px solid #ccc;padding:6px;text-align:left;">Description</th><th style="border:1px solid #ccc;padding:6px;text-align:right;">Price</th></tr></thead><tbody>';
@@ -9743,7 +9855,7 @@ function renderActiveSessions(){
     const age = Date.now() - Number(s.lastSeen || 0);
     const online = age < 2 * 60 * 1000;
     const label = s.deviceName || s.deviceId || 'Unknown device';
-    const when = s.lastSeen ? new Date(s.lastSeen).toLocaleString() : 'never';
+    const when = s.lastSeen ? displayDateTime(s.lastSeen) : 'never';
     html += '<div class="settings-item"><div class="settings-label"><span style="color:' + (online ? '#35d07f' : 'var(--dim)') + ';">●</span> ' + esc(label) + ' <span style="font-weight:400;color:var(--dim);">· ' + esc(s.username || '-') + ' · ' + esc(s.role || 'staff') + '<br><small>Last seen: ' + esc(when) + '</small></span></div><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="revokeActiveSession(\'' + esc(s.id).replace(/'/g,"\\'") + '\')">Logout</button></div>';
   });
   return html;
@@ -9845,6 +9957,10 @@ function renderSettings(){
   // ---- Preferences ----
   html += '<div class="ios-section-title">Preferences</div>';
   html += '<div class="ios-group">';
+  if(canUseWebsiteNotifications()){
+    const websiteUnreadCount = (state.websiteNotifications || []).filter(function(note){ return !note.read && canSeeWebsiteNotification(note); }).length;
+    html += iosRow('🔔', 'linear-gradient(#FF9F0A,#FF453A)', 'Notifications' + (websiteUnreadCount ? ' (' + websiteUnreadCount + ')' : ''), '<button class="btn btn-ghost btn-sm" onclick="openWebsiteNotificationCenter()">View</button>', {chevron:true});
+  }
   html += iosRow('🔊', 'linear-gradient(#FF9500,#D97E00)', 'Beep on Scan', iosSwitchHtml(state.beepOnScan, 'state.beepOnScan = !state.beepOnScan; render();'));
   html += iosRow('📳', 'linear-gradient(#FF9500,#D97E00)', 'Vibrate on Scan', iosSwitchHtml(state.vibrateOnScan, 'state.vibrateOnScan = !state.vibrateOnScan; render();'));
   html += iosRow('🔤', 'linear-gradient(#8E8E93,#636366)', 'Display Font', '<button class="btn btn-ghost btn-sm" onclick="state.largeFont = !state.largeFont; render();">' + (state.largeFont ? 'Large' : 'Normal') + '</button>');
@@ -9859,12 +9975,6 @@ function renderSettings(){
   html += '</div>';
 
   if(state.user.role === 'admin'){
-    const latest = state.latestExcelUpdate;
-    const latestDate = latest && latest.ts ? new Date(latest.ts).toLocaleString('en-GB', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'}) : 'No Excel update yet';
-    const latestQty = latest && latest.updatedQtyTotal !== undefined ? String(latest.updatedQtyTotal) : '—';
-    html += '<div class="ios-section-title">Data Status</div><div class="ios-group">';
-    html += iosRow('📊', 'linear-gradient(#34C759,#2AA84A)', 'Last Excel Update', '<div style="text-align:right;font-size:12px;line-height:1.35;"><strong>' + esc(latestDate) + '</strong><br><span style="color:var(--muted);">Stock qty: ' + esc(latestQty) + '</span></div>');
-    html += '</div>';
     if(state.user.username === 'Asif'){
       html += '<div class="ios-section-title">Admin Control</div>';
       html += '<div class="ios-group">';
@@ -9902,19 +10012,6 @@ function renderSettings(){
   html += '<button class="btn btn-ghost" style="width:100%;margin-top:14px;color:var(--red);border:1px solid var(--red);border-radius:14px;padding:13px;" onclick="logout()">Logout</button>';
   html += '</div>';
 
-  // ---- Update Center ----
-  html += '<div style="padding:0 16px;">';
-  html += '<div class="ios-section-title">App Update Center</div>';
-  html += '<div class="ios-group">';
-  html += '<div class="ios-row" style="flex-direction:column;align-items:flex-start;gap:10px;">';
-  html += '<div style="display:flex;justify-content:space-between;width:100%;align-items:center;">';
-  html += '<div style="display:flex;align-items:center;gap:12px;"><div class="ios-icon" style="background:linear-gradient(#0A84FF,#0060D6);">⬆️</div><div class="ios-row-label">Version: ' + esc(APP_VERSION) + '</div></div>';
-  html += '<button class="btn btn-accent btn-sm" onclick="checkForUpdates()">Check Online</button>';
-  html += '</div>';
-  html += '<div id="updateStatus" style="font-size:12px;color:var(--muted);padding-left:41px;">Checking online for latest fixes...</div>';
-  html += '</div>';
-  html += '</div>';
-  html += '</div>';
   return html;
 }
 
@@ -10151,10 +10248,10 @@ function renderData(){
       html += '<div class="empty" style="margin-bottom:12px;">No PDFs imported yet.</div>';
     }else{
       html += '<div style="display:grid;gap:8px;margin-bottom:14px;">';
-	      pdfImports.slice(0,10).forEach(function(record){
-        const importedAt = Number(record.ts || 0) ? new Date(Number(record.ts)).toLocaleString() : 'Recently imported';
-	        const safeId = esc(record.id).replace(/'/g,"\\'");
-	        html += '<div class="card" style="width:100%;margin:0;padding:12px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📄</span><div style="min-width:0;flex:1;"><div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(record.name) + '</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">' + esc(String(record.importedBy || 'Staff/Admin')) + ' · ' + esc(importedAt) + '</div></div></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;"><button type="button" class="btn btn-ghost btn-sm" onclick="openImportedPdf(\'' + safeId + '\')">Open / Share</button><button type="button" class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteImportedPdf(\'' + safeId + '\')">🗑 Delete</button></div></div>';
+      pdfImports.slice(0,10).forEach(function(record){
+        const importedAt = Number(record.ts || 0) ? displayDateTime(Number(record.ts)) : 'Recently imported';
+        const safeId = esc(record.id).replace(/'/g,"\\'");
+        html += '<div class="card" style="width:100%;margin:0;padding:12px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:21px;">📄</span><div style="min-width:0;flex:1;"><div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(record.name) + '</div><div style="font-size:11px;color:var(--muted);margin-top:3px;">' + esc(String(record.importedBy || 'Staff/Admin')) + ' · ' + esc(importedAt) + '</div></div></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;"><button type="button" class="btn btn-ghost btn-sm" onclick="openImportedPdf(\'' + safeId + '\')">Open / Share</button><button type="button" class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteImportedPdf(\'' + safeId + '\')">🗑 Delete</button></div></div>';
       });
       html += '</div>';
     }
@@ -10167,68 +10264,13 @@ function renderData(){
           html += '<div onclick="openReportWorkspace(' + idx + ')" class="report-header" style="padding:14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
           html += '<div><div style="font-weight:700;">' + esc(report.name) + '</div>';
           html += '<div style="font-size:11px; color:var(--muted);">' + Number(report.rowCount || (report.data || []).length || 0) + ' rows · ' + report.date + '</div></div>';
-          html += '<span>Open ›</span>';
+          html += '<span style="font-size:12px;color:var(--accent);font-weight:800;">OPEN ›</span>';
           html += '</div>';
           html += '</div>';
       });
   }
   html += '</div>';
   return html;
-}
-
-async function openReportWorkspace(idx){
-  const report = state.reports && state.reports[idx];
-  if(!report) return;
-  if((!Array.isArray(report.data) || !report.data.length) && Number(report.rowCount || 0) > 0){
-    showToast('Loading Excel report…');
-    try{
-      const loaded = await loadReportRowsFromCloud(report);
-      if(!loaded){ showToast('This report is not available yet. Check internet and try again.', true); return; }
-    }catch(e){ showToast('Could not load this report. Check internet and try again.', true); return; }
-  }
-  state.reportWorkspaceIndex = idx;
-  state.reportDirty = false;
-  const modal = document.getElementById('actionModal');
-  const box = modal && modal.querySelector('.modal-box');
-  if(box){ box.dataset.reportWorkspace = '1'; box.style.width='calc(100vw - 18px)'; box.style.maxWidth='none'; box.style.height='calc(100dvh - 18px)'; box.style.maxHeight='none'; box.style.margin='9px'; box.style.overflow='hidden'; }
-  openActionModal(renderReportWorkspace(idx));
-}
-function renderReportWorkspace(idx){
-  const report = state.reports && state.reports[idx];
-  if(!report) return '';
-  return '<div style="display:flex;flex-direction:column;height:calc(100dvh - 36px);min-height:0;">' +
-    '<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">Full Excel workspace · filter, edit, add, remove and save</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div>' +
-    '<div class="report-toolbar" style="margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save changes</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">Delete report</button></div>' +
-    '<input type="text" id="reportSearchInput_' + idx + '" placeholder="Search barcode, article, description…" value="' + esc(state.reportSearch[idx]||'') + '" oninput="updateReportSearch(' + idx + ', this.value)" style="width:100%;padding:11px;border:1px solid var(--border2);border-radius:9px;background:var(--card);color:var(--text);box-sizing:border-box;margin-bottom:10px;" />' +
-    '<div id="reportTableWrap_' + idx + '" style="min-height:0;flex:1;overflow:hidden;">' + renderReportExcelTable(idx) + '</div></div>';
-}
-function refreshReportWorkspace(){
-  const idx = state.reportWorkspaceIndex;
-  const target = document.getElementById('actionModalContent');
-  if(idx !== null && idx !== undefined && target) target.innerHTML = renderReportWorkspace(idx);
-}
-async function saveReportWorkspace(){
-  const idx = state.reportWorkspaceIndex;
-  if(idx === null || idx === undefined || !state.reports[idx]) return;
-  state.editingReportRow = null;
-  state.reports[idx].rowCount = Array.isArray(state.reports[idx].data) ? state.reports[idx].data.length : 0;
-  state.reports[idx].updatedAt = Date.now();
-  state.reportDirty = false;
-  localStorage.setItem('app-reports', JSON.stringify(state.reports));
-  try{ await saveReportRowsToCloud(state.reports[idx]); await pushToCloud(true, true); showToast('✓ Excel report saved and synced'); }
-  catch(e){ showToast('Excel saved locally; cloud sync will retry', true); }
-  refreshReportWorkspace();
-}
-function closeReportWorkspace(){
-  const close = function(){
-    state.reportWorkspaceIndex = null; state.editingReportRow = null; state.reportDirty = false;
-    const modal = document.getElementById('actionModal');
-    const box = modal && modal.querySelector('.modal-box');
-    if(box && box.dataset.reportWorkspace){ box.removeAttribute('data-report-workspace'); box.style.width=''; box.style.maxWidth=''; box.style.height=''; box.style.maxHeight=''; box.style.margin=''; box.style.overflow=''; }
-    closeActionModal();
-  };
-  if(state.reportDirty){ appConfirm('You have unsaved Excel edits. Save them before closing?', 'Unsaved Changes').then(async function(save){ if(save) await saveReportWorkspace(); close(); }); return; }
-  close();
 }
 
 async function toggleReport(idx) {
@@ -10245,6 +10287,57 @@ async function toggleReport(idx) {
       state.reportLoadingIndex = null;
     }
     render();
+}
+
+async function openReportWorkspace(idx){
+  const report = state.reports && state.reports[idx];
+  if(!report) return;
+  if((!Array.isArray(report.data) || !report.data.length) && Number(report.rowCount || 0) > 0){
+    showToast('Loading Excel report…');
+    try{ await loadReportRowsFromCloud(report); }catch(e){ showToast('Could not load this report. Check internet and try again.', true); return; }
+  }
+  state.reportWorkspaceIndex = idx;
+  state.reportWorkspaceOriginal = JSON.parse(JSON.stringify(report.data || []));
+  state.reportDirty = false;
+  state.editingReportRow = null;
+  const modal = document.getElementById('reportWorkspaceModal');
+  if(modal){ modal.classList.add('show'); renderReportWorkspace(); }
+}
+function renderReportWorkspace(){
+  const idx = state.reportWorkspaceIndex;
+  const report = state.reports && state.reports[idx];
+  const content = document.getElementById('reportWorkspaceContent');
+  if(!content || !report) return;
+  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Search, filter and edit before saving</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><input type="text" id="reportSearchInput_' + idx + '" placeholder="Search barcode, article, description…" value="' + esc(state.reportSearch[idx]||'') + '" oninput="updateReportSearch(' + idx + ', this.value)" style="width:100%;box-sizing:border-box;padding:10px;margin-bottom:10px;border:1px solid var(--border2);border-radius:8px;background:var(--card);color:var(--text);" /><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
+}
+async function closeReportWorkspace(){
+  if(state.reportDirty){
+    const save = await appConfirm('Save Excel edits before closing?', 'Unsaved Changes');
+    if(save) await saveReportWorkspace();
+    else {
+      const report = state.reports && state.reports[state.reportWorkspaceIndex];
+      if(report) report.data = JSON.parse(JSON.stringify(state.reportWorkspaceOriginal || []));
+      state.reportDirty = false;
+    }
+  }
+  const modal = document.getElementById('reportWorkspaceModal');
+  if(modal) modal.classList.remove('show');
+  state.reportWorkspaceIndex = null; state.reportWorkspaceOriginal = null; state.editingReportRow = null; state.reportFilters = {}; state.reportSearch = '';
+  render();
+}
+async function saveReportWorkspace(){
+  const idx = state.reportWorkspaceIndex;
+  const report = state.reports && state.reports[idx];
+  if(!report) return;
+  report.rowCount = Array.isArray(report.data) ? report.data.length : 0;
+  report.updatedAt = Date.now();
+  localStorage.setItem('app-reports', JSON.stringify(state.reports));
+  await saveReportRowsToCloud(report);
+  await pushToCloud(true, true);
+  state.reportDirty = false;
+  state.reportWorkspaceOriginal = JSON.parse(JSON.stringify(report.data || []));
+  showToast('✓ Excel changes saved and synced');
+  renderReportWorkspace();
 }
 
 async function deleteReport(idx) {
@@ -10268,10 +10361,11 @@ function updateReportRowField(reportIdx, rowIdx, field, val) {
     state.reports[reportIdx].data[rowIdx][field] = val;
     state.reportDirty = true;
 }
+
 function finishEditReportRow(reportIdx) {
     state.editingReportRow = null;
     state.reportDirty = true;
-    refreshReportWorkspace();
+    if(state.reportWorkspaceIndex === reportIdx) renderReportWorkspace(); else refreshReportTable(reportIdx);
 }
 
 function updateReportFilter(idx, field, val) {
@@ -10302,7 +10396,7 @@ function addReportRow(reportIdx){
   report.data.push(row);
   state.editingReportRow = { reportIdx: reportIdx, rowIdx: report.data.length - 1 };
   state.reportDirty = true;
-  refreshReportWorkspace();
+  if(state.reportWorkspaceIndex === reportIdx) renderReportWorkspace(); else render();
 }
 async function removeReportRow(reportIdx,rowIdx){
   const report = state.reports[reportIdx];
@@ -10311,7 +10405,7 @@ async function removeReportRow(reportIdx,rowIdx){
   report.data.splice(rowIdx,1);
   state.editingReportRow = null;
   state.reportDirty = true;
-  refreshReportWorkspace();
+  if(state.reportWorkspaceIndex === reportIdx) renderReportWorkspace(); else render();
 }
 function renderReportExcelTable(idx) {
     const report = state.reports[idx];
@@ -10439,7 +10533,7 @@ async function handleImportData(fileInput){
         
         if(!state.reports) state.reports = [];
         const existingIdx = state.reports.findIndex(r => r.name === file.name);
-        const reportObj = { id:'report_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, data:rows, rowCount:rows.length, date:new Date().toLocaleString(), updatedAt:Date.now() };
+        const reportObj = { id:'report_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, data:rows, rowCount:rows.length, date:displayDateTime(Date.now()), updatedAt:Date.now() };
         if(existingIdx >= 0) {
             reportObj.id = state.reports[existingIdx].id || reportCloudId(state.reports[existingIdx]);
             state.reports[existingIdx] = reportObj;
@@ -10450,7 +10544,6 @@ async function handleImportData(fileInput){
         }
         localStorage.setItem('app-reports', JSON.stringify(state.reports)); importedLocally = true; render();
         
-        // Keep row data in bounded report chunks; only compact metadata enters the report index.
         await saveReportRowsToCloud(reportObj);
         await pushToCloud(true, true); render();
         showToast('✓ Excel imported and synced');
@@ -10501,7 +10594,7 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
     const expanded = state.expandedPriceParty === party;
     const displayParty = party === '__unassigned__' ? 'Unassigned party' : party;
     const safeParty = esc(party).replace(/'/g, "\\'");
-    const latest = items[0] && items[0].ts ? new Date(items[0].ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) : '';
+    const latest = items[0] && items[0].ts ? displayDateTime(items[0].ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) : '';
     html += '<div class="card price-party-folder" style="padding:0;margin-bottom:10px;overflow:hidden;">';
     html += '<div role="button" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" style="padding:12px;cursor:pointer;" onclick="togglePriceParty(\'' + safeParty + '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();togglePriceParty(\'' + safeParty + '\')}">';
     html += '<div style="display:flex;align-items:center;gap:10px;">';
@@ -10519,7 +10612,7 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
         html += '<div style="font-size:11px;color:var(--muted);font-family:monospace;">' + esc(item.barcode || item.code || '-') + '</div>';
         html += '<div style="font-size:12.5px;margin-top:3px;"><span style="color:var(--red);text-decoration:line-through;">' + esc(item.oldPrice || '-') + '</span> &rarr; <span style="color:var(--green);font-weight:700;">' + esc(item.newPrice || '-') + '</span></div></div>';
         html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotification(\'' + safeId + '\')">🗑</button></div>';
-        html += '<div style="font-size:11px;color:var(--muted);display:grid;gap:3px;"><div><b>Updated by:</b> ' + esc(item.updatedBy || item.username || item.user || '-') + '</div><div><b>Article code:</b> ' + esc(item.articleCode || item.product || item.code || '-') + '</div><div><b>Updated:</b> ' + (item.ts ? new Date(item.ts).toLocaleString() : '-') + '</div></div>';
+        html += '<div style="font-size:11px;color:var(--muted);display:grid;gap:3px;"><div><b>Updated by:</b> ' + esc(item.updatedBy || item.username || item.user || '-') + '</div><div><b>Article code:</b> ' + esc(item.articleCode || item.product || item.code || '-') + '</div><div><b>Updated:</b> ' + (item.ts ? displayDateTime(item.ts) : '-') + '</div></div>';
         html += '</div>';
       });
       html += '</div>';
@@ -10532,7 +10625,7 @@ function getPricePartyOptions(notifications){
   return Array.from(new Set((notifications || []).map(n => String(n.party || n.partyName || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
 }
 function renderPriceLog(){
-  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewPartyScopedPriceLog(notification.party || notification.partyName); });
+  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewParty(notification.party || notification.partyName); });
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
   const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(function(notification){ return normalizedPartyCode(notification.party || notification.partyName) === normalizedPartyCode(selectedParty); }) : allVisiblePriceNotifs;
@@ -10555,7 +10648,7 @@ function renderLog(){
       html += '<div class="card" style="padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">';
       html += '<div style="min-width:0;cursor:pointer;" onclick="openA7Preview(\'' + entry.id + '\')">';
       html += '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div>';
-      html += '<div style="font-size:11px;color:var(--muted);">' + entry.filledCount + ' item(s) · ' + new Date(entry.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
+      html += '<div style="font-size:11px;color:var(--muted);">' + entry.filledCount + ' item(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
       html += '</div>';
       html += '<div style="display:flex;gap:6px;flex-shrink:0;">';
       html += '<button class="btn btn-ghost btn-sm" onclick="downloadA7Excel(\'' + entry.id + '\')" title="Download / Share">⬇ Share</button>';
@@ -10572,7 +10665,7 @@ function renderLog(){
       html += '<div class="card" style="padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">';
       html += '<div style="min-width:0;cursor:pointer;" onclick="openA4Preview(\'' + entry.id + '\')">';
       html += '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div>';
-      html += '<div style="font-size:11px;color:var(--muted);">' + entry.pageCount + ' page(s) · ' + new Date(entry.ts).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
+      html += '<div style="font-size:11px;color:var(--muted);">' + entry.pageCount + ' page(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
       html += '</div>';
       html += '<div style="display:flex;gap:6px;flex-shrink:0;">';
       html += '<button class="btn btn-ghost btn-sm" onclick="downloadA4Pdf(\'' + entry.id + '\')" title="Download / Share">⬇ Share</button>';
@@ -10582,10 +10675,10 @@ function renderLog(){
     });
   }
 
-	const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewPartyScopedPriceLog(notification.party || notification.partyName); });
+  const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewParty(notification.party || notification.partyName); });
   const partyOptions = getPricePartyOptions(allVisiblePriceNotifs);
   const selectedParty = state.pricePartyFilter || '';
-	const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(function(notification){ return normalizedPartyCode(notification.party || notification.partyName) === normalizedPartyCode(selectedParty); }) : allVisiblePriceNotifs;
+  const myPriceNotifs = selectedParty ? allVisiblePriceNotifs.filter(function(notification){ return normalizedPartyCode(notification.party || notification.partyName) === normalizedPartyCode(selectedParty); }) : allVisiblePriceNotifs;
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
@@ -11102,6 +11195,7 @@ try{
 // ---------- Init ----------
 (async function init(){
   restoreSavedSession();
+  loadWebsiteNotificationsForUser();
   state.reports = JSON.parse(localStorage.getItem('app-reports') || '[]');
   state.openReportIndex = null;
   state.openAgingParty = null;
@@ -11119,10 +11213,7 @@ try{
   initFirebase();
   render();
   await loadStorage();
-  // Auto-check for updates on launch
-  if(state.user){
-    setTimeout(() => checkForUpdates(true), 3000);
-  }
+  // Website intentionally has no app-update UI; native Android retains its own update flow.
 })();
 </script>
 </body>
