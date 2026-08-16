@@ -638,7 +638,6 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 	      <img src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png" class="app-logo-icon" alt="FHL Electronics logo">
 	      <span id="tabTitle">📷 Barcode Scan</span>
 	    </div>
-	    <button id="nativeUpdateButton" class="notification-bell" type="button" style="display:none;width:auto;padding:0 8px;font-size:11px;gap:4px;" aria-label="Check for app updates" title="Check for app updates">⬆️ <span>Update</span></button>
 	    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications">🔔<span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
 	  </div>
 	    <div class="header-sub" id="headerSub">Loading data...</div>
@@ -5895,7 +5894,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '71';
+const APP_BUILD = '72';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -6602,25 +6601,29 @@ function updateWebsiteNotificationBadge(){
 	  badge.textContent = unread > 99 ? '99+' : String(unread);
 	  badge.style.display = unread ? 'inline-flex' : 'none';
 	  bell.setAttribute('aria-label', unread ? unread + ' unread notifications' : 'Open notifications');
-	  refreshNativeUpdateButton();
 	}
-	function refreshNativeUpdateButton(){
-	  const button = document.getElementById('nativeUpdateButton');
-	  if(!button) return;
-	  const supportsNativeUpdate = !!((window.UpdateBridge && typeof window.UpdateBridge.openUpdate === 'function') || (window.AndroidNative && typeof window.AndroidNative.installApk === 'function'));
-	  if(!supportsNativeUpdate || !state.user){ button.style.display = 'none'; return; }
-	  const available = state.availableUpdate;
-	  button.style.display = 'inline-flex';
-	  button.innerHTML = available ? '⬆️ <span>Update</span>' : '⬆️ <span>Check</span>';
-	  button.title = available ? ('Install ' + (available.releaseTag || available.version || 'available update')) : 'Check for app updates';
-	  button.setAttribute('aria-label', button.title);
-	  button.onclick = function(){
-	    if(state.availableUpdate && state.availableUpdate.url) downloadAndInstallUpdate(state.availableUpdate.url);
-	    else checkForUpdates(false);
-	  };
-	  if(!state._nativeUpdateCheckStarted){
-	    state._nativeUpdateCheckStarted = true;
-	    setTimeout(function(){ checkForUpdates(true); }, 700);
+	function canUseNativeUpdateFlow(){
+	  return !!((window.UpdateBridge && typeof window.UpdateBridge.downloadUpdate === 'function' && typeof window.UpdateBridge.installDownloadedUpdate === 'function') || (window.AndroidNative && typeof window.AndroidNative.installApk === 'function'));
+	}
+	function downloadAvailableUpdate(){
+	  const update = state.availableUpdate;
+	  if(!update || !update.url){ showToast('Check online first to find the latest update.', true); return; }
+	  state.updateInstallReady = true;
+	  const status = document.getElementById('updateStatus');
+	  if(status) status.innerText = 'Downloading ' + (update.releaseTag || update.version || 'update') + '... When it finishes, tap Install.';
+	  if(window.UpdateBridge && typeof window.UpdateBridge.downloadUpdate === 'function'){
+	    window.UpdateBridge.downloadUpdate(String(update.url));
+	  } else {
+	    downloadAndInstallUpdate(update.url);
+	  }
+	  render();
+	}
+	function installAvailableUpdate(){
+	  if(!state.updateInstallReady){ showToast('Download the update first.', true); return; }
+	  if(window.UpdateBridge && typeof window.UpdateBridge.installDownloadedUpdate === 'function'){
+	    window.UpdateBridge.installDownloadedUpdate();
+	  } else if(state.availableUpdate && state.availableUpdate.url){
+	    downloadAndInstallUpdate(state.availableUpdate.url);
 	  }
 	}
 	function formatWebsiteNotificationTime(ts){
@@ -7884,7 +7887,8 @@ async function checkForUpdates(isAuto){
 	      const releaseLabel = String(data.releaseTag || ('v' + data.version));
 	      if(!isCurrentRelease(data) && data.version && latestUrl){
 	        state.availableUpdate = { url: latestUrl, version: data.version, releaseTag: releaseLabel };
-	        refreshNativeUpdateButton();
+	        state.updateInstallReady = false;
+	        if(state.tab === 'settings') render();
 	        const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
         addWebsiteNotification({ id:'update-' + releaseLabel, category:'update', tab:'settings', ts:Number(data.updatedAt || Date.now()), title:'App update available', body:msg, silent:true });
         if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
@@ -7894,8 +7898,9 @@ async function checkForUpdates(isAuto){
 	        }
 	      } else {
 	        state.availableUpdate = null;
-	        refreshNativeUpdateButton();
-	        if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
+	        state.updateInstallReady = false;
+	        if(state.tab === 'settings') render();
+        if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
       }
     } else {
       if(status) status.innerText = "No update information found.";
@@ -10047,11 +10052,25 @@ function renderSettings(){
     html += '<div class="ios-group">';
     let syncOptions = '<option value="realtime"' + (state.syncInterval==='realtime'?' selected':'') + '>Real-time</option>' +
                        '<option value="manual"' + (state.syncInterval==='manual'?' selected':'') + '>Manual Only</option>';
-    html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Sync Interval', '<select class="ios-select" onchange="state.syncInterval = this.value; render();">' + syncOptions + '</select>' + (state.syncInterval === 'manual' ? '<button class="btn btn-accent btn-sm" onclick="pushToCloud(true)">Sync Now</button>' : ''));
-    html += '</div>';
-  }
+	    html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Sync Interval', '<select class="ios-select" onchange="state.syncInterval = this.value; render();">' + syncOptions + '</select>' + (state.syncInterval === 'manual' ? '<button class="btn btn-accent btn-sm" onclick="pushToCloud(true)">Sync Now</button>' : ''));
+	    html += '</div>';
+	  }
 
-  html += '<button class="btn btn-ghost" style="width:100%;margin-top:14px;color:var(--red);border:1px solid var(--red);border-radius:14px;padding:13px;" onclick="logout()">Logout</button>';
+	  if(canUseNativeUpdateFlow()){
+	    const update = state.availableUpdate || null;
+	    const releaseName = update ? (update.releaseTag || ('v' + update.version)) : '';
+	    const updateInfo = update ? ('New update available: ' + releaseName) : ('Current version: v' + APP_VERSION + ' · Tap Check Online to look for an update.');
+	    const downloadDisabled = update ? '' : ' disabled style="opacity:.45;pointer-events:none;"';
+	    const installDisabled = (update && state.updateInstallReady) ? '' : ' disabled style="opacity:.45;pointer-events:none;"';
+	    html += '<div class="ios-section-title">App Update</div>';
+	    html += '<div class="ios-group" style="padding:14px;">';
+	    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div class="ios-icon" style="background:linear-gradient(#0A84FF,#0055C9);">⬆️</div><div><div style="font-weight:800;font-size:14px;">FHL ELECTRONICS Update</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">' + esc(updateInfo) + '</div></div></div>';
+	    html += '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;"><button class="btn btn-ghost btn-sm" onclick="checkForUpdates(false)">1. Check Online</button><button class="btn btn-accent btn-sm"' + downloadDisabled + ' onclick="downloadAvailableUpdate()">2. Download</button><button class="btn btn-accent btn-sm"' + installDisabled + ' onclick="installAvailableUpdate()">3. Install</button></div>';
+	    html += '<div id="updateStatus" style="font-size:11px;color:var(--muted);line-height:1.4;margin-top:10px;">' + (state.updateInstallReady ? 'Download started. When Android shows “Download complete”, tap Install.' : 'Check Online → Download → Install') + '</div>';
+	    html += '</div>';
+	  }
+
+	  html += '<button class="btn btn-ghost" style="width:100%;margin-top:14px;color:var(--red);border:1px solid var(--red);border-radius:14px;padding:13px;" onclick="logout()">Logout</button>';
   html += '</div>';
 
   return html;

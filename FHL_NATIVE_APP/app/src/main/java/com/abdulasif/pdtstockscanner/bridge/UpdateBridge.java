@@ -30,6 +30,7 @@ public class UpdateBridge {
 
     private static final String TAG = "UpdateBridge";
     private final MainActivity activity;
+    private volatile File downloadedApk;
 
     public UpdateBridge(MainActivity activity) {
         this.activity = activity;
@@ -41,10 +42,34 @@ public class UpdateBridge {
      */
     @JavascriptInterface
     public void openUpdate(String urlStr) {
-        Log.i(TAG, "openUpdate called with: " + urlStr);
+        startDownload(String.valueOf(urlStr), true);
+    }
+
+    /** Starts a download without launching the installer after completion. */
+    @JavascriptInterface
+    public void downloadUpdate(String urlStr) {
+        startDownload(String.valueOf(urlStr), false);
+    }
+
+    /** Opens the Android installer for the APK downloaded through downloadUpdate. */
+    @JavascriptInterface
+    public void installDownloadedUpdate() {
+        final File file = downloadedApk;
+        if (file != null && file.exists() && file.length() > 0) {
+            launchInstaller(file);
+        } else {
+            activity.runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    Toast.makeText(activity, "Download the update first.", Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+    }
+
+    private void startDownload(String updateUrl, boolean installWhenComplete) {
+        Log.i(TAG, "Starting update download: " + updateUrl);
 
         Handler handler = new Handler(Looper.getMainLooper());
-        String updateUrl = String.valueOf(urlStr);
 
         DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
         if (dm == null) {
@@ -90,7 +115,7 @@ public class UpdateBridge {
 
             // Register before enqueue so a very fast/local download cannot finish before the receiver exists.
             IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
-            BroadcastReceiverCompat receiver = new BroadcastReceiverCompat(dm, dest);
+            BroadcastReceiverCompat receiver = new BroadcastReceiverCompat(dm, dest, installWhenComplete);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 activity.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
             } else {
@@ -113,12 +138,14 @@ public class UpdateBridge {
     private class BroadcastReceiverCompat extends android.content.BroadcastReceiver {
         private final DownloadManager dm;
         private final File dest;
+        private final boolean installWhenComplete;
         private volatile long expectedId = -1;
         private final AtomicBoolean handled = new AtomicBoolean(false);
 
-        BroadcastReceiverCompat(DownloadManager dm, File dest) {
+        BroadcastReceiverCompat(DownloadManager dm, File dest, boolean installWhenComplete) {
             this.dm = dm;
             this.dest = dest;
+            this.installWhenComplete = installWhenComplete;
         }
 
         void setExpectedId(long expectedId) {
@@ -169,8 +196,13 @@ public class UpdateBridge {
                 cursor.close();
             }
             if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                launchInstaller(dest);
-                Toast.makeText(activity, "Download complete. Opening installer...", Toast.LENGTH_LONG).show();
+                downloadedApk = dest;
+                if (installWhenComplete) {
+                    launchInstaller(dest);
+                    Toast.makeText(activity, "Download complete. Opening installer...", Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(activity, "Download complete. Tap Install in Settings.", Toast.LENGTH_LONG).show();
+                }
             } else {
                 Toast.makeText(activity, "Download failed. Please retry.", Toast.LENGTH_LONG).show();
             }
