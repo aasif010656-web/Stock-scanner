@@ -21,8 +21,7 @@ After activation, a push to `main` that changes the canonical browser bundle, Fi
 
 - `firebase.json` serves only the canonical static web bundle and rewrites client-side routes to `index.html`.
 - The Firebase credentials are referenced only through the encrypted GitHub secret; no credential is committed to the repository.
-- `index.html` and `sw.js` are configured not to be browser-cached by Firebase Hosting so future releases are discovered promptly.
-- The service worker registers only in a browser; it is explicitly skipped when the Android native bridge is present.
+- `index.html` is configured not to be browser-cached by Firebase Hosting so future releases are discovered promptly.
 
 ## Sources
 
