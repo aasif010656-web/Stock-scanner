@@ -5894,7 +5894,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '69';
+const APP_BUILD = '70';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -8132,7 +8132,7 @@ async function handleImportExcel(fileInput){
     if(!rows.length){ showToast("No rows found in that file", true); fileInput.value=''; return; }
 
     let updated = 0, added = 0, skipped = 0, merged = 0, priceCount = 0;
-    let latestUpdatedRows = 0, latestUpdatedQtyTotal = 0;
+    let latestUpdatedRows = 0, latestUpdatedQtyTotal = 0, latestUpdatedValueTotal = 0;
     const today = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase();
     const priorDayClosingTs = (()=>{ const cutoff = new Date(); cutoff.setHours(0,0,0,0); return cutoff.getTime() - 1; })();
 
@@ -8185,6 +8185,11 @@ async function handleImportExcel(fileInput){
 
       const qtyStr = pick(r, ['Stock Qty','Quantity','Qty','stock qty','quantity','qty']);
       const qty = qtyStr !== '' ? (parseFloat(qtyStr)||0) : null;
+      const totalValueText = String(pick(r, ['Stock Value','stock value','Value','value']) || '').replace(/[^0-9.\-]/g, '');
+      const unitValueText = String(pick(r, ['WAC','wac','Rate','rate','Price','price','MRP','mrp']) || '').replace(/[^0-9.\-]/g, '');
+      const totalValue = parseFloat(totalValueText);
+      const unitValue = parseFloat(unitValueText);
+      const latestRowValue = qty === null ? 0 : (Number.isFinite(totalValue) && totalValue !== 0 ? totalValue : ((Number.isFinite(unitValue) ? unitValue : 0) * qty));
 
       const existing = BARCODE_INDEX.get(barcode);
       if(existing && existing.length){
@@ -8196,6 +8201,7 @@ async function handleImportExcel(fileInput){
           updated++;
           latestUpdatedRows++;
           latestUpdatedQtyTotal += qty;
+          latestUpdatedValueTotal += latestRowValue;
         }
       } else {
         // New barcode: check if same product code + party already imported (duplicate barcode scenario)
@@ -8229,7 +8235,7 @@ async function handleImportExcel(fileInput){
           }
           // Also index this barcode to the same product
           BARCODE_INDEX.set(barcode, [autoMergeTarget]);
-          if(qty !== null){ stockOverrides[barcode] = qty; latestUpdatedRows++; latestUpdatedQtyTotal += qty; }
+          if(qty !== null){ stockOverrides[barcode] = qty; latestUpdatedRows++; latestUpdatedQtyTotal += qty; latestUpdatedValueTotal += latestRowValue; }
           merged++;
         } else {
           const newRow = {
@@ -8254,7 +8260,7 @@ async function handleImportExcel(fileInput){
           BARCODE_INDEX.set(barcode, [newRow]);
           if(mergeKey) importCodePartyMap.set(mergeKey, newRow);
           added++;
-          if(qty !== null){ latestUpdatedRows++; latestUpdatedQtyTotal += qty; }
+          if(qty !== null){ latestUpdatedRows++; latestUpdatedQtyTotal += qty; latestUpdatedValueTotal += latestRowValue; }
         }
       }
 
@@ -8268,7 +8274,7 @@ async function handleImportExcel(fileInput){
     }
 
     state.importProgress = { active: false, current: 0, total: 0, label: '' };
-    state.latestExcelUpdate = { ts: Date.now(), fileName: file.name, updatedRows: latestUpdatedRows, updatedQtyTotal: latestUpdatedQtyTotal, uploadedBy: (state.user && state.user.username) || 'Unknown', uploadedRole: (state.user && state.user.role) || 'unknown' };
+    state.latestExcelUpdate = { ts: Date.now(), fileName: file.name, updatedRows: latestUpdatedRows, updatedQtyTotal: latestUpdatedQtyTotal, updatedValueTotal: latestUpdatedValueTotal, uploadedBy: (state.user && state.user.username) || 'Unknown', uploadedRole: (state.user && state.user.role) || 'unknown' };
     try{ localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
 
     await saveStockOverrides();
@@ -8958,8 +8964,7 @@ function openStockMovementModal(barcode, description){
     html += '<table style="width:100%;border-collapse:collapse;font-size:13px;color:#111111;">';
     html += '<thead><tr style="background:#e8e8e8;"><th style="border:1px solid #ccc;padding:7px;text-align:left;">Date</th><th style="border:1px solid #ccc;padding:7px;text-align:right;">Qty</th><th style="border:1px solid #ccc;padding:7px;text-align:left;">Type</th></tr></thead><tbody>';
     moves.forEach(m=>{
-      const d = new Date(m.ts);
-      const dstr = String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getFullYear()).slice(2);
+      const dstr = displayDateTime(m.ts, {day:'2-digit',month:'2-digit',year:'2-digit'});
       let label, color;
       if(m.type === 'sale'){ label = 'Sale'; color = '#B3261E'; }
       else if(m.type === 'restock'){ label = 'New Stock'; color = '#1B7F3A'; }
@@ -9975,6 +9980,18 @@ function renderSettings(){
   html += '</div>';
 
   if(state.user.role === 'admin'){
+    if(state.latestExcelUpdate){
+      const lastExcel = state.latestExcelUpdate;
+      const importer = lastExcel.uploadedBy || 'Unknown';
+      const importedAt = displayDateTime(lastExcel.ts, {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true});
+      const updatedQty = Number(lastExcel.updatedQtyTotal || 0);
+      const updatedValue = Number(lastExcel.updatedValueTotal || 0);
+      html += '<div class="ios-section-title">Last Excel Update</div><div class="ios-group" style="padding:12px 14px;">';
+      html += '<div style="font-weight:800;font-size:14px;margin-bottom:4px;">' + esc(importer) + ' updated Excel</div>';
+      html += '<div style="font-size:11px;color:var(--muted);margin-bottom:9px;">' + esc(lastExcel.fileName || 'Brands Excel') + ' · ' + esc(importedAt) + '</div>';
+      html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;"><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Rows</div><div class="bento-value">' + Number(lastExcel.updatedRows || 0) + '</div></div><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Updated Qty</div><div class="bento-value">' + updatedQty.toLocaleString() + '</div></div><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Updated Value</div><div class="bento-value">' + esc(fmtMoney(updatedValue)) + '</div></div></div>';
+      html += '</div>';
+    }
     if(state.user.username === 'Asif'){
       html += '<div class="ios-section-title">Admin Control</div>';
       html += '<div class="ios-group">';
@@ -10308,7 +10325,7 @@ function renderReportWorkspace(){
   const report = state.reports && state.reports[idx];
   const content = document.getElementById('reportWorkspaceContent');
   if(!content || !report) return;
-  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Search, filter and edit before saving</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><input type="text" id="reportSearchInput_' + idx + '" placeholder="Search barcode, article, description…" value="' + esc(state.reportSearch[idx]||'') + '" oninput="updateReportSearch(' + idx + ', this.value)" style="width:100%;box-sizing:border-box;padding:10px;margin-bottom:10px;border:1px solid var(--border2);border-radius:8px;background:var(--card);color:var(--text);" /><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
+  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Spreadsheet view</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
 }
 async function closeReportWorkspace(){
   if(state.reportDirty){
@@ -10434,14 +10451,16 @@ function renderReportExcelTable(idx) {
         return true;
     });
 
-    let html = '<div class="report-toolbar"><button class="btn btn-accent btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><span style="font-size:11px;color:var(--muted);">Edit cells inline · remove rows with 🗑</span></div>';
-    html += '<div class="report-sheet" style="overflow:auto; max-height:65vh; -webkit-overflow-scrolling:touch;">';
+    let html = '<div class="report-toolbar" style="margin:0 0 8px;"><span style="font-size:11px;color:var(--muted);">Use the fixed first row to filter columns. Tap Edit for inline changes.</span></div>';
+    html += '<div class="report-sheet" style="overflow:auto; max-height:65vh; -webkit-overflow-scrolling:touch; border:1px solid var(--ui-border); border-radius:12px; background:var(--card);">';
     html += '<table style="width:100%; border-collapse:collapse; font-size:12px;">';
 
-    html += '<thead>';
+    html += '<thead><tr class="report-title-row">';
+    headers.forEach(h => html += '<th style="border:1px solid var(--ui-border); padding:8px; font-weight:800; position:sticky; top:0; z-index:6; white-space:nowrap; background:var(--card);">' + esc(h) + '</th>');
+    html += '<th style="border:1px solid var(--ui-border); padding:8px; position:sticky; top:0; z-index:6; background:var(--card);">Actions</th></tr>';
     html += '<tr class="report-filter-row">';
     headers.forEach(h => {
-        html += '<th style="border:1px solid var(--ui-border); padding:4px; position:sticky; top:29px; z-index:4;">';
+        html += '<th style="border:1px solid var(--ui-border); padding:4px; position:sticky; top:35px; z-index:5; background:var(--card);">';
         html += '<select onchange="updateReportFilter(' + idx + ',\'' + h + '\',this.value)" style="width:100%; font-size:10px; border:none; background:transparent; color:var(--text); outline:none;">';
         html += '<option value="">(All)</option>';
         filterOptions[h].forEach(opt => {
@@ -10449,11 +10468,7 @@ function renderReportExcelTable(idx) {
         });
         html += '</select></th>';
     });
-    html += '<th style="border:1px solid #ccc; padding:4px; position:sticky; top:29px; z-index:4; background:#e8e8e8;"></th>';
-    html += '</tr>';
-    html += '<tr class="report-title-row">';
-    headers.forEach(h => html += '<th style="border:1px solid var(--ui-border); padding:8px; font-weight:700; position:sticky; top:0; z-index:5; white-space:nowrap;">' + esc(h) + '</th>');
-    html += '<th style="border:1px solid var(--ui-border); padding:8px; position:sticky; top:0; z-index:5;">Actions</th>';
+    html += '<th style="border:1px solid var(--ui-border); padding:4px; position:sticky; top:35px; z-index:5; background:var(--card);"><button class="btn btn-ghost btn-sm" title="Clear all filters" onclick="state.reportFilters[' + idx + ']={};refreshReportTable(' + idx + ')">Reset</button></th>';
     html += '</tr></thead><tbody>';
 
     if(filteredData.length === 0){
