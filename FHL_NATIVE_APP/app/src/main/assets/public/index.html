@@ -225,7 +225,7 @@ body.large-font .detail-value { font-size: 14px; }
 .header { padding: 16px 16px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; background: rgba(15, 17, 26, 0.62); backdrop-filter: blur(28px) saturate(190%); -webkit-backdrop-filter: blur(28px) saturate(190%); }
   .header-main{display:flex;align-items:center;justify-content:space-between;gap:10px;}
   .header-title{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;min-width:0;}
-  .app-logo-icon{width:28px;height:28px;border-radius:8px;object-fit:contain;background:var(--accent-dim);padding:2px;}
+  .app-logo-icon{width:28px;height:28px;border-radius:8px;object-fit:contain;background:#fff;padding:2px;display:block!important;visibility:visible!important;opacity:1!important;}
   .notification-bell{position:relative;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border2);border-radius:13px;background:var(--panel);color:var(--text);font-size:18px;flex-shrink:0;box-shadow:var(--shadow-btn,0 4px 12px rgba(0,0,0,.2));}
   .notification-bell:active{transform:scale(.96);}
   .notification-bell-badge{position:absolute;right:-4px;top:-4px;min-width:17px;height:17px;padding:0 4px;display:none;align-items:center;justify-content:center;border-radius:99px;background:#FF453A;color:#fff;font-size:10px;font-weight:800;border:2px solid var(--bg);}
@@ -635,7 +635,7 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
   <div class="header" id="appHeader" style="display:none;">
 	  <div class="header-main">
 	    <div class="header-title">
-	      <img src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png" class="app-logo-icon" alt="FHL Electronics logo">
+      <img src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png?v=73" class="app-logo-icon" alt="FHL Electronics logo" onerror="this.onerror=null;this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');">
 	      <span id="tabTitle">📷 Barcode Scan</span>
 	    </div>
 	    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications">🔔<span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
@@ -5369,7 +5369,23 @@ function mergeReportMetadata(source){
     return Object.assign({}, meta, { id: reportCloudId(meta), data: local && Array.isArray(local.data) ? local.data : (Array.isArray(meta.data) ? meta.data : []) });
   });
 }
+function cacheReportRowsLocal(report){
+  try{
+    const cached = JSON.parse(localStorage.getItem('report-rows-cache') || '{}');
+    cached[reportCloudId(report)] = Array.isArray(report && report.data) ? report.data : [];
+    localStorage.setItem('report-rows-cache', JSON.stringify(cached));
+  }catch(e){}
+}
+function restoreReportRowsLocal(report){
+  try{
+    const cached = JSON.parse(localStorage.getItem('report-rows-cache') || '{}');
+    const rows = cached && cached[reportCloudId(report)];
+    if(Array.isArray(rows) && rows.length){ report.data = rows; report.rowCount = rows.length; return true; }
+  }catch(e){}
+  return false;
+}
 async function saveReportRowsToCloud(report){
+  cacheReportRowsLocal(report);
   if(!fbReportRowsRef) return;
   const reportId = reportCloudId(report);
   const rows = Array.isArray(report && report.data) ? report.data : [];
@@ -5389,6 +5405,7 @@ async function loadReportRowsFromCloud(report){
   const chunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return reportDoc.collection('chunks').doc(String(index)).get(); }));
   report.data = chunks.reduce(function(all, chunk){ const rows = chunk.exists && chunk.data() ? chunk.data().rows : []; return all.concat(Array.isArray(rows) ? rows : []); }, []);
   report.rowCount = report.data.length;
+  cacheReportRowsLocal(report);
   try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(e){}
   return true;
 }
@@ -5463,6 +5480,10 @@ async function loadStorage(){
     if(cachedPriceNotifs) state.priceChangeNotifications = JSON.parse(cachedPriceNotifs);
     const cachedMovements = localStorage.getItem('stock-movements-cache');
     if(cachedMovements) state.stockMovements = JSON.parse(cachedMovements);
+    const cachedPdfImports = localStorage.getItem('pdf-imports-cache');
+    if(cachedPdfImports) state.pdfImports = normalizePdfImportCollection(JSON.parse(cachedPdfImports));
+    const cachedReports = localStorage.getItem('app-reports');
+    if(cachedReports){ state.reports = JSON.parse(cachedReports); (state.reports || []).forEach(restoreReportRowsLocal); }
     const cachedExcelUpdate = localStorage.getItem('latest-excel-update-cache');
     if(cachedExcelUpdate) state.latestExcelUpdate = JSON.parse(cachedExcelUpdate);
   } catch(e) { console.error("Cache load failed", e); }
@@ -5894,7 +5915,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '72';
+const APP_BUILD = '74';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -6199,6 +6220,7 @@ installContextMenuGuards();
 // ---------- Shared notifications and PDF import ----------
 function notificationVisibleToCurrentUser(item){
   if(!state.user) return false;
+  if(item.audience === 'admin' && state.user.role !== 'admin') return false;
   if(item.audience === 'staff-admin' && !isStaffOrAdmin()) return false;
   if(item.audience === 'promoters' && state.user.role !== 'promoter') return false;
   if(item.audience === 'staff-promoters' && !isStaffOrAdmin() && state.user.role !== 'promoter') return false;
@@ -7596,8 +7618,13 @@ async function syncActiveSession(){
     if(index >= 0) list[index] = Object.assign({}, list[index], record, {revokedAt: Number(list[index].revokedAt) || 0});
     else list.push(record);
     const trimmed = list.filter(s => s && (!s.revokedAt || Date.now() - Number(s.revokedAt) < 30 * 24 * 60 * 60 * 1000)).slice(-50);
+    const notifications = Array.isArray(cloud.appNotifications) ? cloud.appNotifications.slice() : [];
+    if(index < 0 && record.role !== 'admin' && !notifications.some(n => n && n.id === ('active-' + record.id))){
+      notifications.unshift({id:'active-' + record.id, ts:Date.now(), audience:'admin', title:'User active', message:record.username + ' is active on ' + (record.deviceName || 'a device') + '.'});
+      if(notifications.length > 300) notifications.length = 300;
+    }
     state.activeSessions = trimmed;
-    await fbDocRef.set({activeSessions: trimmed}, {merge:true});
+    await fbDocRef.set({activeSessions: trimmed, appNotifications: notifications}, {merge:true});
   }catch(e){ console.warn('Session sync unavailable', e); }
 }
 function startSessionHeartbeat(){
@@ -8262,6 +8289,7 @@ async function handleImportExcel(fileInput){
           if(!autoMergeTarget._extraBarcodes) autoMergeTarget._extraBarcodes = [];
           if(!autoMergeTarget._extraBarcodes.includes(barcode)){
             autoMergeTarget._extraBarcodes.push(barcode);
+            try{ localStorage.setItem('custom-products-cache', JSON.stringify(customProducts)); localStorage.setItem('extra-barcodes-cache', JSON.stringify(customProducts.map(p=>({SL:p.SL,barcodes:p._extraBarcodes||[]})))); }catch(e){}
           }
           // Also index this barcode to the same product
           BARCODE_INDEX.set(barcode, [autoMergeTarget]);
@@ -8474,7 +8502,7 @@ function renderNow(){
     const remembered = localStorage.getItem('app-remember-me') === '1';
     c.innerHTML = `<div class="auth-screen">
       <div class="auth-glass">
-        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png" alt="FHL Electronics logo" />
+        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663882401738/OfFCkdkKDulObSJt.png?v=73" alt="FHL Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.background='#fff';this.style.padding='12px';" />
         <h2 class="auth-title">Login</h2>
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
@@ -9992,10 +10020,6 @@ function renderSettings(){
   // ---- Preferences ----
   html += '<div class="ios-section-title">Preferences</div>';
   html += '<div class="ios-group">';
-  if(canUseWebsiteNotifications()){
-    const websiteUnreadCount = (state.websiteNotifications || []).filter(function(note){ return !note.read && canSeeWebsiteNotification(note); }).length;
-    html += iosRow('🔔', 'linear-gradient(#FF9F0A,#FF453A)', 'Notifications' + (websiteUnreadCount ? ' (' + websiteUnreadCount + ')' : ''), '<button class="btn btn-ghost btn-sm" onclick="openWebsiteNotificationCenter()">View</button>', {chevron:true});
-  }
   html += iosRow('🔊', 'linear-gradient(#FF9500,#D97E00)', 'Beep on Scan', iosSwitchHtml(state.beepOnScan, 'state.beepOnScan = !state.beepOnScan; render();'));
   html += iosRow('📳', 'linear-gradient(#FF9500,#D97E00)', 'Vibrate on Scan', iosSwitchHtml(state.vibrateOnScan, 'state.vibrateOnScan = !state.vibrateOnScan; render();'));
   html += iosRow('🔤', 'linear-gradient(#8E8E93,#636366)', 'Display Font', '<button class="btn btn-ghost btn-sm" onclick="state.largeFont = !state.largeFont; render();">' + (state.largeFont ? 'Large' : 'Normal') + '</button>');
@@ -10369,7 +10393,7 @@ function renderReportWorkspace(){
   const report = state.reports && state.reports[idx];
   const content = document.getElementById('reportWorkspaceContent');
   if(!content || !report) return;
-  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Spreadsheet view</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
+  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Spreadsheet view</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><label style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--ui-border);border-radius:13px;background:var(--ui-panel);box-shadow:var(--ui-shadow);"><span aria-hidden="true">🔎</span><input type="search" value="' + esc(state.reportSearch[idx] || '') + '" oninput="updateReportSearch(' + idx + ',this.value)" placeholder="Search brands, items, barcodes, or any Excel value…" aria-label="Search imported Excel" style="flex:1;border:0;outline:0;background:transparent;color:var(--text);font-size:14px;min-width:0;"><button class="btn btn-ghost btn-sm" type="button" onclick="updateReportSearch(' + idx + ',\'\');renderReportWorkspace()">Clear</button></label><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
 }
 async function closeReportWorkspace(){
   if(state.reportDirty){
