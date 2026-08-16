@@ -5367,7 +5367,9 @@ function mergeReportMetadata(source){
   const existing = new Map((state.reports || []).map(function(report){ return [reportCloudId(report), report]; }));
   return (Array.isArray(source) ? source : []).map(function(meta){
     const local = existing.get(reportCloudId(meta));
-    return Object.assign({}, meta, { id: reportCloudId(meta), data: local && Array.isArray(local.data) ? local.data : (Array.isArray(meta.data) ? meta.data : []) });
+    const merged = Object.assign({}, meta, { id: reportCloudId(meta), data: local && Array.isArray(local.data) && local.data.length ? local.data : (Array.isArray(meta.data) ? meta.data : []) });
+    if(!merged.data.length) restoreReportRowsLocal(merged);
+    return merged;
   });
 }
 function cacheReportRowsLocal(report){
@@ -5409,6 +5411,26 @@ async function loadReportRowsFromCloud(report){
   cacheReportRowsLocal(report);
   try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(e){}
   return true;
+}
+async function ensureReportRowsAvailable(report){
+  if(!report) return false;
+  if(Array.isArray(report.data) && report.data.length) return true;
+  if(restoreReportRowsLocal(report)){
+    try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(e){}
+    return true;
+  }
+  try{
+    const loaded = await loadReportRowsFromCloud(report);
+    if(loaded && Array.isArray(report.data) && report.data.length) return true;
+  }catch(e){
+    // A network or partial-chunk error must not stop an already cached workbook.
+    if(restoreReportRowsLocal(report)){
+      try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(ignore){}
+      return true;
+    }
+    throw e;
+  }
+  return restoreReportRowsLocal(report);
 }
 async function deleteReportRowsFromCloud(report){
   if(!fbReportRowsRef || !report) return;
@@ -5916,7 +5938,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '75';
+const APP_BUILD = '76';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -10367,7 +10389,7 @@ async function toggleReport(idx) {
       state.reportLoadingIndex = idx;
       render();
       try{
-        const loaded = await loadReportRowsFromCloud(report);
+        const loaded = await ensureReportRowsAvailable(report);
         if(!loaded) showToast('This report data is not available yet. Please import it again on the source device.', true);
       }catch(e){ showToast('Could not load this report. Check internet and try again.', true); }
       state.reportLoadingIndex = null;
@@ -10380,7 +10402,10 @@ async function openReportWorkspace(idx){
   if(!report) return;
   if((!Array.isArray(report.data) || !report.data.length) && Number(report.rowCount || 0) > 0){
     showToast('Loading Excel report…');
-    try{ await loadReportRowsFromCloud(report); }catch(e){ showToast('Could not load this report. Check internet and try again.', true); return; }
+    try{
+      const loaded = await ensureReportRowsAvailable(report);
+      if(!loaded){ showToast('This report data is not available yet. Please import it again on the source device.', true); return; }
+    }catch(e){ showToast('Could not load this report. Check internet and try again.', true); return; }
   }
   state.reportWorkspaceIndex = idx;
   state.reportWorkspaceOriginal = JSON.parse(JSON.stringify(report.data || []));
