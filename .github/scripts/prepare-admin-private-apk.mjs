@@ -32,8 +32,8 @@ manifest = manifest.replace(/android:authorities="[^"]+"/, `android:authorities=
 write('app/src/main/AndroidManifest.xml', manifest);
 
 let strings = read('app/src/main/res/values/strings.xml');
-strings = strings.replace(/(<string name="app_name">)[^<]*(<\/string>)/, '$1FHL ADMIN PRIVATE$2');
-strings = strings.replace(/(<string name="title_activity_main">)[^<]*(<\/string>)/, '$1FHL ADMIN PRIVATE$2');
+strings = strings.replace(/(<string name="app_name">)[^<]*(<\/string>)/, '$1ADMIN$2');
+strings = strings.replace(/(<string name="title_activity_main">)[^<]*(<\/string>)/, '$1ADMIN$2');
 write('app/src/main/res/values/strings.xml', strings);
 
 let activity = read('app/src/main/java/com/abdulasif/pdtstockscanner/MainActivity.java');
