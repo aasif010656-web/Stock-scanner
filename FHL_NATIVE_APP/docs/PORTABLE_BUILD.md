@@ -100,6 +100,8 @@ The published web version uses the same Firestore project and therefore the same
 
 For any product change, edit the canonical bundle first, validate it, and then synchronize it to iOS. Android directly consumes the canonical asset directory. Keep the visible version `6.1`; the app update-comparison identity may remain separately configured as `6.1.1` to preserve the existing release comparison behavior. The Android release workflow injects the CI build number into the shared bundle during release and writes the same release identity to Firestore.
 
+When a user requests an edit through the managed Manus web project, treat it as an approved-change request rather than a separate website source. Apply the change to `app/src/main/assets/public/`, push `main`, and let the Android and Firebase workflows release the common bundle. The Firebase workflow runs `pnpm run verify:firebase-sync` equivalent contract validation before deployment, preventing the live website from being redirected to a non-canonical directory.
+
 Before publishing an Android update, preserve the existing Android signing identity. A release signed with a different certificate cannot update the installed release outside a managed signing-migration process. Before publishing an iOS update, increase the Xcode/CI build number while retaining the registered bundle ID and valid provisioning profile.
 
 ## Repository Security Rules

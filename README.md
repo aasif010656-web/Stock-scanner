@@ -17,6 +17,12 @@ This repository is the **portable source package** for the FHL Electronics stock
 
 The root-level `index.html` is a legacy static export. New feature work and mobile/web parity changes must begin in `FHL_NATIVE_APP/app/src/main/assets/public/` and then be synchronized to the desired target bundle.
 
+## Manus, Android, and Firebase editing rule
+
+For this project, GitHub is the approved shared release source. A user-requested edit made through the managed Manus web project must be applied to the canonical bundle at `FHL_NATIVE_APP/app/src/main/assets/public/`, reviewed, and pushed to `main`. That one bundle is loaded by the Android WebView and deployed by Firebase Hosting, so the signed Android APK and **https://stock-take-9a67a.web.app/** remain aligned.
+
+Direct visual-editor changes inside the managed Manus preview are not themselves a Firebase deployment source and must not be treated as completed product releases. Use that preview for review and testing; put approved application changes in the canonical GitHub bundle. The Firebase workflow verifies this contract before each live deployment.
+
 ## Fast Start
 
 Clone this repository and enter the native project directory. Use a current Node.js 20 LTS installation and Corepack-managed pnpm, then restore the lockfile-defined dependencies.

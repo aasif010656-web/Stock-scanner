@@ -20,6 +20,9 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Verify canonical Android-to-Firebase bundle contract
+        run: node FHL_NATIVE_APP/scripts/check-firebase-sync-contract.mjs
+
       - name: Deploy synchronized website to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:

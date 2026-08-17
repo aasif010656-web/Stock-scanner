@@ -7,6 +7,7 @@
     "sync:android": "echo Android uses app/src/main/assets/public directly; no Capacitor asset copy is required",
     "build:android": "./gradlew :app:assembleRelease",
     "build:android:debug": "./gradlew :app:assembleDebug",
+    "verify:firebase-sync": "node scripts/check-firebase-sync-contract.mjs",
     "sync:web": "node scripts/sync-web-assets.mjs",
     "sync:ios": "pnpm run sync:web && cap sync ios",
     "ios": "cap open ios"

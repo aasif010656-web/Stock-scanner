@@ -17,6 +17,12 @@ The first live deployment completed successfully on 16 August 2026. The website 
 
 After activation, a push to `main` that changes the canonical browser bundle, Firebase Hosting configuration, or Hosting workflow triggers a live Firebase Hosting deployment. The Android release workflow remains separate and continues to build the signed APK from the same bundle.
 
+## Managed Manus editing policy
+
+The managed Manus web project is a preview and verification workspace, while GitHub `main` is the approved release source. When a change is requested through Manus, apply the approved application change to `FHL_NATIVE_APP/app/src/main/assets/public/` in the `Stock-scanner` repository and push it to `main`. Firebase Hosting then deploys that exact bundle to **https://stock-take-9a67a.web.app/**; Android loads the same directory in its WebView.
+
+Do not expect a direct visual-editor save in the managed Manus project to deploy to Firebase automatically: it is a separate managed repository. The deployment workflow now runs `FHL_NATIVE_APP/scripts/check-firebase-sync-contract.mjs` before publishing, and it fails if Firebase is no longer configured to serve the canonical Android bundle.
+
 ## Safety and behaviour
 
 - `firebase.json` serves only the canonical static web bundle and rewrites client-side routes to `index.html`.
