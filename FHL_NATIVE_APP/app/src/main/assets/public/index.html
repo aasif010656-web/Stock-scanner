@@ -564,7 +564,7 @@ body.native-performance-mode #brandResultsWrap,body.native-performance-mode #bra
 .auth-screen::before,.auth-screen::after,.auth-floating-icons,.auth-glow,.auth-wave,.circuit-bg{display:none!important;opacity:0!important;background:none!important;animation:none!important;}
 .auth-screen{background:var(--bg)!important;}
 .auth-screen .auth-glass{position:relative!important;overflow:hidden!important;background:var(--ui-panel)!important;border:1px solid var(--ui-border)!important;box-shadow:var(--ui-shadow)!important;}
-.auth-screen .auth-logo{display:block!important;width:164px!important;height:164px!important;margin:0 auto 18px!important;padding:0!important;box-sizing:border-box!important;object-fit:cover!important;border-radius:28px!important;background:transparent!important;border:0!important;box-shadow:0 12px 28px rgba(0,0,0,.28)!important;clip-path:inset(14% round 22%);transform:scale(1.39);transform-origin:center;}
+.auth-screen .auth-logo{display:block!important;width:164px!important;height:164px!important;margin:0 auto 18px!important;padding:0!important;box-sizing:border-box!important;object-fit:contain!important;border-radius:0!important;background:transparent!important;border:0!important;box-shadow:0 12px 28px rgba(0,0,0,.28)!important;clip-path:none!important;transform:none!important;transform-origin:center;}
 body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!important;}
 .report-sheet{border:1px solid var(--ui-border)!important;border-radius:var(--ui-radius)!important;background:var(--ui-panel)!important;box-shadow:var(--ui-shadow)!important;backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;}
 .report-sheet table{color:var(--text)!important;}
@@ -5955,7 +5955,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '78';
+const APP_BUILD = '79';
 const APP_NAME = 'FHL ELECTRONICS v6.1';
 
 function purgeStaleRuntimeCache(){
@@ -8573,7 +8573,7 @@ function renderNow(){
     const remembered = localStorage.getItem('app-remember-me') === '1';
     c.innerHTML = `<div class="auth-screen">
       <div class="auth-glass">
-        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PCmfiIHQLDeSCfCz.jpg" alt="FHL Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');" />
+        <img class="auth-logo" src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/JiEABTpjqYvooRiA.png" alt="Grand Hyper Electronics logo" onerror="this.onerror=null;this.alt='FHL ELECTRONICS';this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');" />
         <h2 class="auth-title">Login</h2>
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
