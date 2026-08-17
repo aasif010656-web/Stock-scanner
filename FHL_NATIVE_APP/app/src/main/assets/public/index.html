@@ -6606,6 +6606,7 @@ function queuePartyPriceNotification(party, description){
       const title = 'Price update · ' + p;
       const body = 'Your ' + count + ' product' + (count===1?'':'s') + ' prices are changed';
       addWebsiteNotification({ id:'price-local-' + p + '-' + Date.now(), category:'price', party:p, tab:'priceLog', ts:Date.now(), title:title, body:body, silent:true });
+      addAppNotification({ id:'price-shared-' + p + '-' + Date.now(), category:'price', audience:'promoters', party:p, title:title, message:body + (p ? ' · Party ' + p : '') });
       if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification){ try{ window.AndroidNative.postPriceUpdateNotification(title, body); }catch(e){} }
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
         try{
@@ -8650,11 +8651,29 @@ function normalizedPartyCode(value){ return String(value || '').trim().toUpperCa
 function currentUserPartyCodes(){ return (state.user && Array.isArray(state.user.partyCodes) ? state.user.partyCodes : []).map(normalizedPartyCode).filter(Boolean); }
 function canViewParty(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(normalizedPartyCode(partyCode)); }
 
+function stockSummaryRowVisible(row){
+  if(!isPromoterUser()) return true;
+  const party = normalizedPartyCode(row.Party || row.party || row['Party Code'] || row['Party ID'] || row.Supplier || row.supplier || '');
+  const brand = normalizedPartyCode(row.Brand || row.brand || '');
+  const parties = currentUserPartyCodes();
+  const brands = (state.user && Array.isArray(state.user.brandCodes) ? state.user.brandCodes : []).map(normalizedPartyCode).filter(Boolean);
+  if(!parties.length && !brands.length) return false;
+  return (party && parties.includes(party)) || (brand && brands.includes(brand));
+}
+function stockSummaryCategory(row){
+  const explicit = String(row.Category || row.category || row.Department || row.department || row.Division || row.division || row.Group || row.group || '').toLowerCase();
+  const text = (explicit + ' ' + String(row.Description || row.description || '') + ' ' + String(row.Brand || row.brand || '')).toLowerCase();
+  if(/home\s*appliance|home\s*electronics|kitchen|iron|mixer|blender|oven|microwave|kettle|toaster|grill|hair\s*dryer|straightener|shaver|trimmer|vacuum|fan|heater|cooler|refrigerator|washing\s*machine|air\s*conditioner|air\s*fryer/.test(text)) return 'home';
+  return 'electronics';
+}
 function getDashboardAnalytics(){
-  const rows = getAllRows();
+  const rows = getAllRows().filter(stockSummaryRowVisible);
   const stockRows = rows.map(row => ({row, qty:Number(effectiveQty(row)) || 0}));
   const totalQty = stockRows.reduce((sum,item) => sum + item.qty, 0);
-  const stockValue = stockRows.reduce((sum,item) => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return sum + (item.qty * unit); }, 0);
+  const valueFor = item => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return item.qty * unit; };
+  const stockValue = stockRows.reduce((sum,item) => sum + valueFor(item), 0);
+  const homeAppliancesValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'home').reduce((sum,item) => sum + valueFor(item), 0);
+  const electronicsValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'electronics').reduce((sum,item) => sum + valueFor(item), 0);
   const brands = new Set(stockRows.map(item => String(item.row.Brand || '').trim()).filter(Boolean));
   const sales = {};
   (state.stockMovements || []).forEach(m => { if(Number(m.delta) < 0 && m.type === 'sale') sales[m.barcode] = (sales[m.barcode] || 0) + Math.abs(Number(m.delta)); });
@@ -8662,13 +8681,13 @@ function getDashboardAnalytics(){
   const topRow = topSale ? rows.find(r => String(r.Barcode || r.Product || '') === String(topSale)) : null;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const recentPriceChanges = (state.priceChangeNotifications || []).filter(n => Number(n.ts || 0) >= cutoff).length;
-  return {totalQty, stockValue, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
+  return {totalQty, stockValue, homeAppliancesValue, electronicsValue, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
 }
 
 function renderScan(){
   let html = '';
   const analytics = getDashboardAnalytics();
-  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div class="backup-note" style="margin-top:8px;">' + fmtInt(analytics.brandCount) + ' brands synchronized</div></div>';
+  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div class="backup-note" style="margin-top:10px;display:grid;gap:4px;"><div>Home appliances value — <b>' + esc(fmtMoney(analytics.homeAppliancesValue)) + '</b></div><div>Electronics value — <b>' + esc(fmtMoney(analytics.electronicsValue)) + '</b></div></div></div>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
@@ -9013,6 +9032,7 @@ async function finishA7Batch(){
       };
       if(!state.a7Excels) state.a7Excels = [];
       state.a7Excels.unshift(entry);
+      if(senderName && state.user && state.user.role === 'promoter') addAppNotification({category:'a7', audience:'staff-admin', title:'A7 export ready', message:senderName + ' created ' + name + ' with ' + entry.filledCount + ' product' + (entry.filledCount === 1 ? '' : 's') + '.'});
       await pushToCloud(true, true);
       showToast('✓ Sent to Staff as "' + name + '"');
     }
@@ -9422,6 +9442,7 @@ async function finishA4Session(){
     };
     if(!state.a4Excels) state.a4Excels = [];
     state.a4Excels.unshift(entry);
+    if(senderName && state.user && state.user.role === 'promoter') addAppNotification({category:'a4', audience:'staff-admin', title:'A4 labels ready', message:senderName + ' created ' + name + ' with ' + entry.pageCount + ' product' + (entry.pageCount === 1 ? '' : 's') + '.'});
     await pushToCloud(true, true);
     downloadA4Pdf(entry.id);
     showToast('✓ PDF created — ' + items.length + ' page(s)');
@@ -9982,7 +10003,9 @@ function changeUserRole(u){
 
 function renderActiveSessions(){
   if(!isAdminUser()) return '';
-  const sessions = (state.activeSessions || []).filter(s => s && !s.revokedAt).sort((a,b) => Number(b.lastSeen||0) - Number(a.lastSeen||0));
+  const now = Date.now();
+  const onlineWindow = 2 * 60 * 1000;
+  const sessions = (state.activeSessions || []).filter(s => s && !s.revokedAt && (now - Number(s.lastSeen || 0)) < onlineWindow).sort((a,b) => Number(b.lastSeen||0) - Number(a.lastSeen||0));
   let html = '<div class="divider-label">Active Devices</div>';
   if(!sessions.length) return html + '<div class="empty">No active device sessions yet.</div>';
   sessions.forEach(s => {
