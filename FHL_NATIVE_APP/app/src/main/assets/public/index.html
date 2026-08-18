@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>FHL ELECTRONICS v6.1</title>
+<title>User</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#F2B705">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="FHL ELECTRONICS v6.1">
+<meta name="apple-mobile-web-app-title" content="User">
 
 <!-- Native CameraX/MLKit Bridge Used -->
 <script src="js/xlsx.full.min.js"></script>
@@ -5955,8 +5955,8 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '84';
-const APP_NAME = 'FHL ELECTRONICS v6.1';
+const APP_BUILD = '86';
+const APP_NAME = 'User';
 
 function purgeStaleRuntimeCache(){
   try{
@@ -10182,7 +10182,7 @@ function renderSettings(){
 	    const installDisabled = (update && state.updateInstallReady) ? '' : ' disabled style="opacity:.45;pointer-events:none;"';
 	    html += '<div class="ios-section-title">App Update</div>';
 	    html += '<div class="ios-group" style="padding:14px;">';
-	    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div class="ios-icon" style="background:linear-gradient(#0A84FF,#0055C9);">⬆️</div><div><div style="font-weight:800;font-size:14px;">FHL ELECTRONICS Update</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">' + esc(updateInfo) + '</div></div></div>';
+	    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;"><div class="ios-icon" style="background:linear-gradient(#0A84FF,#0055C9);">⬆️</div><div><div style="font-weight:800;font-size:14px;">User Update</div><div style="font-size:11px;color:var(--muted);margin-top:2px;">' + esc(updateInfo) + '</div></div></div>';
 	    html += '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;"><button class="btn btn-ghost btn-sm" onclick="checkForUpdates(false)">1. Check Online</button><button class="btn btn-accent btn-sm"' + downloadDisabled + ' onclick="downloadAvailableUpdate()">2. Download</button><button class="btn btn-accent btn-sm"' + installDisabled + ' onclick="installAvailableUpdate()">3. Install</button></div>';
 	    html += '<div id="updateStatus" style="font-size:11px;color:var(--muted);line-height:1.4;margin-top:10px;">' + (state.updateInstallReady ? 'Download started. When Android shows “Download complete”, tap Install.' : 'Check Online → Download → Install') + '</div>';
 	    html += '</div>';
