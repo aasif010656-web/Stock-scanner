@@ -5319,6 +5319,42 @@ let fbReportDocRef = null;
 let fbReportRowsRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error
+const PRICE_DELETE_TOMBSTONE_STORAGE_KEY = 'price-notifs-deletion-tombstones-v1';
+const PRICE_DELETE_TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const PRICE_DELETE_TOMBSTONE_LIMIT = 800;
+function normalizePriceDeleteTombstones(source){
+  const cutoff = Date.now() - PRICE_DELETE_TOMBSTONE_TTL_MS;
+  const entries = Object.entries(source && typeof source === 'object' ? source : {})
+    .map(function(entry){ return [String(entry[0] || ''), Number(entry[1] || 0)]; })
+    .filter(function(entry){ return entry[0] && Number.isFinite(entry[1]) && entry[1] >= cutoff; })
+    .sort(function(a,b){ return a[1] - b[1]; })
+    .slice(-PRICE_DELETE_TOMBSTONE_LIMIT);
+  return entries.reduce(function(result, entry){ result[entry[0]] = entry[1]; return result; }, {});
+}
+function mergePriceDeleteTombstones(){
+  const merged = {};
+  Array.prototype.slice.call(arguments).forEach(function(source){
+    const normalized = normalizePriceDeleteTombstones(source);
+    Object.keys(normalized).forEach(function(id){ merged[id] = Math.max(Number(merged[id] || 0), Number(normalized[id] || 0)); });
+  });
+  return normalizePriceDeleteTombstones(merged);
+}
+let priceDeleteTombstones = (function(){
+  try{ return normalizePriceDeleteTombstones(JSON.parse(localStorage.getItem(PRICE_DELETE_TOMBSTONE_STORAGE_KEY) || '{}')); }
+  catch(e){ return {}; }
+})();
+function persistPriceDeleteTombstones(){
+  try{ localStorage.setItem(PRICE_DELETE_TOMBSTONE_STORAGE_KEY, JSON.stringify(priceDeleteTombstones)); }catch(e){}
+}
+function filterPriceNotificationsByTombstones(notifications, tombstones){
+  const removed = new Set(Object.keys(normalizePriceDeleteTombstones(tombstones)));
+  return (notifications || []).filter(function(item){ return !removed.has(String(item && item.id || '')); });
+}
+function applyPriceDeleteTombstones(notifications, remoteTombstones){
+  priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, remoteTombstones);
+  persistPriceDeleteTombstones();
+  return filterPriceNotificationsByTombstones(notifications, priceDeleteTombstones);
+}
 let stockCacheLoaded = false;
 let stockCacheUpdatedAt = 0;
 const OFFLINE_STOCK_MAX_AGE_MS = Number.MAX_SAFE_INTEGER;
@@ -5507,7 +5543,7 @@ async function loadStorage(){
     const cachedA4 = localStorage.getItem('a4-excels-cache');
     if(cachedA4) state.a4Excels = JSON.parse(cachedA4);
     const cachedPriceNotifs = localStorage.getItem('price-notifs-cache');
-    if(cachedPriceNotifs) state.priceChangeNotifications = JSON.parse(cachedPriceNotifs);
+    if(cachedPriceNotifs) state.priceChangeNotifications = applyPriceDeleteTombstones(JSON.parse(cachedPriceNotifs));
     const cachedMovements = localStorage.getItem('stock-movements-cache');
     if(cachedMovements) state.stockMovements = JSON.parse(cachedMovements);
     const cachedPdfImports = localStorage.getItem('pdf-imports-cache');
@@ -5558,7 +5594,7 @@ async function loadStorage(){
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
       state.a7Excels = data.a7Excels || state.a7Excels || [];
       state.a4Excels = data.a4Excels || state.a4Excels || [];
-      state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
+      state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
       state.stockMovements = data.stockMovements || state.stockMovements || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
@@ -5593,7 +5629,7 @@ async function loadStorage(){
       */
       rebuildIndex();
     } else {
-      await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
+      await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
     if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
     if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
@@ -5653,7 +5689,7 @@ async function loadStorage(){
       const prevPriceNotifs = state.priceChangeNotifications || [];
       const prevStockAdditionId = String(state._websiteLastStockAdditionId || (state.stockAdditionNotice && state.stockAdditionNotice.id) || '');
       const prevExcelSignature = state._websiteLastExcelSignature || (state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName)) || '';
-      state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
+      state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
       state.stockMovements = data.stockMovements || state.stockMovements || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
@@ -5720,6 +5756,51 @@ async function loadStorage(){
 // Tracks keys that were EXPLICITLY deleted on this device, so a merge-before-push
 // never silently resurrects them just because another device's cloud copy still has them.
 let deletedKeys = { customProducts: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), appNotifications: new Set(), pdfImports: new Set(), auditLog: new Set() };
+function rememberDeletedPriceNotifications(ids, tombstones){
+  priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, tombstones);
+  (ids || []).forEach(function(id){
+    const key = String(id || '');
+    if(!key) return;
+    priceDeleteTombstones[key] = Date.now();
+    deletedKeys.priceChangeNotifications.add(key);
+  });
+  priceDeleteTombstones = normalizePriceDeleteTombstones(priceDeleteTombstones);
+  persistPriceDeleteTombstones();
+}
+async function deletePriceNotificationsFromCloud(ids){
+  const uniqueIds = Array.from(new Set((ids || []).map(function(id){ return String(id || ''); }).filter(Boolean)));
+  if(!uniqueIds.length) return true;
+  if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){ return false; }
+  let committedAlerts = [];
+  let committedTombstones = {};
+  try{
+    await firebase.firestore().runTransaction(async function(transaction){
+      const remoteSnapshot = await transaction.get(fbDocRef);
+      const remoteData = remoteSnapshot.exists ? (remoteSnapshot.data() || {}) : {};
+      committedTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, remoteData.priceChangeNotificationTombstones);
+      uniqueIds.forEach(function(id){ committedTombstones[id] = Date.now(); });
+      committedTombstones = normalizePriceDeleteTombstones(committedTombstones);
+      const mergedAlerts = mergeArrayByKey(remoteData.priceChangeNotifications || [], state.priceChangeNotifications || [], function(item){ return item && item.id; });
+      committedAlerts = filterPriceNotificationsByTombstones(mergedAlerts, committedTombstones);
+      transaction.set(fbDocRef, {
+        priceChangeNotifications: committedAlerts,
+        priceChangeNotificationTombstones: committedTombstones,
+        priceNotificationsUpdatedAt: Date.now()
+      }, { merge:true });
+    });
+  }catch(e){
+    console.warn('Price Update deletion did not reach Firestore', e);
+    return false;
+  }
+  // The transaction has committed remotely. Only now replace local state and cache.
+  rememberDeletedPriceNotifications(uniqueIds, committedTombstones);
+  state.priceChangeNotifications = committedAlerts;
+  try{ localStorage.setItem('price-notifs-cache', JSON.stringify(state.priceChangeNotifications)); }catch(e){}
+  syncStatus = 'synced';
+  updateHeaderSub();
+  render();
+  return true;
+}
 let a7TemplateNeedsPush = false; // set true when the cloud's a7Template is older than A7_TEMPLATE_VERSION
 let scanInputFocusKeeper = null; // keeps manualBarcodeInput focused while on the A7/A4 tabs, so a hardware/native scan always has somewhere to land
 function startScanInputFocusKeeper(){
@@ -5824,7 +5905,10 @@ async function pushToCloud(force, suppressToast){
     const mergedAuditLog = mergeArrayByKey(cloudData.auditLog, state.auditLog, x=>x.id || (x.action+'|'+x.detail+'|'+x.ts), deletedKeys.auditLog);
     const mergedA7Excels = mergeArrayByKey(cloudExcelData.a7Excels || cloudData.a7Excels, state.a7Excels, x=>x.id, deletedKeys.a7Excels);
     const mergedA4Excels = mergeArrayByKey(cloudExcelData.a4Excels || cloudData.a4Excels, state.a4Excels, x=>x.id, deletedKeys.a4Excels);
-    const mergedPriceNotifs = mergeArrayByKey(cloudData.priceChangeNotifications, state.priceChangeNotifications, x=>x.id, deletedKeys.priceChangeNotifications);
+    priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, cloudData.priceChangeNotificationTombstones);
+    persistPriceDeleteTombstones();
+    const priceDeleteIds = new Set(Object.keys(priceDeleteTombstones));
+    const mergedPriceNotifs = mergeArrayByKey(cloudData.priceChangeNotifications, state.priceChangeNotifications, x=>x.id, priceDeleteIds);
         const mergedStockMovements = mergeArrayByKey(cloudData.stockMovements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
     const mergedAppNotifications = mergeArrayByKey(cloudData.appNotifications, state.appNotifications, x=>x.id, deletedKeys.appNotifications);
     const mergedPdfImports = mergeArrayByKey(cloudPdfData.pdfImports || cloudData.pdfImports, state.pdfImports, x=>x.id, deletedKeys.pdfImports);
@@ -5863,6 +5947,7 @@ async function pushToCloud(force, suppressToast){
       a7Template: state.a7Template || null, a7TemplateVersion: A7_TEMPLATE_VERSION,
       appLocked: !!state.appLocked,
       priceChangeNotifications: mergedPriceNotifs,
+      priceChangeNotificationTombstones: priceDeleteTombstones,
       stockMovements: mergedStockMovements,
       appNotifications: mergedAppNotifications,
       activeSessions: mergedActiveSessions,
@@ -5955,7 +6040,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '86';
+const APP_BUILD = '87';
 const APP_NAME = 'User';
 
 function purgeStaleRuntimeCache(){
@@ -8135,7 +8220,7 @@ function exportBackup(){
     version: 1,
     exportedAt: new Date().toISOString(),
     operatorName: state.operatorName||'',
-    stockOverrides, scanLog, customProducts, auditLog: state.auditLog || [], appUsers: state.appUsers || {}, userRoles: state.userRoles || {}, a7Excels: state.a7Excels || [],
+    stockOverrides, scanLog, customProducts, auditLog: state.auditLog || [], appUsers: state.appUsers || {}, userRoles: state.userRoles || {}, a7Excels: state.a7Excels || [], priceChangeNotifications: state.priceChangeNotifications || [], priceChangeNotificationTombstones: priceDeleteTombstones,
         a4Excels: state.a4Excels || [], a7Template: state.a7Template || null, a7TemplateVersion: A7_TEMPLATE_VERSION
   };
   try{
@@ -8178,7 +8263,7 @@ async function handleRestoreFile(fileInput){
     state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
     state.a7Excels = data.a7Excels || state.a7Excels || [];
     state.a4Excels = data.a4Excels || state.a4Excels || [];
-    state.priceChangeNotifications = data.priceChangeNotifications || state.priceChangeNotifications || [];
+    state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
       state.stockMovements = data.stockMovements || state.stockMovements || [];
     if((data.a7TemplateVersion || 0) < A7_TEMPLATE_VERSION){
       state.a7Template = DEFAULT_A7_TEMPLATE_B64;
@@ -8687,7 +8772,7 @@ function getDashboardAnalytics(){
 function renderScan(){
   let html = '';
   const analytics = getDashboardAnalytics();
-  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div class="backup-note" style="margin-top:10px;display:grid;gap:4px;"><div>Home appliances value — <b>' + esc(fmtMoney(analytics.homeAppliancesValue)) + '</b></div><div>Electronics value — <b>' + esc(fmtMoney(analytics.electronicsValue)) + '</b></div></div></div>';
+  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#0F766E,#14B8A6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(20,184,166,.2);">Home appliances <b style="color:#FFFFFF!important;">' + esc(fmtMoney(analytics.homeAppliancesValue)) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#1D4ED8,#3B82F6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(59,130,246,.2);">Electronics <b style="color:#FFFFFF!important;">' + esc(fmtMoney(analytics.electronicsValue)) + '</b></span></div></div>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
@@ -9499,11 +9584,9 @@ async function deleteA4Excel(id){
 
 async function deletePriceNotification(id){
   if(!(await appConfirm('Delete this price-change alert?', 'Delete Price Alert'))) return;
-  deletedKeys.priceChangeNotifications.add(id);
-  state.priceChangeNotifications = (state.priceChangeNotifications || []).filter(n=>n.id!==id);
-  await pushToCloud(true, true);
-  render();
-  showToast('Deleted');
+  const deleted = await deletePriceNotificationsFromCloud([id]);
+  if(deleted) showToast('Deleted from all devices');
+  else showToast('Could not delete this alert. Please check your connection and try again.', true);
 }
 
 async function deleteAllPriceNotifications(){
@@ -9512,11 +9595,9 @@ async function deleteAllPriceNotifications(){
   if(!visible.length) return;
   if(!(await appConfirm('Delete all ' + visible.length + ' price-change alert(s)?', 'Delete Price Alerts'))) return;
   const visibleIds = new Set(visible.map(n=>n.id));
-  visibleIds.forEach(id=>deletedKeys.priceChangeNotifications.add(id));
-  state.priceChangeNotifications = (state.priceChangeNotifications || []).filter(n=>!visibleIds.has(n.id));
-  await pushToCloud(true, true);
-  render();
-  showToast('Deleted all alerts');
+  const deleted = await deletePriceNotificationsFromCloud(Array.from(visibleIds));
+  if(deleted) showToast('Deleted all alerts from all devices');
+  else showToast('Could not delete alerts. Please check your connection and try again.', true);
 }
 
 function renderA4(){
@@ -9887,9 +9968,6 @@ function renderBrands(){
   const isPromoterBrands = state.user && state.user.role === 'promoter';
   let html = '';
   if(!isPromoterBrands){
-    html += '<div class="btn-row" style="margin-bottom:10px;">';
-    html += '<button class="btn btn-accent" onclick="openAddProduct()">+ Add New Product</button>';
-    html += '</div>';
     html += '<div class="btn-row" style="margin-bottom:14px;">';
     html += '<button class="btn" onclick="triggerImportExcel()">📥 Import Excel (update stock / add products)</button>';
     html += '</div>';
