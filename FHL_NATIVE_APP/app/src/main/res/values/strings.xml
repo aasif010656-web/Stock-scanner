@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FHL ELECTRONICS (v6.1)</string>
-    <string name="title_activity_main">FHL ELECTRONICS (v6.1)</string>
+    <string name="app_name">FHL ELECTRONICS</string>
+    <string name="title_activity_main">FHL ELECTRONICS</string>
     <string name="package_name">com.abdulasif.pdtstockscanner</string>
     <string name="custom_url_scheme">com.abdulasif.pdtstockscanner</string>
     <string name="no_webview_text">This app requires a WebView to work</string>

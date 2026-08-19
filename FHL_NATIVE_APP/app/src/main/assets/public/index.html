@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>FHL ELECTRONICS (v6.1)</title>
+<title>FHL ELECTRONICS</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#F2B705">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="FHL ELECTRONICS (v6.1)">
+<meta name="apple-mobile-web-app-title" content="FHL ELECTRONICS">
 
 <!-- Native CameraX/MLKit Bridge Used -->
 <script src="js/xlsx.full.min.js"></script>
@@ -223,12 +223,11 @@ body.large-font .product-title { font-size: 18px; }
 body.large-font .detail-value { font-size: 14px; }
 #app{max-width:520px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;padding-bottom:64px;}
 .header { padding: 16px 16px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; background: rgba(15, 17, 26, 0.62); backdrop-filter: blur(28px) saturate(190%); -webkit-backdrop-filter: blur(28px) saturate(190%); }
-  .header-main{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-  .header-title{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;min-width:0;}
+  .header-main{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:38px;}
+  .header-title{position:absolute;left:50%;transform:translateX(-50%);max-width:calc(100% - 126px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-weight:800;font-size:18px;line-height:1.2;pointer-events:none;}
   .app-logo-icon{width:28px;height:28px;border-radius:8px;object-fit:contain;background:#fff;padding:2px;display:block!important;visibility:visible!important;opacity:1!important;}
   .notification-bell{position:relative;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border2);border-radius:13px;background:var(--panel);color:var(--text);font-size:18px;flex-shrink:0;box-shadow:var(--shadow-btn,0 4px 12px rgba(0,0,0,.2));}
   .notification-bell:active{transform:scale(.96);}
-  .notification-bell-badge{position:absolute;right:-4px;top:-4px;min-width:17px;height:17px;padding:0 4px;display:none;align-items:center;justify-content:center;border-radius:99px;background:#FF453A;color:#fff;font-size:10px;font-weight:800;border:2px solid var(--bg);}
   .notification-list{display:flex;flex-direction:column;gap:9px;text-align:left;max-height:58vh;overflow:auto;padding-right:2px;}
   .notification-item{border:1px solid var(--border2);border-radius:14px;padding:12px;background:rgba(255,255,255,.035);cursor:pointer;}
   .notification-item.unread{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%, transparent);}
@@ -645,11 +644,9 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 <div id="app">
   <div class="header" id="appHeader" style="display:none;">
 	  <div class="header-main">
-	    <div class="header-title">
-      <img src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PnIfmzmTQDwjNGCO.png" class="app-logo-icon" alt="Grand Hyper Electronics logo" onerror="this.onerror=null;this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');">
-      <span id="tabTitle">FHL ELECTRONICS (v6.1)</span>
-	    </div>
-    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications"><span data-lucide="bell" aria-hidden="true"></span><span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
+	    <img src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PnIfmzmTQDwjNGCO.png" class="app-logo-icon" alt="Grand Hyper Electronics logo" onerror="this.onerror=null;this.style.display='none';">
+	    <div class="header-title"><span id="tabTitle">Scan</span></div>
+    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications"><span data-lucide="bell" aria-hidden="true"></span></button>
 	  </div>
 	    <div class="header-sub" id="headerSub">Loading data...</div>
 	  </div>
@@ -703,7 +700,6 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
     <button id="navScan" class="active" onclick="setTab('scan')" aria-label="Scan" title="Scan"><span class="nav-icon" data-lucide="scan-line" aria-hidden="true"></span></button>
     <button id="navBrands" onclick="setTab('brands')" aria-label="Brands" title="Brands"><span class="nav-icon" data-lucide="tags" aria-hidden="true"></span></button>
     <button id="navAging" onclick="setTab('aging')" aria-label="Aging" title="Aging"><span class="nav-icon" data-lucide="clock-3" aria-hidden="true"></span></button>
-    <button id="navPriceLog" onclick="setTab('priceLog')" style="display:none;" aria-label="Price Log" title="Price Log"><span class="nav-icon" data-lucide="badge-dollar-sign" aria-hidden="true"></span><span id="priceLogBadge" class="count-badge" style="display:none;">0</span></button>
     <button id="navData" onclick="setTab('data')" aria-label="Data" title="Data"><span class="nav-icon" data-lucide="file-spreadsheet" aria-hidden="true"></span></button>
     <button id="navLog" onclick="setTab('log')" aria-label="Log" title="Log"><span class="nav-icon" data-lucide="clipboard-list" aria-hidden="true"></span></button>
     <button id="navSettings" onclick="setTab('settings')" aria-label="Settings" title="Settings"><span class="nav-icon" data-lucide="settings-2" aria-hidden="true"></span></button>
@@ -5816,7 +5812,7 @@ async function loadStorage(){
         Object.keys(priceGroups).forEach(function(party){
           const items = priceGroups[party];
           const latest = items.reduce(function(max,item){ return Math.max(max, Number(item.ts||0)); }, 0);
-          addWebsiteNotification({ id:'price-' + party + '-' + latest, category:'price', party:party, tab:'priceLog', ts:latest || Date.now(), title:'Price update · ' + party, body:items.length + ' product price' + (items.length===1?' was':'s were') + ' updated.' });
+          addWebsiteNotification({ id:'price-' + party + '-' + latest, category:'price', party:party, tab:'log', ts:latest || Date.now(), title:'Price update · ' + party, body:items.length + ' product price' + (items.length===1?' was':'s were') + ' updated.' });
         });
         const importChanged = !!latestExcelSignature && latestExcelSignature !== prevExcelSignature;
         if(importChanged){
@@ -6149,8 +6145,13 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '89';
-const APP_NAME = 'FHL ELECTRONICS (v' + APP_VERSION + ')';
+const APP_BUILD = '90';
+const APP_NAME = 'FHL ELECTRONICS';
+const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'Create Excel' };
+function updateActiveTabTitle(tab){
+  const title = document.getElementById('tabTitle');
+  if(title) title.textContent = TAB_TITLES[tab] || APP_NAME;
+}
 
 function purgeStaleRuntimeCache(){
   try{
@@ -6801,7 +6802,7 @@ function queuePartyPriceNotification(party, description){
       const count = groups[p].length;
       const title = 'Price update · ' + p;
       const body = 'Your ' + count + ' product' + (count===1?'':'s') + ' prices are changed';
-      addWebsiteNotification({ id:'price-local-' + p + '-' + Date.now(), category:'price', party:p, tab:'priceLog', ts:Date.now(), title:title, body:body, silent:true });
+      addWebsiteNotification({ id:'price-local-' + p + '-' + Date.now(), category:'price', party:p, tab:'log', ts:Date.now(), title:title, body:body, silent:true });
       addAppNotification({ id:'price-shared-' + p + '-' + Date.now(), category:'price', audience:'promoters', party:p, title:title, message:body + (p ? ' · Party ' + p : '') });
       if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification){ try{ window.AndroidNative.postPriceUpdateNotification(title, body); }catch(e){} }
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
@@ -6809,7 +6810,7 @@ function queuePartyPriceNotification(party, description){
           const ln=window.Capacitor.Plugins.LocalNotifications;
           (async function(){
             const permission = ln.requestPermissions ? await ln.requestPermissions() : {display:'granted'};
-            if(permission && permission.display === 'granted') await ln.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'priceLog'}}]});
+          if(permission && permission.display === 'granted') await ln.schedule({notifications:[{id:Date.now()%2147483647,title:title,body:body,extra:{tab:'log'}}]});
           })().catch(function(){});
         }catch(e){}
       }
@@ -6862,19 +6863,14 @@ function addWebsiteNotification(note){
   updateWebsiteNotificationBadge();
 }
 function updateWebsiteNotificationBadge(){
-  const badge = document.getElementById('notificationBellBadge');
   const bell = document.getElementById('notificationBell');
-  if(!badge || !bell) return;
+  if(!bell) return;
   if(!canUseWebsiteNotifications()){
     bell.style.display = 'none';
-    badge.style.display = 'none';
     return;
   }
   bell.style.display = '';
-  const unread = (state.websiteNotifications || []).filter(function(note){ return !note.read && canSeeWebsiteNotification(note); }).length;
-	  badge.textContent = unread > 99 ? '99+' : String(unread);
-	  badge.style.display = unread ? 'inline-flex' : 'none';
-	  bell.setAttribute('aria-label', unread ? unread + ' unread notifications' : 'Open notifications');
+	  bell.setAttribute('aria-label', 'Open notifications');
 	}
 	function canUseNativeUpdateFlow(){
 	  return !!((window.UpdateBridge && typeof window.UpdateBridge.downloadUpdate === 'function' && typeof window.UpdateBridge.installDownloadedUpdate === 'function') || (window.AndroidNative && typeof window.AndroidNative.installApk === 'function'));
@@ -6957,7 +6953,8 @@ function setTab(tab, fromBack){
   }
   closeAllTransientOverlays();
   if(state.cameraOn) stopCamera();
-  if((tab === 'data' || tab === 'log') && state.user && state.user.role === 'promoter'){
+  if(tab === 'priceLog') tab = 'log';
+  if(tab === 'data' && state.user && state.user.role === 'promoter'){
     tab = 'scan';
   }
   // Leaving the A7 tool: auto-send whatever was captured, then always clear the working slots.
@@ -6974,14 +6971,14 @@ function setTab(tab, fromBack){
   state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
   state.barcodeSuggestions = []; state.showSuggestions = false;
   
-  const navIds = ['navScan', 'navBrands', 'navAging', 'navPriceLog', 'navData', 'navLog', 'navSettings'];
+  const navIds = ['navScan', 'navBrands', 'navAging', 'navData', 'navLog', 'navSettings'];
   navIds.forEach(id => {
       const el = document.getElementById(id);
       if(el) el.className = (id === 'nav' + tab.charAt(0).toUpperCase() + tab.slice(1)) ? 'active' : '';
   });
 
   window.scrollTo(0,0);
-  document.getElementById('tabTitle').textContent = APP_NAME;
+  updateActiveTabTitle(tab);
   updateHeaderSub();
   render();
 }
@@ -6992,16 +6989,7 @@ function syncBadge(){
   if(syncStatus==='error') return ' · <span style="color:#E85D5D;">☁ Sync unavailable</span>';
   return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>' + offlineStockLabel();
 }
-function updatePriceLogNotificationBadge(){
-  const badge = document.getElementById('priceLogBadge');
-  if(!badge) return;
-  const partyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
-  const count = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || partyCodes.includes(n.party)).length;
-  badge.textContent = count > 99 ? '99+' : String(count);
-  badge.style.display = count ? 'inline-flex' : 'none';
-}
 function updateHeaderSub(){
-  updatePriceLogNotificationBadge();
   updateWebsiteNotificationBadge();
   const sub = document.getElementById('headerSub');
   const applyHeaderIcons = () => {
@@ -7018,11 +7006,6 @@ function updateHeaderSub(){
   const brands = new Set(getAllRows().map(r=>r.Brand||"OTHERS / UNBRANDED")).size;
   if(state.tab==='scan') sub.innerHTML = getAllRows().length + " products · " + brands + " brands · " + scanLog.length + " scans logged" + syncBadge();
   else if(state.tab==='brands') sub.innerHTML = brands + " brands · " + getAllRows().length + " products" + syncBadge();
-  else if(state.tab==='priceLog'){
-    const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
-    const myPriceNotifs = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
-    sub.innerHTML = myPriceNotifs.length + " price update(s)" + (myPartyCodes.length ? " · Party: " + esc(myPartyCodes.join(', ')) : "") + syncBadge();
-  }
   else sub.innerHTML = scanLog.length + " scan entries" + syncBadge();
   applyHeaderIcons();
 }
@@ -7263,7 +7246,7 @@ function openAddProduct(prefillBarcode){
     document.getElementById('navScan').className = 'active';
     document.getElementById('navBrands').className = '';
     document.getElementById('navLog').className = '';
-    document.getElementById('tabTitle').textContent = APP_NAME;
+    updateActiveTabTitle('brands');
   }
   state.addProductOpen = true;
   state.addForm = { brand:'', description:'', code:'', barcode: prefillBarcode||'', party:'', partyName:'', stockQty:0 };
@@ -8507,7 +8490,7 @@ async function handleImportExcel(fileInput){
                       oldPrice: oldPrice,
                       newPrice: p,
                       ts: Date.now(),
-                      targetTab: 'priceLog'
+                      targetTab: 'log'
                   });
                   queuePartyPriceNotification(notifParty, notifDesc);
               }
@@ -8809,13 +8792,12 @@ function renderNow(){
   { const bn = document.getElementById('bottomNav'); if(bn) bn.style.display = 'flex'; }
   { const hdr = document.getElementById('appHeader'); if(hdr) hdr.style.display = ''; }
   updateNotificationBadge();
-  // Promoters don't get the Data / Log sections — they get a dedicated party-filtered Price Log instead
+  // Promoters do not get Data, but their party-filtered Price Update history is now inside Log.
   const isPromoter = state.user.role === 'promoter';
-  ['navData','navLog'].forEach(id=>{
+  ['navData'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.style.display = isPromoter ? 'none' : '';
   });
-  { const el = document.getElementById('navPriceLog'); if(el) el.style.display = isPromoter ? '' : 'none'; }
   // Preserve focus state before re-rendering to prevent keyboard from closing
   const activeEl = document.activeElement;
   const sameTab = state._renderedTab === state.tab;
@@ -8829,7 +8811,6 @@ function renderNow(){
   else if(state.tab==='data') c.innerHTML = renderData();
   else if(state.tab==='brands') c.innerHTML = renderBrands();
   else if(state.tab==='log') c.innerHTML = renderLog();
-  else if(state.tab==='priceLog') c.innerHTML = renderPriceLog();
   else if(state.tab==='settings') c.innerHTML = renderSettings();
   else if(state.tab==='a7') c.innerHTML = renderA7();
   else if(state.tab==='a4') c.innerHTML = renderA4();
