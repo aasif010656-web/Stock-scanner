@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>User</title>
+<title>FHL ELECTRONICS (v6.1)</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#F2B705">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="User">
+<meta name="apple-mobile-web-app-title" content="FHL ELECTRONICS (v6.1)">
 
 <!-- Native CameraX/MLKit Bridge Used -->
 <script src="js/xlsx.full.min.js"></script>
@@ -452,10 +452,21 @@ button,.btn{border-radius:var(--ui-control-radius)!important;box-shadow:var(--ui
 button:active,.btn:active{transform:scale(.97)!important;box-shadow:var(--ui-btn-active,var(--shadow-btn-active))!important;}
 .btn-accent{background:var(--ui-accent-bg,linear-gradient(135deg,var(--accent),var(--accent)))!important;color:var(--ui-accent-text,#fff)!important;border:1px solid var(--ui-accent-border,rgba(255,255,255,.18))!important;}
 .btn-ghost{background:var(--ui-ghost-bg,rgba(255,255,255,.05))!important;border:1px solid var(--ui-border)!important;}
-.app-header,.bottom-nav{border:1px solid var(--ui-border)!important;background:var(--ui-nav-bg,var(--ui-panel))!important;backdrop-filter:blur(var(--ui-blur)) saturate(150%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(150%)!important;box-shadow:var(--ui-shadow)!important;border-radius:var(--ui-nav-radius,var(--ui-radius))!important;}
-.bottom-nav{bottom:10px!important;}
-.nav-buttons button.active{color:var(--accent)!important;}
-.nav-buttons button.active span:first-child{background:var(--ui-active-bg,var(--accent-dim))!important;border-radius:var(--ui-control-radius)!important;}
+  .app-header,.bottom-nav{border:1px solid var(--ui-border)!important;background:var(--ui-nav-bg,var(--ui-panel))!important;backdrop-filter:blur(var(--ui-blur)) saturate(150%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(150%)!important;box-shadow:var(--ui-shadow)!important;border-radius:var(--ui-nav-radius,var(--ui-radius))!important;}
+  /* Icon-only dock: only the active destination receives a filled Lucide pill. */
+  .bottom-nav{bottom:10px!important;left:50%!important;right:auto!important;transform:translateX(-50%);width:auto!important;max-width:calc(100vw - 20px)!important;padding:6px!important;background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}
+  .nav-credit{display:none!important;}
+  .nav-buttons{gap:5px!important;align-items:center!important;justify-content:center!important;}
+  .nav-buttons button{position:relative;flex:0 0 46px!important;width:46px!important;height:46px!important;min-height:46px!important;padding:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;border-radius:999px!important;background:transparent!important;color:var(--muted)!important;}
+  .nav-buttons button:hover{color:var(--text)!important;background:rgba(255,255,255,.06)!important;}
+  .nav-buttons button.active{color:#fff!important;background:var(--accent)!important;box-shadow:0 8px 18px color-mix(in srgb,var(--accent) 36%,transparent)!important;}
+  .nav-buttons button.active .nav-icon{background:transparent!important;padding:0!important;}
+  .nav-icon{display:inline-flex!important;align-items:center!important;justify-content:center!important;line-height:1!important;}
+  .nav-icon .lucide-icon{width:22px!important;height:22px!important;stroke-width:2.25!important;}
+  .nav-label{display:none!important;}
+  .count-badge{position:absolute!important;right:0!important;top:0!important;min-width:18px!important;height:18px!important;padding:0 4px!important;border:2px solid var(--bg)!important;border-radius:999px!important;background:var(--red)!important;color:#fff!important;font-size:10px!important;line-height:14px!important;align-items:center!important;justify-content:center!important;}
+  .lucide-icon{display:inline-block;width:1em;height:1em;flex:none;vertical-align:-.17em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+  .lucide-inline{margin-right:.34em;}
 .ios-row{border-color:var(--ui-border)!important;min-height:var(--ui-row-height,24px);}
 .ios-icon{border-radius:var(--ui-icon-radius,9px)!important;box-shadow:var(--ui-icon-shadow,0 4px 10px rgba(0,0,0,.25))!important;}
 .bento-grid{gap:var(--ui-grid-gap,10px)!important;}
@@ -468,7 +479,7 @@ body.theme-liquidglass .card:before,body.theme-liquidglass .ios-group:before{con
 /* Spatial UI */
 body.theme-spatial{--ui-panel:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.025));--ui-border:rgba(155,170,255,.22);--ui-blur:22px;--ui-radius:26px;--ui-control-radius:15px;--ui-shadow:0 24px 42px rgba(0,0,0,.42),0 3px 0 rgba(255,255,255,.06) inset;--ui-hover-y:-3px;background:radial-gradient(circle at 20% 20%,rgba(90,110,255,.25),transparent 34%),#080a14!important;}
 body.theme-spatial .card,body.theme-spatial .form-card{transform:translateZ(0);}
-body.theme-spatial .bottom-nav{transform:translateY(-2px);}
+body.theme-spatial .bottom-nav{transform:translateX(-50%) translateY(-2px);}
 
 /* Bento Grid */
 body.theme-bento{--ui-panel:#1a1d24;--ui-border:#343945;--ui-blur:0px;--ui-radius:14px;--ui-control-radius:10px;--ui-card-pad:16px;--ui-grid-gap:12px;--ui-shadow:0 4px 12px rgba(0,0,0,.25);background:#101216!important;}
@@ -636,38 +647,38 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 	  <div class="header-main">
 	    <div class="header-title">
       <img src="https://files.manuscdn.com/user_upload_by_module/session_file/310519663882401738/PnIfmzmTQDwjNGCO.png" class="app-logo-icon" alt="Grand Hyper Electronics logo" onerror="this.onerror=null;this.style.display='none';this.parentElement.setAttribute('data-logo-fallback','FHL');">
-	      <span id="tabTitle">📷 Barcode Scan</span>
+      <span id="tabTitle">FHL ELECTRONICS (v6.1)</span>
 	    </div>
-	    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications">🔔<span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
+    <button id="notificationBell" class="notification-bell" type="button" onclick="openWebsiteNotificationCenter()" aria-label="Open notifications" title="Notifications"><span data-lucide="bell" aria-hidden="true"></span><span id="notificationBellBadge" class="notification-bell-badge">0</span></button>
 	  </div>
 	    <div class="header-sub" id="headerSub">Loading data...</div>
 	  </div>
   <div class="section" id="content"></div>
-	  <button id="backToTopBtn" onclick="scrollToTop()">↑</button>
+	  <button id="backToTopBtn" onclick="scrollToTop()" aria-label="Back to top" title="Back to top"><span data-lucide="arrow-up" aria-hidden="true"></span></button>
 	</div>
 <div class="toast" id="toast"></div>
 <div class="modal-overlay" id="barcodeModal">
   <div class="modal-box">
-    <div class="modal-close" onclick="closeBarcodeModal()">✕</div>
+    <div class="modal-close" onclick="closeBarcodeModal()" role="button" tabindex="0" aria-label="Close"><span data-lucide="x" aria-hidden="true"></span></div>
     <div id="barcodeModalContent"></div>
   </div>
 </div>
 <div class="modal-overlay" id="a7PreviewModal">
   <div class="modal-box" style="max-width:520px;text-align:left;padding:16px 14px;">
-    <div class="modal-close" onclick="closeA7Preview()">✕</div>
+    <div class="modal-close" onclick="closeA7Preview()" role="button" tabindex="0" aria-label="Close"><span data-lucide="x" aria-hidden="true"></span></div>
     <div id="a7PreviewModalContent"></div>
   </div>
 </div>
 <div class="modal-overlay" id="themeModal">
   <div class="modal-box modal-box-dark" style="max-width:480px;text-align:left;padding:16px 14px;">
-    <div class="modal-close" style="color:var(--text);" onclick="closeThemePicker()">✕</div>
+    <div class="modal-close" style="color:var(--text);" onclick="closeThemePicker()" role="button" tabindex="0" aria-label="Close"><span data-lucide="x" aria-hidden="true"></span></div>
     <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Choose Theme</div>
     <div id="themeModalContent"></div>
   </div>
 </div>
 <div class="modal-overlay" id="actionModal">
   <div class="modal-box modal-box-dark" style="max-width:420px;width:min(92vw,420px);text-align:left;padding:18px 16px;">
-    <div class="modal-close" style="color:var(--text);" onclick="closeActionModal()">✕</div>
+    <div class="modal-close" style="color:var(--text);" onclick="closeActionModal()" role="button" tabindex="0" aria-label="Close"><span data-lucide="x" aria-hidden="true"></span></div>
     <div id="actionModalContent"></div>
   </div>
 </div>
@@ -689,27 +700,13 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 <div class="bottom-nav" id="bottomNav" style="display:none;">
   <div class="nav-credit"></div>
   <div class="nav-buttons">
-    <button id="navScan" class="active" onclick="setTab('scan')">
-      <span>📷</span><span>Scan</span>
-    </button>
-    <button id="navBrands" onclick="setTab('brands')">
-      <span>🏷️</span><span>Brands</span>
-    </button>
-    <button id="navAging" onclick="setTab('aging')">
-      <span>⏳</span><span>Aging</span>
-    </button>
-    <button id="navPriceLog" onclick="setTab('priceLog')" style="display:none;">
-      <span>💰</span><span>Price Log</span><span id="priceLogBadge" class="count-badge" style="display:none;margin-left:3px;">0</span>
-    </button>
-    <button id="navData" onclick="setTab('data')">
-      <span>📊</span><span>Data</span>
-    </button>
-    <button id="navLog" onclick="setTab('log')">
-      <span>📋</span><span>Log</span>
-    </button>
-    <button id="navSettings" onclick="setTab('settings')">
-      <span>⚙️</span><span>Settings</span>
-    </button>
+    <button id="navScan" class="active" onclick="setTab('scan')" aria-label="Scan" title="Scan"><span class="nav-icon" data-lucide="scan-line" aria-hidden="true"></span></button>
+    <button id="navBrands" onclick="setTab('brands')" aria-label="Brands" title="Brands"><span class="nav-icon" data-lucide="tags" aria-hidden="true"></span></button>
+    <button id="navAging" onclick="setTab('aging')" aria-label="Aging" title="Aging"><span class="nav-icon" data-lucide="clock-3" aria-hidden="true"></span></button>
+    <button id="navPriceLog" onclick="setTab('priceLog')" style="display:none;" aria-label="Price Log" title="Price Log"><span class="nav-icon" data-lucide="badge-dollar-sign" aria-hidden="true"></span><span id="priceLogBadge" class="count-badge" style="display:none;">0</span></button>
+    <button id="navData" onclick="setTab('data')" aria-label="Data" title="Data"><span class="nav-icon" data-lucide="file-spreadsheet" aria-hidden="true"></span></button>
+    <button id="navLog" onclick="setTab('log')" aria-label="Log" title="Log"><span class="nav-icon" data-lucide="clipboard-list" aria-hidden="true"></span></button>
+    <button id="navSettings" onclick="setTab('settings')" aria-label="Settings" title="Settings"><span class="nav-icon" data-lucide="settings-2" aria-hidden="true"></span></button>
   </div>
 </div>
 
@@ -5227,6 +5224,118 @@ function showLogDetails(id) {
 
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
+// Official Lucide-style SVG paths kept inline so Android WebView and the Firebase PWA
+// render the same complete icon system without adding an external runtime dependency.
+const LUCIDE_PATHS = {
+  'scan-line':'<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/>',
+  'tags':'<path d="M13.69 18.31a2.426 2.426 0 0 1-3.42 0L2.59 10.63A2 2 0 0 1 2 9.21V4a2 2 0 0 1 2-2h5.21a2 2 0 0 1 1.42.59l7.68 7.68a2.426 2.426 0 0 1 0 3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+  'clock-3':'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  'badge-dollar-sign':'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 18V6"/>',
+  'file-spreadsheet':'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>',
+  'clipboard-list':'<rect width="16" height="20" x="4" y="2" rx="2" ry="2"/><path d="M9 2v4h6V2"/><path d="M8 12h8"/><path d="M8 16h8"/><path d="M8 8h.01"/><path d="M8 12h.01"/><path d="M8 16h.01"/>',
+  'settings-2':'<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  'bell':'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+  'mail':'<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  'eye':'<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>',
+  'lock-keyhole':'<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/>',
+  'lock-keyhole-open':'<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/><circle cx="12" cy="16" r="1"/>',
+  'camera':'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
+  'barcode':'<path d="M3 5v14"/><path d="M8 5v14"/><path d="M12 5v14"/><path d="M17 5v14"/><path d="M21 5v14"/>',
+  'copy':'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  'file-text':'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  'trash-2':'<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+  'square-pen':'<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.38 2.63a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/>',
+  'filter':'<path d="M4 6h16"/><path d="M7 12h10"/><path d="M10 18h4"/>',
+  'user-round':'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  'smartphone':'<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+  'palette':'<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 22a10 10 0 1 1 10-10c0 1.1-.9 2-2 2h-2.5a1.5 1.5 0 0 0 0 3H18a2 2 0 0 1 2 2c0 1.7-3.6 3-8 3Z"/>',
+  'volume-2':'<path d="M11 5 6 9H2v6h4l5 4Z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+  'vibrate':'<path d="m2 8-2 4 2 4"/><path d="m22 8 2 4-2 4"/><rect width="16" height="12" x="4" y="6" rx="2"/>',
+  'type':'<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/>',
+  'message-circle':'<path d="M7.9 20A9 9 0 1 1 20 12.1L22 22Z"/>',
+  'broom':'<path d="m9 11 6 6"/><path d="m5 15 4 4"/><path d="m14 4 6 6"/><path d="m4 20 5-5 5 5Z"/>',
+  'users':'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  'refresh-cw':'<path d="M21 12a9 9 0 0 0-15.5-6.2L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.5 6.2L21 16"/><path d="M16 16h5v5"/>',
+  'upload':'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  'download':'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  'trending-down':'<polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 7 22 7 22 13"/>',
+  'folder':'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/>',
+  'folder-open':'<path d="m6 14 1.5-3H20a2 2 0 0 1 1.8 2.8l-1.6 3.2A2 2 0 0 1 18.4 18H6a2 2 0 0 1-1.8-2.8L6 11"/><path d="M4 6h7l2 2h7a2 2 0 0 1 2 2"/>',
+  'database-backup':'<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 11v6c0 1.7 4 3 9 3"/><path d="m16 19 3 3 3-3"/><path d="M19 22v-7"/>',
+  'monitor':'<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  'triangle-alert':'<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  'cloud':'<path d="M17.5 19H9a7 7 0 1 1 6.71-9A5 5 0 1 1 17.5 19Z"/>',
+  'cloud-off':'<path d="m2 2 20 20"/><path d="M5.9 5.9A7 7 0 0 0 9 19h8.5a5 5 0 0 0 1.1-9.9"/><path d="M17.7 10.2A5 5 0 0 0 8.9 8.1"/>',
+  'log-out':'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+  'plus':'<path d="M5 12h14"/><path d="M12 5v14"/>',
+  'search':'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  'x':'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  'arrow-up':'<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
+  'arrow-left':'<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  'arrow-up-down':'<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
+  'check':'<path d="m20 6-11 11-5-5"/>'
+};
+const LUCIDE_EMOJI_MAP = {'📷':'scan-line','🏷️':'tags','⏳':'clock-3','💰':'badge-dollar-sign','📊':'file-spreadsheet','📋':'clipboard-list','⚙️':'settings-2','📩':'mail','🔔':'bell','👁':'eye','🔒':'lock-keyhole','🔓':'lock-keyhole-open','🔳':'barcode','📄':'file-text','📑':'file-spreadsheet','🗑':'trash-2','📥':'upload','🔍':'filter','🧑‍💼':'user-round','📱':'smartphone','🎨':'palette','🔊':'volume-2','📳':'vibrate','🔤':'type','💬':'message-circle','🧹':'broom','👥':'users','🔄':'refresh-cw','📤':'download','📉':'trending-down','🔴':'triangle-alert','🟠':'triangle-alert','🟡':'triangle-alert','📂':'folder-open','📁':'folder','💾':'database-backup','🖥':'monitor','⬇':'download','⬆️':'upload','⚠️':'triangle-alert','↪':'log-out','➕':'plus','＋':'plus','🔎':'search','✕':'x','↑':'arrow-up','←':'arrow-left','⇅':'arrow-up-down','✓':'check','☁':'cloud','♙':'user-round'};
+const LUCIDE_EMOJI_RE = new RegExp(Object.keys(LUCIDE_EMOJI_MAP).sort((a,b)=>b.length-a.length).map(token=>token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'g');
+function lucideIcon(name, label, extraClass){
+  const paths = LUCIDE_PATHS[name] || LUCIDE_PATHS['circle-help'];
+  const a11y = label ? ' role="img" aria-label="' + esc(label) + '"' : ' aria-hidden="true"';
+  return '<svg class="lucide-icon ' + (extraClass || '') + '" viewBox="0 0 24 24"' + a11y + '>' + paths + '</svg>';
+}
+function lucideText(value){ return esc(String(value || '')).replace(LUCIDE_EMOJI_RE, token => lucideIcon(LUCIDE_EMOJI_MAP[token], '', 'lucide-inline')); }
+function hydrateLucideIcons(root){
+  if(!root) return;
+  root.querySelectorAll('[data-lucide]').forEach(el=>{
+    const name = el.getAttribute('data-lucide');
+    const label = el.getAttribute('data-lucide-label') || '';
+    el.innerHTML = lucideIcon(name, label);
+  });
+}
+function replaceVisibleEmojiIcons(root){
+  if(!root || !document.createTreeWalker) return;
+  const nodes = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while(walker.nextNode()){
+    const node = walker.currentNode;
+    const parent = node.parentElement;
+    LUCIDE_EMOJI_RE.lastIndex = 0;
+    if(!parent || !LUCIDE_EMOJI_RE.test(node.nodeValue || '')) continue;
+    LUCIDE_EMOJI_RE.lastIndex = 0;
+    if(parent.closest('svg,script,style,textarea,input,option,[data-preserve-emoji]')) continue;
+    if(!parent.closest('button,.ios-icon,.product-title,.field-label,.chip,.detail-value,.sort-btn,.back-row,.header-sub,.device-chip,.log-meta,.card,h1,h2,h3,.auth-icon')) continue;
+    nodes.push(node);
+  }
+  nodes.forEach(node=>{
+    const holder = document.createElement('span');
+    holder.innerHTML = lucideText(node.nodeValue || '');
+    const frag = document.createDocumentFragment();
+    while(holder.firstChild) frag.appendChild(holder.firstChild);
+    node.parentNode.replaceChild(frag,node);
+  });
+}
+let lucideIconObserverStarted = false;
+function installLucideIconObserver(){
+  if(lucideIconObserverStarted || !document.body || !window.MutationObserver) return;
+  lucideIconObserverStarted = true;
+  const normalize = root => {
+    if(!root) return;
+    if(root.nodeType === Node.ELEMENT_NODE){
+      hydrateLucideIcons(root);
+      replaceVisibleEmojiIcons(root);
+    } else if(root.parentElement){
+      hydrateLucideIcons(root.parentElement);
+      replaceVisibleEmojiIcons(root.parentElement);
+    }
+  };
+  normalize(document);
+  const observer = new MutationObserver(records => {
+    records.forEach(record => record.addedNodes.forEach(normalize));
+  });
+  observer.observe(document.getElementById('app') || document.body, {childList:true,subtree:true});
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installLucideIconObserver, {once:true});
+else installLucideIconObserver();
+
 const ALL_ROWS = parseData(RAW_DATA);
 let customProducts = [];   // user-added new products (from "Add as new product")
 let BARCODE_INDEX = new Map();
@@ -6014,7 +6123,7 @@ function playA7NotificationSound(){ beep(880,0.12,0); beep(1108,0.12,0.13); beep
 let toastTimer=null;
 function showToast(msg, isErr){
   const t = document.getElementById('toast');
-  t.textContent = msg;
+  t.innerHTML = lucideText(msg);
   t.className = "toast show" + (isErr?" err":"");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>{ t.className="toast"; }, 2200);
@@ -6040,8 +6149,8 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '87';
-const APP_NAME = 'User';
+const APP_BUILD = '88';
+const APP_NAME = 'FHL ELECTRONICS (v' + APP_VERSION + ')';
 
 function purgeStaleRuntimeCache(){
   try{
@@ -6290,6 +6399,8 @@ function openActionModal(content){
   const html = String(content || '').trim();
   if(!target || !modal || !html) return;
   target.innerHTML = html;
+  hydrateLucideIcons(target);
+  replaceVisibleEmojiIcons(target);
   modal.classList.add('show');
 }
 function installDialogGuards(){
@@ -6870,8 +6981,7 @@ function setTab(tab, fromBack){
   });
 
   window.scrollTo(0,0);
-  const titles = {scan:'📷 Barcode Scan', brands:'🏷️ Brand Explorer', aging:'⏳ Aging Details', priceLog:'💰 Price Log', data:'📊 Data Reports', log:'📋 Update Log', settings:'⚙️ Settings', a7:'🏷️ A7 Talker', a4:'📄 A4 Label', createExcel:'📑 Create Excel'};
-  document.getElementById('tabTitle').textContent = titles[tab] || APP_NAME;
+  document.getElementById('tabTitle').textContent = APP_NAME;
   updateHeaderSub();
   render();
 }
@@ -6894,9 +7004,15 @@ function updateHeaderSub(){
   updatePriceLogNotificationBadge();
   updateWebsiteNotificationBadge();
   const sub = document.getElementById('headerSub');
-  if(!storageReady){ sub.textContent = "Loading data..."; return; }
+  const applyHeaderIcons = () => {
+    const header = document.getElementById('appHeader');
+    hydrateLucideIcons(header);
+    replaceVisibleEmojiIcons(header);
+  };
+  if(!storageReady){ sub.textContent = "Loading data..."; applyHeaderIcons(); return; }
   if(state.user && state.user.viewingAs){
     sub.innerHTML = '<span style="background:linear-gradient(90deg,#FF9500,#D97E00);color:#1A1200;font-weight:700;padding:2px 9px;border-radius:10px;font-size:11px;">👁 Viewing as ' + esc(state.user.viewingAs) + ' (' + esc(state.user.role) + ')</span> <span style="cursor:pointer;text-decoration:underline;font-size:11px;color:var(--muted);" onclick="exitTestView()">Exit</span>';
+    applyHeaderIcons();
     return;
   }
   const brands = new Set(getAllRows().map(r=>r.Brand||"OTHERS / UNBRANDED")).size;
@@ -6908,6 +7024,7 @@ function updateHeaderSub(){
     sub.innerHTML = myPriceNotifs.length + " price update(s)" + (myPartyCodes.length ? " · Party: " + esc(myPartyCodes.join(', ')) : "") + syncBadge();
   }
   else sub.innerHTML = scanLog.length + " scan entries" + syncBadge();
+  applyHeaderIcons();
 }
 function exitTestView(){
   state.user = { username: 'Asif', role: 'admin', partyCodes: [], brandCodes: [] };
@@ -7146,7 +7263,7 @@ function openAddProduct(prefillBarcode){
     document.getElementById('navScan').className = 'active';
     document.getElementById('navBrands').className = '';
     document.getElementById('navLog').className = '';
-    document.getElementById('tabTitle').textContent = '📷 Barcode Scan';
+    document.getElementById('tabTitle').textContent = APP_NAME;
   }
   state.addProductOpen = true;
   state.addForm = { brand:'', description:'', code:'', barcode: prefillBarcode||'', party:'', partyName:'', stockQty:0 };
@@ -8664,7 +8781,7 @@ function renderNow(){
         <p class="auth-subtitle">Welcome back, please login to your account</p>
         <div class="auth-field">
           <input type="text" id="loginUser" placeholder="User Name" value="${esc(rememberedUser)}" autocapitalize="none" autocomplete="username" />
-          <span class="auth-icon">♙</span>
+          <span class="auth-icon" data-lucide="user-round" aria-hidden="true"></span>
         </div>
         <div class="auth-field">
           <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()" />
@@ -8717,6 +8834,8 @@ function renderNow(){
   else if(state.tab==='a7') c.innerHTML = renderA7();
   else if(state.tab==='a4') c.innerHTML = renderA4();
   else if(state.tab==='createExcel') c.innerHTML = renderCreateExcel();
+  hydrateLucideIcons(document);
+  replaceVisibleEmojiIcons(c);
   // Restore focus to the previously focused input to keep keyboard open
   if(focusedId){
     const newInput = document.getElementById(focusedId);
