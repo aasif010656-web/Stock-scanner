@@ -473,7 +473,8 @@ button:active,.btn:active{transform:scale(.97)!important;box-shadow:var(--ui-btn
   .lucide-icon{display:inline-block;width:1em;height:1em;flex:none;vertical-align:-.17em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
   .lucide-inline{margin-right:.34em;}
 .ios-row{border-color:var(--ui-border)!important;min-height:var(--ui-row-height,24px);}
-.ios-icon{display:flex!important;align-items:center!important;justify-content:center!important;line-height:1!important;border-radius:var(--ui-icon-radius,9px)!important;box-shadow:var(--ui-icon-shadow,0 4px 10px rgba(0,0,0,.25))!important;}
+.ios-icon{position:relative!important;display:flex!important;align-items:center!important;justify-content:center!important;line-height:1!important;border-radius:var(--ui-icon-radius,9px)!important;box-shadow:var(--ui-icon-shadow,0 4px 10px rgba(0,0,0,.25))!important;}
+.ios-icon > .lucide-icon{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%)!important;margin:0!important;pointer-events:none!important;}
 .bento-grid{gap:var(--ui-grid-gap,10px)!important;}
 .modal-box-dark{background:var(--ui-panel)!important;color:var(--text)!important;}
 
@@ -6169,9 +6170,9 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '92';
+const APP_BUILD = '93';
 const APP_NAME = 'FHL ELECTRONICS';
-const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'Create Excel' };
+const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
   const title = document.getElementById('tabTitle');
   if(title) title.textContent = TAB_TITLES[tab] || APP_NAME;
@@ -9100,13 +9101,13 @@ function renderScan(){
       html += '</div>';
     });
   }
-  // Quick-action tools row (A7 Talker + Create Excel)
+  // Quick-action tools row (A7, A4, and EXCEL)
   const isPromoterScanTools = state.user && state.user.role === 'promoter';
   html += '<div class="btn-row" style="margin-top:18px;gap:10px;">';
   html += '<button class="btn btn-accent" style="flex:1;padding:14px;font-weight:800;font-size:15px;border-radius:12px;" onclick="openA7()">🏷️ A7</button>';
   html += '<button class="btn btn-accent" style="flex:1;padding:14px;font-weight:800;font-size:15px;border-radius:12px;" onclick="openA4()">📄 A4</button>';
   if(!isPromoterScanTools){
-    html += '<button class="btn" style="flex:1;padding:14px;font-weight:800;font-size:15px;border-radius:12px;" onclick="openCreateExcel()">📑 CREATE EXCEL</button>';
+    html += '<button class="btn btn-accent" style="flex:1;padding:14px;font-weight:800;font-size:15px;border-radius:12px;" onclick="openCreateExcel()">📑 EXCEL</button>';
   }
   html += '</div>';
 
@@ -9899,7 +9900,7 @@ function downloadCreateExcel(){
 function renderCreateExcel(){
   let html = '<div class="back-row" style="margin-bottom:12px;">';
   html += '<button class="back-btn" onclick="closeCreateExcel()">&#8592;</button>';
-  html += '<div><div style="font-weight:700;font-size:15px;">📑 Create Excel</div>';
+  html += '<div><div style="font-weight:700;font-size:15px;">📑 EXCEL</div>';
   html += '<div style="font-size:11.5px;color:var(--muted);">' + state.createExcelRows.length + ' row' + (state.createExcelRows.length===1?'':'s') + '</div></div></div>';
 
   html += '<div class="divider-label">Columns to include</div>';
