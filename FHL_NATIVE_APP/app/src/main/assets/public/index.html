@@ -465,14 +465,15 @@ button:active,.btn:active{transform:scale(.97)!important;box-shadow:var(--ui-btn
   .nav-buttons button:hover{color:var(--text)!important;background:rgba(255,255,255,.06)!important;}
   .nav-buttons button.active{color:#fff!important;background:var(--accent)!important;box-shadow:0 8px 18px color-mix(in srgb,var(--accent) 36%,transparent)!important;}
   .nav-buttons button.active .nav-icon{background:transparent!important;padding:0!important;}
-  .nav-icon{display:inline-flex!important;align-items:center!important;justify-content:center!important;line-height:1!important;}
+  .nav-buttons button .nav-icon{width:100%!important;height:100%!important;display:flex!important;align-items:center!important;justify-content:center!important;line-height:1!important;}
   .nav-icon .lucide-icon{width:22px!important;height:22px!important;stroke-width:2.25!important;}
+  .nav-buttons button .lucide-icon,.ios-icon .lucide-icon{display:block!important;vertical-align:0!important;}
   .nav-label{display:none!important;}
   .count-badge{position:absolute!important;right:0!important;top:0!important;min-width:18px!important;height:18px!important;padding:0 4px!important;border:2px solid var(--bg)!important;border-radius:999px!important;background:var(--red)!important;color:#fff!important;font-size:10px!important;line-height:14px!important;align-items:center!important;justify-content:center!important;}
   .lucide-icon{display:inline-block;width:1em;height:1em;flex:none;vertical-align:-.17em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
   .lucide-inline{margin-right:.34em;}
 .ios-row{border-color:var(--ui-border)!important;min-height:var(--ui-row-height,24px);}
-.ios-icon{border-radius:var(--ui-icon-radius,9px)!important;box-shadow:var(--ui-icon-shadow,0 4px 10px rgba(0,0,0,.25))!important;}
+.ios-icon{display:flex!important;align-items:center!important;justify-content:center!important;line-height:1!important;border-radius:var(--ui-icon-radius,9px)!important;box-shadow:var(--ui-icon-shadow,0 4px 10px rgba(0,0,0,.25))!important;}
 .bento-grid{gap:var(--ui-grid-gap,10px)!important;}
 .modal-box-dark{background:var(--ui-panel)!important;color:var(--text)!important;}
 
@@ -5520,15 +5521,23 @@ function mergeReportMetadata(source){
 }
 function cacheReportRowsLocal(report){
   try{
-    const cached = JSON.parse(localStorage.getItem('report-rows-cache') || '{}');
-    cached[reportCloudId(report)] = Array.isArray(report && report.data) ? report.data : [];
-    localStorage.setItem('report-rows-cache', JSON.stringify(cached));
-  }catch(e){}
+    localStorage.setItem('report-rows-cache:' + reportCloudId(report), JSON.stringify(Array.isArray(report && report.data) ? report.data : []));
+    return true;
+  }catch(e){ return false; }
+}
+function cacheReportIndexLocal(){
+  try{
+    localStorage.setItem('app-reports', JSON.stringify((state.reports || []).map(reportMetadata)));
+    return true;
+  }catch(e){ return false; }
 }
 function restoreReportRowsLocal(report){
   try{
-    const cached = JSON.parse(localStorage.getItem('report-rows-cache') || '{}');
-    const rows = cached && cached[reportCloudId(report)];
+    let rows = JSON.parse(localStorage.getItem('report-rows-cache:' + reportCloudId(report)) || 'null');
+    if(!Array.isArray(rows)){
+      const legacyCache = JSON.parse(localStorage.getItem('report-rows-cache') || '{}');
+      rows = legacyCache && legacyCache[reportCloudId(report)];
+    }
     if(Array.isArray(rows) && rows.length){ report.data = rows; report.rowCount = rows.length; return true; }
   }catch(e){}
   return false;
@@ -5543,10 +5552,20 @@ async function saveReportRowsToCloud(report){
   const reportDoc = fbReportRowsRef.doc(reportId);
   const writes = [reportDoc.set(Object.assign(reportMetadata(report), {chunkCount:chunkCount, payloadStored:true}), {merge:true})];
   for(let index=0; index<chunkCount; index++) writes.push(reportDoc.collection('chunks').doc(String(index)).set({rows:rows.slice(index * chunkSize, (index + 1) * chunkSize)}));
-  await Promise.all(writes);
-  report.payloadStored = true;
-  report.chunkCount = chunkCount;
-  cacheReportRowsLocal(report);
+  try{
+    await Promise.all(writes);
+    report.payloadStored = true;
+    report.cloudSyncPending = false;
+    report.chunkCount = chunkCount;
+    cacheReportRowsLocal(report);
+    cacheReportIndexLocal();
+  }catch(error){
+    report.payloadStored = false;
+    report.cloudSyncPending = true;
+    cacheReportRowsLocal(report);
+    cacheReportIndexLocal();
+    throw error;
+  }
 }
 async function loadReportRowsFromCloud(report){
   if(!fbReportRowsRef || !report) return false;
@@ -6150,7 +6169,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '91';
+const APP_BUILD = '92';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'Create Excel' };
 function updateActiveTabTitle(tab){
@@ -6991,7 +7010,13 @@ function setTab(tab, fromBack, animateFromBottomNav){
   window.scrollTo(0,0);
   updateActiveTabTitle(tab);
   updateHeaderSub();
-  render();
+  if(shouldAnimateTabChange){
+    const renderToken = (state._tabRenderToken || 0) + 1;
+    state._tabRenderToken = renderToken;
+    requestAnimationFrame(function(){ if(state._tabRenderToken === renderToken) render(); });
+  }else{
+    render();
+  }
 }
 
 function syncBadge(){
@@ -10059,8 +10084,7 @@ function renderBrandMainResultsHTML(){
   idx.forEach(b=>{
     html += '<div class="brand-card" onclick="openBrand(\'' + b.brand.replace(/'/g,"\\'") + '\')">';
     html += '<div style="flex:1;min-width:0;"><div class="brand-name">' + esc(b.label) + '</div>';
-    html += '<div class="brand-meta">qty ' + fmtInt(b.totalQty) + ' · value ' + fmtMoney(b.totalValue) + '</div></div>';
-    html += '<div class="count-badge">' + b.count + '</div></div>';
+    html += '<div class="brand-meta">qty ' + fmtInt(b.totalQty) + ' · value ' + fmtMoney(b.totalValue) + '</div></div></div>';
   });
   return html;
 }
@@ -10930,11 +10954,24 @@ async function handleImportData(fileInput){
             state.reports.push(reportObj);
             showToast("✓ New report imported");
         }
-        localStorage.setItem('app-reports', JSON.stringify(state.reports)); importedLocally = true; render();
-        
-        await saveReportRowsToCloud(reportObj);
-        await pushToCloud(true, true); render();
-        showToast('✓ Excel imported and synced');
+        cacheReportRowsLocal(reportObj);
+        cacheReportIndexLocal();
+        importedLocally = true;
+        render();
+        try{
+            await pushToCloud(true, true);
+            reportObj.cloudSyncPending = false;
+            cacheReportIndexLocal();
+            render();
+            showToast('✓ Excel imported and synced');
+        }catch(cloudError){
+            reportObj.payloadStored = false;
+            reportObj.cloudSyncPending = true;
+            cacheReportRowsLocal(reportObj);
+            cacheReportIndexLocal();
+            console.error('Excel cloud sync pending', cloudError);
+            showToast('✓ Excel saved locally. Cloud sync will retry when online.');
+        }
     } catch(e) {
         console.error('Excel import sync error', e);
         showToast(importedLocally ? '✓ Excel imported on this device. Cloud sync will retry when online.' : 'Import failed: ' + e.message, !importedLocally);
