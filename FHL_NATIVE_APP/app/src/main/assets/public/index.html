@@ -309,7 +309,8 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .brand-meta{font-size:11.5px;color:var(--muted);margin-top:3px;}
 .count-badge{background:rgba(255,255,255,0.06);color:var(--accent);font-weight:700;font-size:12px;border-radius:10px;padding:4px 9px;flex-shrink:0;}
 .back-row{display:flex;align-items:center;gap:10px;}
-.back-btn{background:#ffffff;border:1px solid #cccccc;border-radius:10px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#12151A;font-weight:700;font-size:16px;box-shadow:0 3px 8px rgba(0,0,0,0.3);}
+.back-btn,.close-mark{background:transparent;border:1px solid rgba(255,255,255,0.24);border-radius:10px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;color:#ffffff;font-weight:700;font-size:24px;line-height:1;box-shadow:none;cursor:pointer;}
+.close-mark{font-size:26px;padding:0;}
 .log-item{background:linear-gradient(155deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:11px 13px;margin-bottom:8px;}
 .log-top{display:flex;justify-content:space-between;font-size:12.5px;font-weight:600;}
 .log-meta{font-size:11px;color:var(--muted);margin-top:4px;}
@@ -341,6 +342,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .bento-tile{grid-column:span 2;background:linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015));backdrop-filter:blur(var(--glass-blur,26px));-webkit-backdrop-filter:blur(var(--glass-blur,26px));border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:10px 12px;display:flex;flex-direction:column;justify-content:center;box-shadow:-2px -2px 5px rgba(255,255,255,0.03) inset, 0 8px 18px rgba(0,0,0,0.25);}
 .bento-tile.wide{grid-column:span 4;flex-direction:row;align-items:center;gap:10px;}
 .bento-tile.small{grid-column:span 1;align-items:center;text-align:center;}
+.bento-tile.settings-account-tile{align-items:center;text-align:center;}
 .bento-label{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;}
 .bento-value{font-size:15px;font-weight:700;margin-top:2px;}
 /* Tappable theme picker: each swatch previews its own bg/accent/panel colors */
@@ -383,8 +385,9 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 #barcodeModal .modal-box{background:#ffffff;color:#111;width:min(92vw,420px);max-width:420px;max-height:80vh;min-height:0;overflow:auto;}
 .modal-overlay.show .modal-box:empty{display:none;}
 .modal-box-dark{background:var(--panel);color:var(--text);border:1px solid var(--border2);}
-.modal-box svg{background:#ffffff !important;display:block;margin:0 auto;}
-.modal-close{position:absolute;top:8px;right:10px;font-size:18px;color:#333;cursor:pointer;font-weight:700;padding:4px 8px;}
+.modal-box svg{background:transparent !important;display:block;margin:0 auto;}
+.modal-close{position:absolute;top:8px;right:10px;font-size:26px;line-height:1;color:#fff;background:transparent;border:0;cursor:pointer;font-weight:700;padding:4px 8px;}
+#barcodeModal .modal-close{color:#111;}
 .barcode-modal-code{font-family:'IBM Plex Mono',monospace;color:#111;font-size:14px;font-weight:600;margin-top:6px;}
 #barcodeSvg{max-width:100%;background:#ffffff !important;}
 .device-actions{display:flex;gap:6px;margin-bottom:8px;}
@@ -5605,6 +5608,43 @@ async function ensureReportRowsAvailable(report){
   }
   return restoreReportRowsLocal(report);
 }
+function getReportsNeedingCloudBackfill(){
+  return (state.reports || []).filter(function(report){
+    const rows = Array.isArray(report && report.data) ? report.data : [];
+    return rows.length > 0 && (!report.payloadStored || report.cloudSyncPending);
+  });
+}
+async function syncReportPayloadsToCloud(options){
+  const opts = options || {};
+  const reports = getReportsNeedingCloudBackfill();
+  if(!reports.length){ if(!opts.silent) showToast('All available Excel reports are already synced to cloud.'); return true; }
+  if(!fbReady || !fbReportRowsRef){
+    reports.forEach(function(report){ report.cloudSyncPending = true; cacheReportRowsLocal(report); });
+    cacheReportIndexLocal();
+    if(!opts.silent) showToast('Connect to the internet to sync Excel reports.', true);
+    return false;
+  }
+  state.reportCloudMigrationRunning = true;
+  if(!opts.silent) showToast('Syncing ' + reports.length + ' Excel report' + (reports.length === 1 ? '' : 's') + ' to cloud…');
+  let failed = 0;
+  for(const report of reports){
+    try{ await saveReportRowsToCloud(report); }
+    catch(error){ failed++; }
+  }
+  try{ await pushToCloud(true, true); }catch(error){ failed = Math.max(1, failed); }
+  state.reportCloudMigrationRunning = false;
+  cacheReportIndexLocal();
+  render();
+  if(!opts.silent) showToast(failed ? 'Some Excel reports are waiting to retry cloud sync.' : '✓ Excel reports synced to cloud.');
+  return failed === 0;
+}
+function queueReportCloudBackfill(){
+  if(state._reportCloudBackfillQueued || isPromoterUser() || !getReportsNeedingCloudBackfill().length) return;
+  state._reportCloudBackfillQueued = true;
+  window.setTimeout(function(){
+    syncReportPayloadsToCloud({silent:true}).catch(function(){}).finally(function(){ state._reportCloudBackfillQueued = false; });
+  }, 750);
+}
 async function deleteReportRowsFromCloud(report){
   if(!fbReportRowsRef || !report) return;
   const reportDoc = fbReportRowsRef.doc(reportCloudId(report));
@@ -5767,6 +5807,7 @@ async function loadStorage(){
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
     syncStatus = 'synced';
+    queueReportCloudBackfill();
     if(a7TemplateNeedsPush && fbDocRef){
       fbDocRef.set({ a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION }, { merge: true }).catch(()=>{});
       a7TemplateNeedsPush = false;
@@ -5821,6 +5862,7 @@ async function loadStorage(){
       const prevExcelSignature = state._websiteLastExcelSignature || (state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName)) || '';
       state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
       state.stockMovements = data.stockMovements || state.stockMovements || [];
+      const previousAppNotifications = state.appNotifications || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
       cachePdfImports();
@@ -5832,6 +5874,7 @@ async function loadStorage(){
       const nextStockAddition = state.stockAdditionNotice || null;
       const nextStockAdditionId = String(nextStockAddition && nextStockAddition.id || '');
       if(!a7FirstSnapshot){
+        surfaceNewAdminActivityNotifications(previousAppNotifications, state.appNotifications);
         const newPriceItems = state.priceChangeNotifications.filter(function(item){ return !prevPriceNotifs.some(function(prev){ return prev.id === item.id; }); });
         const priceGroups = newPriceItems.reduce(function(groups, item){ const key=item.party || 'General'; (groups[key]||(groups[key]=[])).push(item); return groups; }, {});
         Object.keys(priceGroups).forEach(function(party){
@@ -6170,7 +6213,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '93';
+const APP_BUILD = '94';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -6887,6 +6930,18 @@ function addWebsiteNotification(note){
   saveWebsiteNotifications();
   updateWebsiteNotificationBadge();
 }
+function surfaceNewAdminActivityNotifications(previous, current){
+  if(!isAdminUser()) return;
+  const known = new Set((previous || []).map(function(note){ return String(note && note.id || ''); }));
+  (current || []).filter(function(note){
+    return note && note.category === 'activity' && note.audience === 'admin' && note.id && !known.has(String(note.id));
+  }).forEach(function(note){
+    addWebsiteNotification({
+      id: 'activity-' + String(note.id), category: 'activity', tab: 'settings', ts: Number(note.ts || Date.now()),
+      title: String(note.title || 'Account active'), body: String(note.message || 'A team member is active.')
+    });
+  });
+}
 function updateWebsiteNotificationBadge(){
   const bell = document.getElementById('notificationBell');
   if(!bell) return;
@@ -7556,8 +7611,8 @@ function mergeItemsByProductCode(items){
 }
 
 function setBrandSort(mode){ state.brandSort = mode; render(); }
-function openBrand(name){ state.selectedBrand = name; state.productQuery=''; state.expandedSL=null; state.editingStockBarcode=null; state.editingProductSL=null; state.editProductForm=null; render(); }
-function closeBrand(){ state.selectedBrand=null; render(); window.scrollTo(0,0); }
+function openBrand(name){ state._brandsReturnScrollY = window.scrollY || document.documentElement.scrollTop || 0; state.selectedBrand = name; state.productQuery=''; state.expandedSL=null; state.editingStockBarcode=null; state.editingProductSL=null; state.editProductForm=null; render(); }
+function closeBrand(){ const returnY = Number(state._brandsReturnScrollY || 0); state.selectedBrand=null; render(); requestAnimationFrame(function(){ window.scrollTo(0, returnY); }); }
 function toggleExpand(sl){ state.expandedSL = state.expandedSL===sl ? null : sl; state.editingStockBarcode=null; state.editingProductSL=null; state.editProductForm=null; render(); }
 
 function startEditStock(barcode, currentQty){
@@ -8054,7 +8109,41 @@ function login(username, password, remember){
     showToast("Invalid credentials", true);
   }
 }
+function cancelHardResetPasswordPrompt(){
+  const resolve = state._hardResetPasswordResolve;
+  state._hardResetPasswordResolve = null;
+  closeActionModal();
+  if(resolve) resolve(false);
+}
+function confirmHardResetPassword(){
+  const input = document.getElementById('hardResetPasswordInput');
+  const entered = input ? String(input.value || '') : '';
+  const expected = String((state.appUsers || {}).Asif || '');
+  if(!expected || entered !== expected){
+    showToast('Administrator password is incorrect.', true);
+    if(input){ input.focus(); input.select(); }
+    return;
+  }
+  const resolve = state._hardResetPasswordResolve;
+  state._hardResetPasswordResolve = null;
+  closeActionModal();
+  if(resolve) resolve(true);
+}
+function requestHardResetPassword(){
+  return new Promise(function(resolve){
+    state._hardResetPasswordResolve = resolve;
+    openActionModal(
+      '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">Administrator Password Required</div>' +
+      '<div style="font-size:13px;line-height:1.5;color:var(--muted);margin-bottom:12px;">Enter the current administrator password before opening the permanent Hard Reset confirmation.</div>' +
+      '<input id="hardResetPasswordInput" type="password" autocomplete="current-password" placeholder="Administrator password" style="width:100%;box-sizing:border-box;margin-bottom:14px;" />' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="btn btn-ghost" onclick="cancelHardResetPasswordPrompt()">Cancel</button><button class="btn btn-accent" onclick="confirmHardResetPassword()">Continue</button></div>'
+    );
+    setTimeout(function(){ const input = document.getElementById('hardResetPasswordInput'); if(input) input.focus(); }, 50);
+  });
+}
 async function fullHardReset(){
+  if(!isAdminUser() || !(state.user && state.user.username === 'Asif')){ showToast('Only the administrator can run a Hard Reset.', true); return; }
+  if(!(await requestHardResetPassword())) return;
   if(!(await appConfirm('This will permanently delete all products, brands, stock corrections, scan logs, and reports. This cannot be undone.', 'Full Hard Reset'))) return;
   if(!(await appConfirm('All app data will be lost. Continue only if you are certain.', 'Confirm Permanent Deletion'))) return;
   // Clear all in-memory data
@@ -8837,6 +8926,7 @@ function renderNow(){
   });
   // Preserve focus state before re-rendering to prevent keyboard from closing
   const activeEl = document.activeElement;
+  if(isPromoterUser() && state.tab === 'data') state.tab = 'scan';
   const sameTab = state._renderedTab === state.tab;
   const savedScrollX = sameTab ? window.scrollX : 0;
   const savedScrollY = sameTab ? window.scrollY : 0;
@@ -9414,7 +9504,7 @@ function renderA7(){
   if(!state.a7Slots || state.a7Slots.length !== 6) state.a7Slots = [null,null,null,null,null,null];
   const filledCount = state.a7Slots.filter(s=>s).length;
   let html = '<div class="back-row" style="margin-bottom:12px;">';
-  html += '<button class="back-btn" onclick="closeA7()">&#8592;</button>';
+  html += '<button class="back-btn close-mark" onclick="closeA7()" aria-label="Close A7">&times;</button>';
   html += '<div><div style="font-weight:700;font-size:15px;">🏷️ A7 Talker</div>';
   html += '<div style="font-size:11.5px;color:var(--muted);">Will be sent to Staff as "' + esc(state.user.username) + ' A7"</div></div></div>';
 
@@ -9761,7 +9851,7 @@ function renderA4(){
   const filledCount = state.a4Slots.filter(s=>s).length;
   const queueCount = (state.a4Queue || []).length;
   let html = '<div class="back-row" style="margin-bottom:12px;">';
-  html += '<button class="back-btn" onclick="closeA4()">&#8592;</button>';
+  html += '<button class="back-btn close-mark" onclick="closeA4()" aria-label="Close A4">&times;</button>';
   html += '<div><div style="font-weight:700;font-size:15px;">📄 A4 Label</div>';
   html += '<div style="font-size:11.5px;color:var(--muted);">Type barcodes with the numeric keypad — 13 digits auto-adds</div></div></div>';
 
@@ -9899,7 +9989,7 @@ function downloadCreateExcel(){
 
 function renderCreateExcel(){
   let html = '<div class="back-row" style="margin-bottom:12px;">';
-  html += '<button class="back-btn" onclick="closeCreateExcel()">&#8592;</button>';
+  html += '<button class="back-btn close-mark" onclick="closeCreateExcel()" aria-label="Close EXCEL">&times;</button>';
   html += '<div><div style="font-weight:700;font-size:15px;">📑 EXCEL</div>';
   html += '<div style="font-size:11.5px;color:var(--muted);">' + state.createExcelRows.length + ' row' + (state.createExcelRows.length===1?'':'s') + '</div></div></div>';
 
@@ -10103,7 +10193,7 @@ function renderBrands(){
     const bd = idx.find(b=>b.brand===state.selectedBrand);
     if(!bd) { state.selectedBrand=null; return renderBrands(); }
     let html = '<div class="back-row" style="margin-bottom:12px;">';
-    html += '<button class="back-btn sticky-back" onclick="closeBrand()">&#8592;</button>';
+    html += '<button class="back-btn close-mark sticky-back" onclick="closeBrand()" aria-label="Close brand">&times;</button>';
     html += '<div style="width:44px;height:34px;flex-shrink:0;"></div>'; // spacer for sticky button
     const titleLabel = state.brandSort === 'party' ? 'Party: ' : 'Brand: ';
     html += '<div><div style="font-weight:700;font-size:15px;">' + titleLabel + esc(bd.label) + '</div>';
@@ -10326,8 +10416,8 @@ function renderSettings(){
 
   // ---- Account ----
   html += '<div class="bento-grid">';
-  html += '<div class="bento-tile"><div class="bento-label">Logged in as</div><div class="bento-value">' + esc(state.user.username) + '</div></div>';
-  html += '<div class="bento-tile"><div class="bento-label">Role</div><div class="bento-value" style="text-transform:capitalize;">' + esc(state.user.role) + '</div></div>';
+  html += '<div class="bento-tile settings-account-tile"><div class="bento-label">Logged in as</div><div class="bento-value">' + esc(state.user.username) + '</div></div>';
+  html += '<div class="bento-tile settings-account-tile"><div class="bento-label">Role</div><div class="bento-value" style="text-transform:capitalize;">' + esc(state.user.role) + '</div></div>';
   html += '<div class="bento-tile small"><div class="bento-label">Version</div><div class="bento-value">' + esc(APP_VERSION) + '</div></div>';
   html += '<div class="bento-tile small"><div class="bento-label">Sync</div><div class="bento-value">' + (syncStatus==='synced' ? '☁️' : '⚠️') + '</div></div>';
   html += '<div class="bento-tile small" style="grid-column:span 2;"><div class="bento-label">Cloud Sync Status</div><div class="bento-value">' + esc(syncStatus.toUpperCase()) + '</div></div>';
@@ -10651,7 +10741,9 @@ function exportAgingExcel(partyFilter){
 
 function renderData(){
   let html = '<div class="section">';
+  const reportsWaitingForCloud = getReportsNeedingCloudBackfill();
   html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><h2 style="margin-bottom:0;">Data & Excel</h2><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="triggerImportData()">📥 Import Excel</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost" onclick="triggerImportPdf()">📄 Import PDF</button>' : '') + '</div></div>';
+  if(isStaffOrAdmin() && reportsWaitingForCloud.length) html += '<div class="card" style="padding:11px 12px;margin:12px 0;display:flex;align-items:center;justify-content:space-between;gap:10px;"><div style="font-size:12px;color:var(--muted);">' + reportsWaitingForCloud.length + ' Excel report' + (reportsWaitingForCloud.length === 1 ? '' : 's') + ' waiting for cloud sync.</div><button class="btn btn-accent btn-sm" onclick="syncReportPayloadsToCloud()">Sync to Cloud</button></div>';
   html += '<input id="importDataInput" type="file" accept=".xlsx,.xls" style="display:none" onchange="handleImportData(this)" />';
   if(isStaffOrAdmin()){
     const pdfImports = getVisiblePdfImports();
@@ -10723,7 +10815,7 @@ function renderReportWorkspace(){
   const report = state.reports && state.reports[idx];
   const content = document.getElementById('reportWorkspaceContent');
   if(!content || !report) return;
-  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Spreadsheet view</div></div><button class="btn btn-ghost btn-sm" onclick="closeReportWorkspace()">Close</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><label style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--ui-border);border-radius:13px;background:var(--ui-panel);box-shadow:var(--ui-shadow);"><span aria-hidden="true">🔎</span><input type="search" value="' + esc(state.reportSearch[idx] || '') + '" oninput="updateReportSearch(' + idx + ',this.value)" placeholder="Search brands, items, barcodes, or any Excel value…" aria-label="Search imported Excel" style="flex:1;border:0;outline:0;background:transparent;color:var(--text);font-size:14px;min-width:0;"><button class="btn btn-ghost btn-sm" type="button" onclick="updateReportSearch(' + idx + ',\'\');renderReportWorkspace()">Clear</button></label><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
+  content.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;"><div style="min-width:0;"><div style="font-size:18px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(report.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number((report.data||[]).length) + ' rows · Spreadsheet view</div></div><button class="close-mark" onclick="closeReportWorkspace()" aria-label="Close Excel workspace">&times;</button></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;"><button class="btn btn-accent btn-sm" onclick="saveReportWorkspace()">Save</button><button class="btn btn-ghost btn-sm" onclick="addReportRow(' + idx + ')">＋ Add Row</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + idx + ')">🗑 Delete Report</button></div><label style="display:flex;align-items:center;gap:8px;padding:10px 12px;margin-bottom:10px;border:1px solid var(--ui-border);border-radius:13px;background:var(--ui-panel);box-shadow:var(--ui-shadow);"><span aria-hidden="true">🔎</span><input type="search" value="' + esc(state.reportSearch[idx] || '') + '" oninput="updateReportSearch(' + idx + ',this.value)" placeholder="Search brands, items, barcodes, or any Excel value…" aria-label="Search imported Excel" style="flex:1;border:0;outline:0;background:transparent;color:var(--text);font-size:14px;min-width:0;"><button class="btn btn-ghost btn-sm" type="button" onclick="updateReportSearch(' + idx + ',\'\');renderReportWorkspace()">Clear</button></label><div id="reportTableWrap_' + idx + '">' + renderReportExcelTable(idx) + '</div>';
 }
 async function closeReportWorkspace(){
   if(state.reportDirty){
@@ -11059,6 +11151,25 @@ function renderPriceLog(){
   if(allVisiblePriceNotifs.length) html += renderPartyPriceHistory(myPriceNotifs, partyOptions, selectedParty);
   return html;
 }
+function toggleLogResultFolder(folderKey){
+  state.logResultFolders = state.logResultFolders || {};
+  state.logResultFolders[folderKey] = !state.logResultFolders[folderKey];
+  render();
+}
+function renderLogResultFolder(kind, entry, index){
+  const resultId = String(entry && (entry.id || entry.name) || 'result-' + index);
+  const folderKey = kind + ':' + resultId;
+  const isOpen = !!(state.logResultFolders && state.logResultFolders[folderKey]);
+  const safeFolderKey = esc(folderKey).replace(/'/g, "\\'");
+  const safeId = esc(resultId).replace(/'/g, "\\'");
+  const label = kind === 'a7' ? 'A7 Result' : (kind === 'a4' ? 'A4 Result' : 'EXCEL Result');
+  const details = kind === 'a7'
+    ? '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number(entry.filledCount || 0) + ' item(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-ghost btn-sm" onclick="openA7Preview(\'' + safeId + '\')">Open</button><button class="btn btn-ghost btn-sm" onclick="downloadA7Excel(\'' + safeId + '\')">⬇ Share</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA7Excel(\'' + safeId + '\')">🗑 Delete</button>' : '') + '</div>'
+    : kind === 'a4'
+      ? '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number(entry.pageCount || 0) + ' page(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-ghost btn-sm" onclick="openA4Preview(\'' + safeId + '\')">Open</button><button class="btn btn-ghost btn-sm" onclick="downloadA4Pdf(\'' + safeId + '\')">⬇ Share</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA4Excel(\'' + safeId + '\')">🗑 Delete</button>' : '') + '</div>'
+      : '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number(entry.rowCount || (entry.data || []).length || 0) + ' rows · ' + esc(entry.date || '') + '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-ghost btn-sm" onclick="openReportWorkspace(' + index + ')">Open Excel</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + index + ')">🗑 Delete</button></div>';
+  return '<div class="card" style="padding:0;margin-bottom:8px;overflow:hidden;"><button type="button" onclick="toggleLogResultFolder(\'' + safeFolderKey + '\')" style="width:100%;padding:12px;border:0;background:transparent;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;"><span style="min-width:0;"><span style="display:block;font-size:12px;font-weight:800;">📁 ' + label + '</span><span style="display:block;margin-top:3px;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Result ID · ' + esc(resultId) + '</span></span><span style="font-size:16px;color:var(--accent);">' + (isOpen ? '⌃' : '⌄') + '</span></button>' + (isOpen ? '<div style="padding:0 12px 12px;border-top:1px solid var(--ui-border);">' + details + '</div>' : '') + '</div>';
+}
 function renderLog(){
   const deviceCount = new Set(scanLog.map(l=>l.deviceId||'unknown')).size;
   let html = '';
@@ -11069,36 +11180,20 @@ function renderLog(){
 
   const myA7Excels = (state.a7Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username));
   if(myA7Excels.length){
-    html += '<div class="divider-label">A7 Talker Excels</div>';
-    myA7Excels.forEach(entry=>{
-      html += '<div class="card" style="padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">';
-      html += '<div style="min-width:0;cursor:pointer;" onclick="openA7Preview(\'' + entry.id + '\')">';
-      html += '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div>';
-      html += '<div style="font-size:11px;color:var(--muted);">' + entry.filledCount + ' item(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
-      html += '</div>';
-      html += '<div style="display:flex;gap:6px;flex-shrink:0;">';
-      html += '<button class="btn btn-ghost btn-sm" onclick="downloadA7Excel(\'' + entry.id + '\')" title="Download / Share">⬇ Share</button>';
-      if(isStaffOrAdmin()) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA7Excel(\'' + entry.id + '\')">🗑</button>';
-      html += '</div>';
-      html += '</div>';
-    });
+    html += '<div class="divider-label">A7 Results</div>';
+    myA7Excels.forEach(function(entry, index){ html += renderLogResultFolder('a7', entry, index); });
   }
 
   const myA4Excels = (state.a4Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username));
   if(myA4Excels.length){
-    html += '<div class="divider-label">A4 Label PDFs</div>';
-    myA4Excels.forEach(entry=>{
-      html += '<div class="card" style="padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">';
-      html += '<div style="min-width:0;cursor:pointer;" onclick="openA4Preview(\'' + entry.id + '\')">';
-      html += '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div>';
-      html += '<div style="font-size:11px;color:var(--muted);">' + entry.pageCount + ' page(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div>';
-      html += '</div>';
-      html += '<div style="display:flex;gap:6px;flex-shrink:0;">';
-      html += '<button class="btn btn-ghost btn-sm" onclick="downloadA4Pdf(\'' + entry.id + '\')" title="Download / Share">⬇ Share</button>';
-      if(isStaffOrAdmin()) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA4Excel(\'' + entry.id + '\')">🗑</button>';
-      html += '</div>';
-      html += '</div>';
-    });
+    html += '<div class="divider-label">A4 Results</div>';
+    myA4Excels.forEach(function(entry, index){ html += renderLogResultFolder('a4', entry, index); });
+  }
+
+  const excelReports = state.reports || [];
+  if(excelReports.length){
+    html += '<div class="divider-label">EXCEL Results</div>';
+    excelReports.forEach(function(report, index){ html += renderLogResultFolder('excel', report, index); });
   }
 
   const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewParty(notification.party || notification.partyName); });
