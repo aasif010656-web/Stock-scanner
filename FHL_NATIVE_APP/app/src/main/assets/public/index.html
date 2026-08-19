@@ -443,6 +443,11 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 :root{--ui-radius:18px;--ui-radius-sm:12px;--ui-card-pad:14px;--ui-panel:rgba(255,255,255,.06);--ui-border:rgba(255,255,255,.10);--ui-blur:18px;--ui-shadow:0 14px 32px rgba(0,0,0,.30);--ui-control-radius:13px;--ui-control-height:44px;--ui-font-scale:1;}
 body{background-color:var(--bg)!important;color:var(--text)!important;transition:background-color .35s ease,color .25s ease;}
 #content{contain:layout style;transition:none;scrollbar-gutter:stable;overflow-anchor:none;}
+#content.tab-transition-enter{will-change:transform,opacity;animation:tabContentEnter .24s cubic-bezier(.23,1,.32,1) both;}
+#content.tab-transition-enter[data-tab-transition-direction="backward"]{animation-name:tabContentEnterBackward;}
+@keyframes tabContentEnter{from{opacity:0;transform:translate3d(14px,0,0);}to{opacity:1;transform:translate3d(0,0,0);}}
+@keyframes tabContentEnterBackward{from{opacity:0;transform:translate3d(-14px,0,0);}to{opacity:1;transform:translate3d(0,0,0);}}
+@media (prefers-reduced-motion:reduce){#content.tab-transition-enter{animation:none!important;}}
 .card,.form-card,.ios-group,.bento-tile,.dupwarn,.backup-note,.modal-box-dark{border-radius:var(--ui-radius)!important;background:var(--ui-panel)!important;border:1px solid var(--ui-border)!important;box-shadow:var(--ui-shadow)!important;backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;-webkit-backdrop-filter:blur(var(--ui-blur)) saturate(135%)!important;transition:border-radius .35s ease,box-shadow .35s ease,background .35s ease,transform .2s ease;}
 .card,.form-card{padding:var(--ui-card-pad)!important;}
 .card:hover,.form-card:hover,.bento-tile:hover{transform:translateY(var(--ui-hover-y,0));}
@@ -697,12 +702,12 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 <div class="bottom-nav" id="bottomNav" style="display:none;">
   <div class="nav-credit"></div>
   <div class="nav-buttons">
-    <button id="navScan" class="active" onclick="setTab('scan')" aria-label="Scan" title="Scan"><span class="nav-icon" data-lucide="scan-line" aria-hidden="true"></span></button>
-    <button id="navBrands" onclick="setTab('brands')" aria-label="Brands" title="Brands"><span class="nav-icon" data-lucide="tags" aria-hidden="true"></span></button>
-    <button id="navAging" onclick="setTab('aging')" aria-label="Aging" title="Aging"><span class="nav-icon" data-lucide="clock-3" aria-hidden="true"></span></button>
-    <button id="navData" onclick="setTab('data')" aria-label="Data" title="Data"><span class="nav-icon" data-lucide="file-spreadsheet" aria-hidden="true"></span></button>
-    <button id="navLog" onclick="setTab('log')" aria-label="Log" title="Log"><span class="nav-icon" data-lucide="clipboard-list" aria-hidden="true"></span></button>
-    <button id="navSettings" onclick="setTab('settings')" aria-label="Settings" title="Settings"><span class="nav-icon" data-lucide="settings-2" aria-hidden="true"></span></button>
+    <button id="navScan" class="active" onclick="setTab('scan', false, true)" aria-label="Scan" title="Scan"><span class="nav-icon" data-lucide="scan-line" aria-hidden="true"></span></button>
+    <button id="navBrands" onclick="setTab('brands', false, true)" aria-label="Brands" title="Brands"><span class="nav-icon" data-lucide="tags" aria-hidden="true"></span></button>
+    <button id="navAging" onclick="setTab('aging', false, true)" aria-label="Aging" title="Aging"><span class="nav-icon" data-lucide="clock-3" aria-hidden="true"></span></button>
+    <button id="navData" onclick="setTab('data', false, true)" aria-label="Data" title="Data"><span class="nav-icon" data-lucide="file-spreadsheet" aria-hidden="true"></span></button>
+    <button id="navLog" onclick="setTab('log', false, true)" aria-label="Log" title="Log"><span class="nav-icon" data-lucide="clipboard-list" aria-hidden="true"></span></button>
+    <button id="navSettings" onclick="setTab('settings', false, true)" aria-label="Settings" title="Settings"><span class="nav-icon" data-lucide="settings-2" aria-hidden="true"></span></button>
   </div>
 </div>
 
@@ -6145,7 +6150,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '90';
+const APP_BUILD = '91';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'Create Excel' };
 function updateActiveTabTitle(tab){
@@ -6934,7 +6939,7 @@ function closeAllTransientOverlays(){
   state._confirmRequest = null;
   state._pendingUpdateUrl = '';
 }
-function setTab(tab, fromBack){
+function setTab(tab, fromBack, animateFromBottomNav){
   if(!state._bypassUnsavedGuard && (state.editProductDirty || state.reportDirty)){
     const targetTab = tab;
     appConfirm('You have unsaved edits. Save them before leaving?', 'Unsaved Changes').then(async function(save){
@@ -6946,7 +6951,7 @@ function setTab(tab, fromBack){
         state.editProductDirty = false;
       }
       state._bypassUnsavedGuard = true;
-      setTab(targetTab, fromBack);
+      setTab(targetTab, fromBack, animateFromBottomNav);
       state._bypassUnsavedGuard = false;
     });
     return;
@@ -6961,7 +6966,13 @@ function setTab(tab, fromBack){
   if(state.tab === 'a7' && tab !== 'a7'){
     finishA7Batch();
   }
-  if(!fromBack && state.tab !== tab){ try{ history.pushState({tab:tab}, '', location.href); }catch(e){} }
+  const previousTab = state.tab;
+  const bottomNavOrder = ['scan', 'brands', 'aging', 'data', 'log', 'settings'];
+  const shouldAnimateTabChange = !!animateFromBottomNav && previousTab !== tab && bottomNavOrder.includes(previousTab) && bottomNavOrder.includes(tab);
+  state._pendingTabTransition = shouldAnimateTabChange ? {
+    direction: bottomNavOrder.indexOf(tab) < bottomNavOrder.indexOf(previousTab) ? 'backward' : 'forward'
+  } : null;
+  if(!fromBack && previousTab !== tab){ try{ history.pushState({tab:tab}, '', location.href); }catch(e){} }
   document.body.classList.toggle('brands-scroll-stable', tab === 'brands');
   state.tab = tab;
   if(tab === 'a7' || tab === 'a4') startScanInputFocusKeeper(); else stopScanInputFocusKeeper();
@@ -8815,6 +8826,25 @@ function renderNow(){
   else if(state.tab==='a7') c.innerHTML = renderA7();
   else if(state.tab==='a4') c.innerHTML = renderA4();
   else if(state.tab==='createExcel') c.innerHTML = renderCreateExcel();
+  c.classList.remove('tab-transition-enter');
+  delete c.dataset.tabTransitionDirection;
+  const pendingTabTransition = state._pendingTabTransition;
+  state._pendingTabTransition = null;
+  if(pendingTabTransition){
+    const transitionToken = (state._tabTransitionToken || 0) + 1;
+    state._tabTransitionToken = transitionToken;
+    requestAnimationFrame(function(){
+      if(state._tabTransitionToken !== transitionToken) return;
+      c.dataset.tabTransitionDirection = pendingTabTransition.direction;
+      c.classList.add('tab-transition-enter');
+      window.setTimeout(function(){
+        if(state._tabTransitionToken === transitionToken){
+          c.classList.remove('tab-transition-enter');
+          delete c.dataset.tabTransitionDirection;
+        }
+      }, 280);
+    });
+  }
   hydrateLucideIcons(document);
   replaceVisibleEmojiIcons(c);
   // Restore focus to the previously focused input to keep keyboard open
