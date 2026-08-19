@@ -5515,13 +5515,32 @@ function reportMetadata(report){
   return { id: reportCloudId(report), name: String((report && report.name) || 'Imported report'), date: String((report && report.date) || ''), rowCount: Number((report && report.rowCount) || rows.length || 0), updatedAt: Number((report && report.updatedAt) || Date.now()), audience: String((report && report.audience) || 'staff_admin'), payloadStored: !!(report && report.payloadStored) };
 }
 function mergeReportMetadata(source){
-  const existing = new Map((state.reports || []).map(function(report){ return [reportCloudId(report), report]; }));
-  return (Array.isArray(source) ? source : []).map(function(meta){
-    const local = existing.get(reportCloudId(meta));
-    const merged = Object.assign({}, meta, { id: reportCloudId(meta), data: local && Array.isArray(local.data) && local.data.length ? local.data : (Array.isArray(meta.data) ? meta.data : []) });
+  const localReports = Array.isArray(state.reports) ? state.reports : [];
+  const localById = new Map(localReports.map(function(report){ return [reportCloudId(report), report]; }));
+  const mergedById = new Map();
+  (Array.isArray(source) ? source : []).forEach(function(meta){
+    const id = reportCloudId(meta);
+    if(!id || (deletedKeys && deletedKeys.reports && deletedKeys.reports.has(id))) return;
+    const local = localById.get(id);
+    const merged = Object.assign({}, meta, { id: id, data: local && Array.isArray(local.data) && local.data.length ? local.data : (Array.isArray(meta.data) ? meta.data : []) });
+    if(local && (local.cloudSyncPending || !local.payloadStored) && Number(local.updatedAt || 0) >= Number(meta.updatedAt || 0)){
+      Object.assign(merged, local, { id: id, data: local.data });
+    }
     if(!merged.data.length) restoreReportRowsLocal(merged);
-    return merged;
+    mergedById.set(id, merged);
   });
+  // A stale cloud snapshot must not erase a newly imported local report while
+  // its payload/index write is pending. Keep it visible until a later snapshot
+  // confirms the cloud copy.
+  localReports.forEach(function(local){
+    const id = reportCloudId(local);
+    if(!id || (deletedKeys && deletedKeys.reports && deletedKeys.reports.has(id))) return;
+    if(!mergedById.has(id) && (local.cloudSyncPending || !local.payloadStored)){
+      if(!Array.isArray(local.data) || !local.data.length) restoreReportRowsLocal(local);
+      mergedById.set(id, local);
+    }
+  });
+  return Array.from(mergedById.values());
 }
 function cacheReportRowsLocal(report){
   try{
@@ -6033,7 +6052,8 @@ function unionExtraBarcodes(cloudArr, localArr, mergedArr){
   return mergedArr;
 }
 
-async function pushToCloud(force, suppressToast){
+async function pushToCloud(force, suppressToast, options){
+  const preserveStatus = !!(options && options.preserveStatus);
   // Save locally first to prevent data loss
   try {
     markStockCacheFresh(Date.now());
@@ -6049,11 +6069,11 @@ async function pushToCloud(force, suppressToast){
     try{ if(state._lastLogoutCheck) localStorage.setItem('last-logout-check', String(state._lastLogoutCheck)); }catch(e){}
   } catch(e) { console.error("Local save failed", e); }
 
-  if(!fbReady){ syncStatus = 'offline'; updateHeaderSub(); return; }
+  if(!fbReady){ if(!preserveStatus) syncStatus = 'offline'; updateHeaderSub(); return false; }
   if(!force && state.syncInterval === 'manual') {
-    syncStatus = 'offline';
+    if(!preserveStatus) syncStatus = 'offline';
     updateHeaderSub();
-    return;
+    return false;
   }
   try{
     // Re-fetch the freshest cloud copy right before writing, and merge array fields
@@ -6069,7 +6089,7 @@ async function pushToCloud(force, suppressToast){
     try{ if(fbReportDocRef){ const snap = await fbReportDocRef.get(); if(snap.exists) cloudReportData = snap.data() || {}; } }catch(e){}
 
     const mergedCustomProducts = unionExtraBarcodes(cloudData.customProducts, customProducts, mergeArrayByKey(cloudData.customProducts, customProducts, x=>x.SL, deletedKeys.customProducts));
-    const mergedReports = mergeArrayByKey(cloudReportData.reports || cloudData.reports, state.reports, x=>reportCloudId(x), deletedKeys.reports);
+    const mergedReports = mergeReportMetadata(cloudReportData.reports || cloudData.reports);
     for(const report of mergedReports){
       if(Array.isArray(report.data) && report.data.length && !report.payloadStored) await saveReportRowsToCloud(report);
     }
@@ -6134,11 +6154,13 @@ async function pushToCloud(force, suppressToast){
     syncStatus = 'synced';
     checkForceLogout();
     render();
+    return true;
   }catch(e){
-    syncStatus = 'offline';
+    if(!preserveStatus) syncStatus = 'offline';
     if(force && !suppressToast) showToast("Cloud sync failed — check internet connection", true);
+    updateHeaderSub();
+    return false;
   }
-  updateHeaderSub();
 }
 
 async function saveStockOverrides(){ await pushToCloud(true, true); }
@@ -6213,7 +6235,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '95';
+const APP_BUILD = '96';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -11055,11 +11077,20 @@ async function handleImportData(fileInput){
         importedLocally = true;
         render();
         try{
-            await pushToCloud(true, true);
-            reportObj.cloudSyncPending = false;
-            cacheReportIndexLocal();
-            render();
-            showToast('✓ Excel imported and synced');
+            const cloudSyncCompleted = await pushToCloud(true, true, { preserveStatus: true });
+            if(cloudSyncCompleted === true && reportObj.payloadStored === true){
+                reportObj.cloudSyncPending = false;
+                cacheReportIndexLocal();
+                render();
+                showToast('✓ Excel imported and synced');
+            }else{
+                reportObj.payloadStored = false;
+                reportObj.cloudSyncPending = true;
+                cacheReportRowsLocal(reportObj);
+                cacheReportIndexLocal();
+                render();
+                showToast('✓ Excel saved locally. Cloud sync will retry when online.');
+            }
         }catch(cloudError){
             reportObj.payloadStored = false;
             reportObj.cloudSyncPending = true;
