@@ -6213,7 +6213,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '94';
+const APP_BUILD = '95';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -7034,7 +7034,7 @@ function setTab(tab, fromBack, animateFromBottomNav){
   closeAllTransientOverlays();
   if(state.cameraOn) stopCamera();
   if(tab === 'priceLog') tab = 'log';
-  if(tab === 'data' && state.user && state.user.role === 'promoter'){
+  if(tab === 'data' && isPromoterUser()){
     tab = 'scan';
   }
   // Leaving the A7 tool: auto-send whatever was captured, then always clear the working slots.
@@ -8919,10 +8919,15 @@ function renderNow(){
   { const hdr = document.getElementById('appHeader'); if(hdr) hdr.style.display = ''; }
   updateNotificationBadge();
   // Promoters do not get Data, but their party-filtered Price Update history is now inside Log.
-  const isPromoter = state.user.role === 'promoter';
+  const isPromoter = isPromoterUser();
   ['navData'].forEach(id=>{
     const el = document.getElementById(id);
-    if(el) el.style.display = isPromoter ? 'none' : '';
+    if(el){
+      el.hidden = isPromoter;
+      el.style.display = isPromoter ? 'none' : '';
+      el.setAttribute('aria-hidden', isPromoter ? 'true' : 'false');
+      el.tabIndex = isPromoter ? -1 : 0;
+    }
   });
   // Preserve focus state before re-rendering to prevent keyboard from closing
   const activeEl = document.activeElement;
@@ -8977,7 +8982,7 @@ function renderNow(){
   }
 }
 
-function isPromoterUser(){ return !!(state.user && state.user.role === 'promoter'); }
+function isPromoterUser(){ return String((state.user && state.user.role) || '').trim().toLowerCase() === 'promoter'; }
 function normalizedPartyCode(value){ return String(value || '').trim().toUpperCase(); }
 function currentUserPartyCodes(){ return (state.user && Array.isArray(state.user.partyCodes) ? state.user.partyCodes : []).map(normalizedPartyCode).filter(Boolean); }
 function canViewParty(partyCode){ return isAdminUser() || currentUserPartyCodes().includes(normalizedPartyCode(partyCode)); }
@@ -10741,9 +10746,7 @@ function exportAgingExcel(partyFilter){
 
 function renderData(){
   let html = '<div class="section">';
-  const reportsWaitingForCloud = getReportsNeedingCloudBackfill();
   html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;"><h2 style="margin-bottom:0;">Data & Excel</h2><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-accent" onclick="triggerImportData()">📥 Import Excel</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost" onclick="triggerImportPdf()">📄 Import PDF</button>' : '') + '</div></div>';
-  if(isStaffOrAdmin() && reportsWaitingForCloud.length) html += '<div class="card" style="padding:11px 12px;margin:12px 0;display:flex;align-items:center;justify-content:space-between;gap:10px;"><div style="font-size:12px;color:var(--muted);">' + reportsWaitingForCloud.length + ' Excel report' + (reportsWaitingForCloud.length === 1 ? '' : 's') + ' waiting for cloud sync.</div><button class="btn btn-accent btn-sm" onclick="syncReportPayloadsToCloud()">Sync to Cloud</button></div>';
   html += '<input id="importDataInput" type="file" accept=".xlsx,.xls" style="display:none" onchange="handleImportData(this)" />';
   if(isStaffOrAdmin()){
     const pdfImports = getVisiblePdfImports();
@@ -11156,19 +11159,25 @@ function toggleLogResultFolder(folderKey){
   state.logResultFolders[folderKey] = !state.logResultFolders[folderKey];
   render();
 }
-function renderLogResultFolder(kind, entry, index){
-  const resultId = String(entry && (entry.id || entry.name) || 'result-' + index);
-  const folderKey = kind + ':' + resultId;
+function renderPartyResultItem(kind, entry){
+  const resultId = String(entry && (entry.id || entry.name) || 'result');
+  const safeId = esc(resultId).replace(/'/g, "\\'");
+  const isA7 = kind === 'a7';
+  const label = isA7 ? 'A7' : 'A4';
+  const quantity = isA7 ? Number(entry.filledCount || 0) + ' item(s)' : Number(entry.pageCount || 0) + ' page(s)';
+  const actions = isA7
+    ? '<button class="btn btn-ghost btn-sm" onclick="openA7Preview(\'' + safeId + '\')">Open</button><button class="btn btn-ghost btn-sm" onclick="downloadA7Excel(\'' + safeId + '\')">⬇ Share</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA7Excel(\'' + safeId + '\')">🗑 Delete</button>' : '')
+    : '<button class="btn btn-ghost btn-sm" onclick="openA4Preview(\'' + safeId + '\')">Open</button><button class="btn btn-ghost btn-sm" onclick="downloadA4Pdf(\'' + safeId + '\')">⬇ Share</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA4Excel(\'' + safeId + '\')">🗑 Delete</button>' : '');
+  return '<div class="card" style="padding:11px;margin:0;background:var(--card);"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div style="min-width:0;flex:1;"><span style="display:inline-flex;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:10px;font-weight:900;">' + label + '</span><div class="product-title" style="font-size:13px;margin-top:6px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + quantity + ' · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div></div></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">' + actions + '</div></div>';
+}
+function renderPartyResultFolder(party, items){
+  const folderKey = 'party-results:' + normalizedPartyCode(party);
   const isOpen = !!(state.logResultFolders && state.logResultFolders[folderKey]);
   const safeFolderKey = esc(folderKey).replace(/'/g, "\\'");
-  const safeId = esc(resultId).replace(/'/g, "\\'");
-  const label = kind === 'a7' ? 'A7 Result' : (kind === 'a4' ? 'A4 Result' : 'EXCEL Result');
-  const details = kind === 'a7'
-    ? '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number(entry.filledCount || 0) + ' item(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-ghost btn-sm" onclick="openA7Preview(\'' + safeId + '\')">Open</button><button class="btn btn-ghost btn-sm" onclick="downloadA7Excel(\'' + safeId + '\')">⬇ Share</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA7Excel(\'' + safeId + '\')">🗑 Delete</button>' : '') + '</div>'
-    : kind === 'a4'
-      ? '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number(entry.pageCount || 0) + ' page(s) · ' + displayDateTime(entry.ts, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true}) + '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-ghost btn-sm" onclick="openA4Preview(\'' + safeId + '\')">Open</button><button class="btn btn-ghost btn-sm" onclick="downloadA4Pdf(\'' + safeId + '\')">⬇ Share</button>' + (isStaffOrAdmin() ? '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteA4Excel(\'' + safeId + '\')">🗑 Delete</button>' : '') + '</div>'
-      : '<div class="product-title" style="font-size:13px;">' + esc(entry.name) + '</div><div style="font-size:11px;color:var(--muted);">' + Number(entry.rowCount || (entry.data || []).length || 0) + ' rows · ' + esc(entry.date || '') + '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;"><button class="btn btn-ghost btn-sm" onclick="openReportWorkspace(' + index + ')">Open Excel</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteReport(' + index + ')">🗑 Delete</button></div>';
-  return '<div class="card" style="padding:0;margin-bottom:8px;overflow:hidden;"><button type="button" onclick="toggleLogResultFolder(\'' + safeFolderKey + '\')" style="width:100%;padding:12px;border:0;background:transparent;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;"><span style="min-width:0;"><span style="display:block;font-size:12px;font-weight:800;">📁 ' + label + '</span><span style="display:block;margin-top:3px;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Result ID · ' + esc(resultId) + '</span></span><span style="font-size:16px;color:var(--accent);">' + (isOpen ? '⌃' : '⌄') + '</span></button>' + (isOpen ? '<div style="padding:0 12px 12px;border-top:1px solid var(--ui-border);">' + details + '</div>' : '') + '</div>';
+  const a7Count = items.filter(item=>item.kind === 'a7').length;
+  const a4Count = items.filter(item=>item.kind === 'a4').length;
+  const ordered = items.slice().sort((a,b)=>Number(b.entry.ts || 0) - Number(a.entry.ts || 0));
+  return '<div class="card" style="padding:0;margin-bottom:8px;overflow:hidden;"><button type="button" onclick="toggleLogResultFolder(\'' + safeFolderKey + '\')" style="width:100%;padding:12px;border:0;background:transparent;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;"><span style="min-width:0;"><span style="display:block;font-size:13px;font-weight:900;">📁 ' + esc(party) + '</span><span style="display:block;margin-top:3px;font-size:11px;color:var(--muted);">' + a7Count + ' A7 · ' + a4Count + ' A4</span></span><span style="font-size:16px;color:var(--accent);">' + (isOpen ? '⌃' : '⌄') + '</span></button>' + (isOpen ? '<div style="padding:10px;border-top:1px solid var(--ui-border);display:grid;gap:8px;">' + ordered.map(item=>renderPartyResultItem(item.kind, item.entry)).join('') + '</div>' : '') + '</div>';
 }
 function renderLog(){
   const deviceCount = new Set(scanLog.map(l=>l.deviceId||'unknown')).size;
@@ -11178,22 +11187,19 @@ function renderLog(){
     return promoterPriceLog || '<div class="divider-label">Price Log</div><div class="empty">No price updates are available for your assigned party yet.</div>';
   }
 
-  const myA7Excels = (state.a7Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username));
-  if(myA7Excels.length){
-    html += '<div class="divider-label">A7 Results</div>';
-    myA7Excels.forEach(function(entry, index){ html += renderLogResultFolder('a7', entry, index); });
-  }
-
-  const myA4Excels = (state.a4Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username));
-  if(myA4Excels.length){
-    html += '<div class="divider-label">A4 Results</div>';
-    myA4Excels.forEach(function(entry, index){ html += renderLogResultFolder('a4', entry, index); });
-  }
-
-  const excelReports = state.reports || [];
-  if(excelReports.length){
-    html += '<div class="divider-label">EXCEL Results</div>';
-    excelReports.forEach(function(report, index){ html += renderLogResultFolder('excel', report, index); });
+  const partyResultGroups = {};
+  const addPartyResult = function(kind, entry){
+    const party = String(entry && (entry.partyName || entry.party || entry.sender) || 'Unknown').trim() || 'Unknown';
+    const key = normalizedPartyCode(party) || 'UNKNOWN';
+    if(!partyResultGroups[key]) partyResultGroups[key] = {party:party, items:[]};
+    partyResultGroups[key].items.push({kind:kind, entry:entry});
+  };
+  (state.a7Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username)).forEach(entry=>addPartyResult('a7', entry));
+  (state.a4Excels || []).filter(e => isStaffOrAdmin() || e.sender === (state.user && state.user.username)).forEach(entry=>addPartyResult('a4', entry));
+  const partyFolders = Object.values(partyResultGroups).sort((a,b)=>a.party.localeCompare(b.party));
+  if(partyFolders.length){
+    html += '<div class="divider-label">A7 & A4 Results</div>';
+    partyFolders.forEach(group=>{ html += renderPartyResultFolder(group.party, group.items); });
   }
 
   const allVisiblePriceNotifs = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewParty(notification.party || notification.partyName); });
