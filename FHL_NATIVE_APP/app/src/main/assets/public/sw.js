@@ -1,4 +1,4 @@
-const CACHE_NAME = 'fhl-electronics-v6.1-build-97';
+const CACHE_NAME = 'fhl-electronics-v6.1-build-98';
 const APP_SHELL = [
   '/',
   '/index.html',

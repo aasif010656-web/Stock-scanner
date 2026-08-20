@@ -222,11 +222,11 @@ body.large-font { font-size: 115%; }
 body.large-font .product-title { font-size: 18px; }
 body.large-font .detail-value { font-size: 14px; }
 #app{max-width:520px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;padding-bottom:64px;}
-.header { padding: 16px 16px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; background: rgba(15, 17, 26, 0.62); backdrop-filter: blur(28px) saturate(190%); -webkit-backdrop-filter: blur(28px) saturate(190%); }
-  .header-main{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:38px;}
-  .header-title{position:absolute;left:50%;transform:translateX(-50%);max-width:calc(100% - 126px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-weight:800;font-size:18px;line-height:1.2;pointer-events:none;}
-  .app-logo-icon{width:44px;height:44px;border-radius:10px;object-fit:contain;background:transparent;padding:0;border:0;display:block!important;visibility:visible!important;opacity:1!important;box-shadow:none!important;}
-  .notification-bell{position:relative;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border2);border-radius:13px;background:var(--panel);color:var(--text);font-size:18px;flex-shrink:0;box-shadow:var(--shadow-btn,0 4px 12px rgba(0,0,0,.2));}
+.header { padding: 10px 16px 7px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; background: rgba(15, 17, 26, 0.62); backdrop-filter: blur(28px) saturate(190%); -webkit-backdrop-filter: blur(28px) saturate(190%); }
+  .header-main{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;}
+  .header-title{position:absolute;left:50%;transform:translateX(-50%);max-width:calc(100% - 112px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;font-weight:800;font-size:17px;line-height:1.15;pointer-events:none;}
+  .app-logo-icon{width:36px;height:36px;border-radius:10px;object-fit:contain;background:transparent;padding:0;border:0;display:block!important;visibility:visible!important;opacity:1!important;box-shadow:none!important;}
+  .notification-bell{position:relative;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border2);border-radius:13px;background:var(--panel);color:var(--text);font-size:18px;flex-shrink:0;box-shadow:var(--shadow-btn,0 4px 12px rgba(0,0,0,.2));}
   .notification-bell:active{transform:scale(.96);}
   .notification-list{display:flex;flex-direction:column;gap:9px;text-align:left;max-height:58vh;overflow:auto;padding-right:2px;}
   .notification-item{border:1px solid var(--border2);border-radius:14px;padding:12px;background:rgba(255,255,255,.035);cursor:pointer;}
@@ -234,7 +234,7 @@ body.large-font .detail-value { font-size: 14px; }
   .notification-item-title{font-weight:800;font-size:13px;line-height:1.25;}
   .notification-item-body{font-size:12px;line-height:1.45;color:var(--muted);margin-top:4px;}
   .notification-item-time{font-size:10px;color:var(--muted);margin-top:7px;}
-.header-sub{font-size:12px;color:var(--muted);margin-top:3px;}
+.header-sub{font-size:11px;color:var(--muted);margin-top:2px;min-height:0;}
 .header-admin-summary{position:absolute;right:16px;top:10px;display:none;flex-direction:column;align-items:flex-end;gap:2px;max-width:190px;text-align:right;padding:6px 9px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(0,0,0,.16);font-size:10px;line-height:1.2;}
 .header-admin-summary .summary-label{color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.4px;}
 .header-admin-summary .summary-value{color:var(--text);font-weight:700;font-size:11px;white-space:nowrap;}
@@ -6235,7 +6235,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '97';
+const APP_BUILD = '98';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -7118,7 +7118,7 @@ function updateHeaderSub(){
     return;
   }
   const brands = new Set(getAllRows().map(r=>r.Brand||"OTHERS / UNBRANDED")).size;
-  sub.innerHTML = syncBadge();
+  sub.innerHTML = '';
   applyHeaderIcons();
 }
 function exitTestView(){
@@ -9043,7 +9043,7 @@ function getDashboardAnalytics(){
 function renderScan(){
   let html = '';
   const analytics = getDashboardAnalytics();
-  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#7C3AED,#A855F7);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(168,85,247,.2);">Products qty <b style="color:#FFFFFF!important;">' + fmtInt(analytics.productCount) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#DB2777,#F472B6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(244,114,182,.2);">Brand qty <b style="color:#FFFFFF!important;">' + fmtInt(analytics.brandCount) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#0F766E,#14B8A6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(20,184,166,.2);">Home appliances <b style="color:#FFFFFF!important;">' + esc(fmtMoney(analytics.homeAppliancesValue)) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#1D4ED8,#3B82F6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(59,130,246,.2);">Electronics <b style="color:#FFFFFF!important;">' + esc(fmtMoney(analytics.electronicsValue)) + '</b></span></div></div>';
+  html += '<div class="card" style="margin-bottom:12px;"><div class="product-title" style="margin-bottom:8px;">📊 Stock Summary</div><div class="stock-summary-sync" style="font-size:12px;color:var(--muted);margin:-2px 0 8px;">' + syncBadge() + '</div><div class="stats-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;"><div class="stat-card"><small>Total Stock</small><b>' + fmtInt(analytics.totalQty) + ' pcs</b></div><div class="stat-card"><small>Stock Value</small><b>' + esc(fmtMoney(analytics.stockValue)) + '</b></div></div><div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;"><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#7C3AED,#A855F7);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(168,85,247,.2);">Products qty <b style="color:#FFFFFF!important;">' + fmtInt(analytics.productCount) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#DB2777,#F472B6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(244,114,182,.2);">Brand qty <b style="color:#FFFFFF!important;">' + fmtInt(analytics.brandCount) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#0F766E,#14B8A6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(20,184,166,.2);">Home appliances <b style="color:#FFFFFF!important;">' + esc(fmtMoney(analytics.homeAppliancesValue)) + '</b></span><span class="stock-category-pill" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#1D4ED8,#3B82F6);color:#FFFFFF!important;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;box-shadow:0 5px 14px rgba(59,130,246,.2);">Electronics <b style="color:#FFFFFF!important;">' + esc(fmtMoney(analytics.electronicsValue)) + '</b></span></div></div>';
   if(state.lastAction){
     html += '<div class="btn-row" style="margin-bottom:10px;">';
     html += '<button class="btn btn-ghost" onclick="undoLastSave()">↩ Undo Last Save</button>';
