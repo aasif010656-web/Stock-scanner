@@ -44,7 +44,7 @@ activity = activity.replace('    private UpdateBridge updateBridge;\n', '');
 activity = replaceOnce(
   activity,
   '        super.onCreate(savedInstanceState);\n',
-  '        super.onCreate(savedInstanceState);\n        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {\n            getWindow().setFrameRate(120f, android.view.Window.FRAME_RATE_COMPATIBILITY_DEFAULT, android.view.Window.CHANGE_FRAME_RATE_ALWAYS);\n        }\n',
+  '        super.onCreate(savedInstanceState);\n        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {\n            getWindow().getAttributes().preferredRefreshRate = 120f;\n        }\n',
   'Admin high-refresh display request'
 );
 activity = replaceOnce(
