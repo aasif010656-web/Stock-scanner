@@ -382,6 +382,14 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,12,.7);backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center;padding:20px;}
 .modal-overlay.show{display:flex;}
 .modal-box{background:var(--panel,#171a27);border-radius:18px;padding:20px 18px;max-width:96vw;width:min(96vw,520px);max-height:86vh;overflow:auto;position:relative;text-align:center;color:var(--text,#f5f7ff);box-shadow:0 24px 60px rgba(0,0,0,0.5);}
+#actionModal.settings-window .modal-box{width:min(96vw,720px)!important;max-width:720px!important;max-height:min(88vh,860px)!important;padding:0!important;overflow:hidden!important;transform:translateZ(0);}
+.settings-window-titlebar{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px 14px;background:var(--panel);border-bottom:1px solid var(--border);}
+.settings-window-title{font-size:17px;font-weight:800;color:var(--text);letter-spacing:-.01em;}
+.settings-window-subtitle{margin-top:3px;font-size:12px;line-height:1.35;color:var(--muted);}
+.settings-window-close{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--text);font-size:26px;line-height:1;cursor:pointer;touch-action:manipulation;}
+.settings-window-close:active{transform:scale(.94);}
+.settings-window-body{max-height:calc(min(88vh,860px) - 70px);overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:2px 16px 16px;contain:content;}
+@media(max-width:520px){.settings-window-titlebar{padding:14px 15px 12px;}.settings-window-body{padding:2px 12px 14px;}.settings-window-subtitle{max-width:250px;}}
 #barcodeModal .modal-box{background:#ffffff;color:#111;width:min(92vw,420px);max-width:420px;max-height:80vh;min-height:0;overflow:auto;}
 .modal-overlay.show .modal-box:empty{display:none;}
 .modal-box-dark{background:var(--panel);color:var(--text);border:1px solid var(--border2);}
@@ -572,6 +580,10 @@ body.native-performance-mode{background-attachment:scroll!important;overflow-x:h
 body.native-performance-mode #app,body.native-performance-mode #content{min-width:0!important;max-width:100%!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch!important;}
 body.native-performance-mode .card,body.native-performance-mode .form-card,body.native-performance-mode .ios-group,body.native-performance-mode .bento-tile,body.native-performance-mode .report-sheet,body.native-performance-mode .modal-box-dark{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;contain:layout!important;transition:none!important;}
 body.native-performance-mode #brandResultsWrap,body.native-performance-mode #brandProductResultsWrap{contain:layout!important;will-change:auto!important;}
+body.native-performance-mode #content{contain:layout paint style;transform:translate3d(0,0,0);backface-visibility:hidden;-webkit-backface-visibility:hidden;}
+body.native-performance-mode button,body.native-performance-mode input,body.native-performance-mode select,body.native-performance-mode .ios-row,body.native-performance-mode .settings-window-body{touch-action:manipulation;}
+body.native-performance-mode .settings-window-body{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
+@media (min-resolution:2dppx){body.native-performance-mode #content{will-change:transform;}}
 .promoter-actions-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:0 0 12px;border:1px solid var(--ui-border);border-radius:16px;background:var(--ui-panel);box-shadow:var(--ui-shadow);}
 .promoter-actions-title{font-weight:700;color:var(--text);white-space:nowrap;}
 .promoter-actions-buttons{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
@@ -6480,15 +6492,16 @@ function closeStaleTransientOverlays(){
 }
 function closeActionModal(){
   const modal = document.getElementById('actionModal');
-  if(modal) modal.classList.remove('show');
+  if(modal){ modal.classList.remove('show'); modal.classList.remove('settings-window'); }
   const content = document.getElementById('actionModalContent');
   if(content) content.innerHTML = '';
 }
-function openActionModal(content){
+function openActionModal(content, options){
   const target = document.getElementById('actionModalContent');
   const modal = document.getElementById('actionModal');
   const html = String(content || '').trim();
   if(!target || !modal || !html) return;
+  modal.classList.toggle('settings-window', !!(options && options.settingsWindow));
   target.innerHTML = html;
   hydrateLucideIcons(target);
   replaceVisibleEmojiIcons(target);
@@ -8251,6 +8264,43 @@ async function forceLogoutPromoters(){
     showToast('All promoters logged out on all devices');
     render();
   }catch(e){ console.error(e); showToast('Logout failed — check internet', true); }
+}
+function openPromoterSecurityPassword(action, onVerified){
+  state._promoterSecurityAction = String(action || 'continue');
+  state._promoterSecurityCallback = typeof onVerified === 'function' ? onVerified : null;
+  openActionModal(
+    '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">Administrator Password Required</div>' +
+    '<div style="font-size:13px;line-height:1.5;color:var(--muted);margin-bottom:12px;">Enter the current administrator password to ' + esc(state._promoterSecurityAction) + ' promoter access.</div>' +
+    '<input id="promoterSecurityPasswordInput" type="password" autocomplete="current-password" placeholder="Administrator password" style="width:100%;box-sizing:border-box;margin-bottom:14px;" />' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="btn btn-ghost" onclick="closeActionModal()">Cancel</button><button class="btn btn-accent" onclick="confirmPromoterSecurityPassword()">Continue</button></div>'
+  );
+  setTimeout(function(){ const input = document.getElementById('promoterSecurityPasswordInput'); if(input) input.focus(); }, 50);
+}
+function confirmPromoterSecurityPassword(){
+  const input = document.getElementById('promoterSecurityPasswordInput');
+  const expected = String((state.appUsers || {}).Asif || '');
+  if(!expected || !input || String(input.value || '') !== expected){
+    showToast('Administrator password is incorrect.', true);
+    if(input){ input.focus(); input.select(); }
+    return;
+  }
+  const callback = state._promoterSecurityCallback;
+  state._promoterSecurityCallback = null;
+  closeActionModal();
+  if(callback) callback();
+}
+function runPromoterSecurityAction(action){
+  if(!isAdminUser()){ showToast('Only Admin can change promoter access.', true); return; }
+  const normalized = String(action || '').toLowerCase();
+  if(normalized === 'lock'){
+    if(state.appLocked){ showToast('Promoter login is already locked.'); return; }
+    openPromoterSecurityPassword('lock', function(){ toggleAppLock(); });
+  } else if(normalized === 'unlock'){
+    if(!state.appLocked){ showToast('Promoter login is already unlocked.'); return; }
+    openPromoterSecurityPassword('unlock', function(){ toggleAppLock(); });
+  } else if(normalized === 'logout'){
+    openPromoterSecurityPassword('log out all', function(){ forceLogoutPromoters(); });
+  }
 }
 function logout(){
   addAuditLog('Logout', 'User logged out');
@@ -10293,7 +10343,14 @@ function focusPreserve(sel){
 
 function setLogDeviceFilter(mode){ state.logDeviceFilter = mode; render(); }
 function isAdminUser(){ return !!(state.user && state.user.role === 'admin' && state.user.username === 'Asif'); }
-function toggleUserMgmt(){ if(!isAdminUser()) return; state.userMgmtOpen = !state.userMgmtOpen; render(); }
+function settingsWindowMarkup(title, subtitle, body){
+  return '<div class="settings-window-titlebar"><div><div class="settings-window-title">' + esc(title) + '</div><div class="settings-window-subtitle">' + esc(subtitle) + '</div></div><button class="settings-window-close" onclick="closeActionModal()" aria-label="Close">×</button></div><div class="settings-window-body">' + body + '</div>';
+}
+function openUserManagementWindow(){
+  if(!isAdminUser()){ showToast('Only Admin can manage users.', true); return; }
+  openActionModal(settingsWindowMarkup('User Management', 'Manage users, roles, access, and active sessions.', renderUserMgmt()), {settingsWindow:true});
+}
+function toggleUserMgmt(){ openUserManagementWindow(); }
 function setUserFormField(f, v){ if(!isAdminUser()) return; state.userForm[f] = v; }
 function getUserRole(u){
   if(u === 'Asif') return 'admin';
@@ -10396,7 +10453,11 @@ function renderUserMgmt(){
   html += '</div>';
   return html;
 }
-function toggleAuditLogView(){ state.auditViewOpen = !state.auditViewOpen; render(); }
+function openAuditLogWindow(){
+  if(!isAdminUser()){ showToast('Only Admin can view the audit log.', true); return; }
+  openActionModal(settingsWindowMarkup('Audit Log', (state.auditLog || []).length + ' recorded activity entries.', renderAuditLog()), {settingsWindow:true});
+}
+function toggleAuditLogView(){ openAuditLogWindow(); }
 async function clearAuditLog(){
   if(!(await appConfirm('Clear all audit log entries? This will sync to cloud.', 'Clear Audit Log'))) return;
   (state.auditLog || []).forEach(l => deletedKeys.auditLog.add(l.id || (l.action+'|'+l.detail+'|'+l.ts)));
@@ -10440,6 +10501,7 @@ function renderSettings(){
   let html = '<div style="padding:14px 16px 10px;">';
 
   // ---- Account ----
+  html += '<div class="ios-section-title">Account & Device</div>';
   html += '<div class="bento-grid">';
   html += '<div class="bento-tile settings-account-tile"><div class="bento-label">Logged in as</div><div class="bento-value">' + esc(state.user.username) + '</div></div>';
   html += '<div class="bento-tile settings-account-tile"><div class="bento-label">Role</div><div class="bento-value" style="text-transform:capitalize;">' + esc(state.user.role) + '</div></div>';
@@ -10452,23 +10514,23 @@ function renderSettings(){
   html += iosRow('📱', 'linear-gradient(#5AC8FA,#0A84FF)', 'Device Name', '<input type="text" value="' + esc(state.deviceName) + '" oninput="setDeviceNameInput(this.value)" style="width:110px;margin:0;padding:6px 8px;font-size:13px;" /><button class="btn btn-accent btn-sm" onclick="commitDeviceName()">Save</button>');
   html += '</div>';
 
-  // ---- Personalization ----
-  html += '<div class="ios-section-title">Personalization</div>';
+  // ---- Appearance ----
+  html += '<div class="ios-section-title">Appearance</div>';
   html += '<div class="ios-group">';
   const activeThemeObj = state.themes.find(t=>t.id===state.theme) || state.themes[0];
   html += iosRow('🎨', 'linear-gradient(#FF2D55,#C7003D)', 'App Theme', '<button class="btn btn-accent btn-sm" onclick="openThemePicker()">' + esc(activeThemeObj.name) + '</button>');
   html += '</div>';
 
-  // ---- Preferences ----
-  html += '<div class="ios-section-title">Preferences</div>';
+  // ---- Scan preferences ----
+  html += '<div class="ios-section-title">Scan Preferences</div>';
   html += '<div class="ios-group">';
   html += iosRow('🔊', 'linear-gradient(#FF9500,#D97E00)', 'Beep on Scan', iosSwitchHtml(state.beepOnScan, 'state.beepOnScan = !state.beepOnScan; render();'));
   html += iosRow('📳', 'linear-gradient(#FF9500,#D97E00)', 'Vibrate on Scan', iosSwitchHtml(state.vibrateOnScan, 'state.vibrateOnScan = !state.vibrateOnScan; render();'));
   html += iosRow('🔤', 'linear-gradient(#8E8E93,#636366)', 'Display Font', '<button class="btn btn-ghost btn-sm" onclick="state.largeFont = !state.largeFont; render();">' + (state.largeFont ? 'Large' : 'Normal') + '</button>');
   html += '</div>';
 
-  // ---- Contact Support ----
-  html += '<div class="ios-section-title">Support & Contact</div>';
+  // ---- Support ----
+  html += '<div class="ios-section-title">Help & Support</div>';
   html += '<div class="ios-group">';
   const canEditContactAdmin = !!(state.user && state.user.username === 'Asif' && state.user.role === 'admin');
   const contactAdminControl = canEditContactAdmin ? '<div style="display:flex;gap:6px;align-items:center;max-width:245px;"><input type="url" value="' + esc(state.contactAdminLink||'') + '" placeholder="Paste admin link" oninput="state.contactAdminLink=this.value" style="width:150px;margin:0;padding:7px 8px;font-size:12px;" /><button class="btn btn-accent btn-sm" onclick="saveContactAdminLink()">Save</button>' + (state.contactAdminLink ? '<button class="btn btn-ghost btn-sm" onclick="openContactAdminLink()">Open</button>' : '') + '</div>' : (state.contactAdminLink ? '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open</button>' : '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open Admin Contact</button>');
@@ -10482,14 +10544,14 @@ function renderSettings(){
       const importedAt = originalDateTime(lastExcel.ts, {day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true});
       const updatedQty = Number(lastExcel.updatedQtyTotal || 0);
       const updatedValue = Number(lastExcel.updatedValueTotal || 0);
-      html += '<div class="ios-section-title">Last Excel Update</div><div class="ios-group" style="padding:12px 14px;">';
+      html += '<div class="ios-section-title">Admin Overview</div><div class="ios-group" style="padding:12px 14px;">';
       html += '<div style="font-weight:800;font-size:14px;margin-bottom:4px;">' + esc(importer) + ' updated Excel</div>';
       html += '<div style="font-size:11px;color:var(--muted);margin-bottom:9px;">' + esc(lastExcel.fileName || 'Brands Excel') + ' · ' + esc(importedAt) + '</div>';
       html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;"><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Rows</div><div class="bento-value">' + Number(lastExcel.updatedRows || 0) + '</div></div><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Updated Qty</div><div class="bento-value">' + updatedQty.toLocaleString() + '</div></div><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Updated Value</div><div class="bento-value">' + esc(fmtMoney(updatedValue)) + '</div></div></div>';
       html += '</div>';
     }
     if(state.user.username === 'Asif'){
-      html += '<div class="ios-section-title">Admin Control</div>';
+      html += '<div class="ios-section-title">Danger Zone</div>';
       html += '<div class="ios-group">';
       html += iosRow('⚠️', 'linear-gradient(#FF3B30,#C4291F)', 'Full Reset (Clear ALL Data)', '<button class="btn btn-accent btn-sm" style="background:var(--red); border-color:var(--red);" onclick="fullHardReset()">Hard Reset</button>');
       html += '</div>';
@@ -10503,18 +10565,15 @@ function renderSettings(){
         html += '</div>';
       }
     }
-    html += '<div class="ios-section-title">Admin Tools</div>';
+    html += '<div class="ios-section-title">Users & Security</div>';
     html += '<div class="ios-group">';
-    const promoterActions = '<div class="promoter-actions-card"><div class="promoter-actions-title">Promoters</div><div class="promoter-actions-buttons"><button class="btn btn-accent btn-sm" onclick="if(!state.appLocked)toggleAppLock();">🔒 Lock</button><button class="btn btn-ghost btn-sm" onclick="if(state.appLocked)toggleAppLock();">🔓 Unlock</button><button class="btn btn-ghost btn-sm promoter-logout-btn" onclick="forceLogoutPromoters();">↪ Logout</button></div></div>';
+    const promoterActions = '<div class="promoter-actions-card"><div class="promoter-actions-title">Promoter Security</div><div class="promoter-actions-buttons"><button class="btn btn-accent btn-sm" onclick="runPromoterSecurityAction(\'lock\');">🔒 Lock</button><button class="btn btn-ghost btn-sm" onclick="runPromoterSecurityAction(\'unlock\');">🔓 Unlock</button><button class="btn btn-ghost btn-sm promoter-logout-btn" onclick="runPromoterSecurityAction(\'logout\');">↪ Logout</button></div></div>';
     html += promoterActions;
     html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="confirmClearLocalOverrides()">Clear</button>');
-    html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="toggleAuditLogView()">' + (state.auditViewOpen ? 'Hide' : 'View') + '</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
-    html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="toggleUserMgmt()">' + (state.userMgmtOpen ? 'Hide' : 'Manage') + '</button>');
+    html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="openUserManagementWindow()">Open</button>');
+    html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="openAuditLogWindow()">View</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
     html += '</div>';
-    if(state.auditViewOpen) html += renderAuditLog();
-    if(state.userMgmtOpen) html += renderUserMgmt();
-
-    html += '<div class="ios-section-title">System Security</div>';
+    html += '<div class="ios-section-title">Data & Sync</div>';
     html += '<div class="ios-group">';
     let syncOptions = '<option value="realtime"' + (state.syncInterval==='realtime'?' selected':'') + '>Real-time</option>' +
                        '<option value="manual"' + (state.syncInterval==='manual'?' selected':'') + '>Manual Only</option>';
