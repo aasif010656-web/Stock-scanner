@@ -5768,10 +5768,10 @@ async function loadStorage(){
   // v5.0 reset retired: never clear inventory during an APK update.
 
   storageReady = true;
-      syncStatus = 'offline';
+      syncStatus = navigator.onLine ? 'error' : 'offline';
       updateHeaderSub();
       render();
-      console.log("Firebase load timed out - falling back to offline mode");
+      console.log("Firebase load timed out - keeping local data and marking cloud unavailable");
     }
   }, 5000);
 
@@ -5845,7 +5845,7 @@ async function loadStorage(){
     }
   }catch(e){
     clearTimeout(loadingTimeout);
-    syncStatus = 'offline';
+    syncStatus = navigator.onLine ? 'error' : 'offline';
   }
   
   // v5.0 reset retired: never clear inventory during an APK update.
@@ -5950,7 +5950,11 @@ async function loadStorage(){
       syncStatus = 'synced';
       updateHeaderSub();
       render();
-    }, ()=>{ syncStatus = 'offline'; updateHeaderSub(); });
+    }, (listenerError)=>{
+      console.warn('Shared Firestore listener unavailable', listenerError);
+      syncStatus = navigator.onLine ? 'error' : 'offline';
+      updateHeaderSub(); render();
+    });
     if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
     if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = mergePdfMetadata(data.pdfImports || []); cachePdfImports(); render(); });
     if(fbReportDocRef) fbReportDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.reports = mergeReportMetadata(data.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} render(); });
@@ -6081,9 +6085,9 @@ async function pushToCloud(force, suppressToast, options){
     try{ if(state._lastLogoutCheck) localStorage.setItem('last-logout-check', String(state._lastLogoutCheck)); }catch(e){}
   } catch(e) { console.error("Local save failed", e); }
 
-  if(!fbReady){ if(!preserveStatus) syncStatus = 'offline'; updateHeaderSub(); return false; }
+  if(!fbReady){ if(!preserveStatus) syncStatus = navigator.onLine ? 'error' : 'offline'; updateHeaderSub(); return false; }
   if(!force && state.syncInterval === 'manual') {
-    if(!preserveStatus) syncStatus = 'offline';
+    if(!preserveStatus && !navigator.onLine) syncStatus = 'offline';
     updateHeaderSub();
     return false;
   }
@@ -6168,12 +6172,60 @@ async function pushToCloud(force, suppressToast, options){
     render();
     return true;
   }catch(e){
-    if(!preserveStatus) syncStatus = 'offline';
+    // A cloud write can fail temporarily while internet is available. Preserve
+    // local-first data and show Sync unavailable instead of a false Offline state.
+    if(!preserveStatus) syncStatus = navigator.onLine ? 'error' : 'offline';
     if(force && !suppressToast) showToast("Cloud sync failed — check internet connection", true);
     updateHeaderSub();
     return false;
   }
 }
+
+async function retryCloudConnection(options){
+  const opts = options || {};
+  if(state._cloudRetryRunning) return false;
+  if(!navigator.onLine){
+    syncStatus = 'offline';
+    updateHeaderSub(); render();
+    if(!opts.silent) showToast('No internet connection yet. Your local data is safe.', true);
+    return false;
+  }
+  if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
+    syncStatus = 'error';
+    updateHeaderSub(); render();
+    if(!opts.silent) showToast('Cloud connection is not ready. Please try again shortly.', true);
+    return false;
+  }
+  state._cloudRetryRunning = true;
+  syncStatus = 'connecting';
+  updateHeaderSub(); render();
+  try{
+    const db = firebase.firestore();
+    if(typeof db.enableNetwork === 'function') await db.enableNetwork();
+    // navigator.onLine only confirms a network interface. This server read
+    // confirms that Firestore is actually reachable before any status is shown.
+    await fbDocRef.get({ source:'server' });
+    const synced = await pushToCloud(true, true, { preserveStatus:true });
+    if(!synced) throw new Error('Pending cloud work could not be completed');
+    syncStatus = 'synced';
+    queueReportCloudBackfill();
+    updateHeaderSub(); render();
+    if(!opts.silent) showToast('✓ Connection restored and pending sync completed.');
+    return true;
+  }catch(error){
+    console.warn('Verified cloud reconnect failed', error);
+    syncStatus = navigator.onLine ? 'error' : 'offline';
+    updateHeaderSub(); render();
+    if(!opts.silent) showToast(navigator.onLine ? 'Internet is available, but cloud sync is temporarily unavailable. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', true);
+    return false;
+  }finally{
+    state._cloudRetryRunning = false;
+    render();
+  }
+}
+window.addEventListener('online', function(){
+  if(storageReady && state.user) window.setTimeout(function(){ retryCloudConnection({ silent:true }); }, 300);
+});
 
 async function saveStockOverrides(){ await pushToCloud(true, true); }
 async function saveLog(){ await pushToCloud(); }
@@ -10537,6 +10589,13 @@ function renderSettings(){
   html += iosRow('💬', 'linear-gradient(#25D366,#128C7E)', 'Contact Admin', contactAdminControl);
   html += '</div>';
 
+  // ---- Connection recovery (all roles) ----
+  html += '<div class="ios-section-title">Connection & Recovery</div>';
+  html += '<div class="ios-group">';
+  const retryLabel = syncStatus === 'synced' ? 'Verify Connection' : (syncStatus === 'connecting' ? 'Checking…' : 'Retry Connection');
+  html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Connection', '<span style="font-size:11px;color:var(--muted);">' + esc(syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Cloud check needed')) + '</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="retryCloudConnection()">' + retryLabel + '</button>');
+  html += '</div>';
+
   if(state.user.role === 'admin'){
     if(state.latestExcelUpdate){
       const lastExcel = state.latestExcelUpdate;
@@ -10577,7 +10636,7 @@ function renderSettings(){
     html += '<div class="ios-group">';
     let syncOptions = '<option value="realtime"' + (state.syncInterval==='realtime'?' selected':'') + '>Real-time</option>' +
                        '<option value="manual"' + (state.syncInterval==='manual'?' selected':'') + '>Manual Only</option>';
-	    html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Sync Interval', '<select class="ios-select" onchange="state.syncInterval = this.value; render();">' + syncOptions + '</select>' + (state.syncInterval === 'manual' ? '<button class="btn btn-accent btn-sm" onclick="pushToCloud(true)">Sync Now</button>' : ''));
+    	    html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Sync Interval', '<select class="ios-select" onchange="state.syncInterval = this.value; render();">' + syncOptions + '</select>');
 	    html += '</div>';
 	  }
 
