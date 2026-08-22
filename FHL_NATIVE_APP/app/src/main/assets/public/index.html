@@ -5445,7 +5445,8 @@ let fbPdfPayloadsRef = null;
 let fbReportDocRef = null;
 let fbReportRowsRef = null;
 let fbReady = false;
-let syncStatus = 'connecting'; // connecting | synced | offline | error
+let syncStatus = 'connecting'; // connecting | synced | offline | error (legacy error renders as reconnecting)
+let cloudRetryTimer = null;
 const PRICE_DELETE_TOMBSTONE_STORAGE_KEY = 'price-notifs-deletion-tombstones-v1';
 const PRICE_DELETE_TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const PRICE_DELETE_TOMBSTONE_LIMIT = 800;
@@ -5845,12 +5846,17 @@ async function loadStorage(){
     }
   }catch(e){
     clearTimeout(loadingTimeout);
-    syncStatus = navigator.onLine ? 'error' : 'offline';
+    // A startup read may time out while the phone still has internet. Keep the
+    // UI neutral and verify again once the local-first store is ready.
+    syncStatus = navigator.onLine ? 'connecting' : 'offline';
   }
   
   // v5.0 reset retired: never clear inventory during an APK update.
 
   storageReady = true;
+  if(syncStatus === 'connecting' && navigator.onLine){
+    window.setTimeout(function(){ retryCloudConnection({ silent:true }); }, 750);
+  }
   updateHeaderSub();
   render();
 
@@ -5952,7 +5958,10 @@ async function loadStorage(){
       render();
     }, (listenerError)=>{
       console.warn('Shared Firestore listener unavailable', listenerError);
-      syncStatus = navigator.onLine ? 'error' : 'offline';
+      // A listener interruption is recoverable and does not prove that the
+      // device is offline. Recheck the server without alarming the user.
+      syncStatus = navigator.onLine ? 'connecting' : 'offline';
+      if(navigator.onLine) scheduleCloudVerification(5000);
       updateHeaderSub(); render();
     });
     if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
@@ -6085,7 +6094,7 @@ async function pushToCloud(force, suppressToast, options){
     try{ if(state._lastLogoutCheck) localStorage.setItem('last-logout-check', String(state._lastLogoutCheck)); }catch(e){}
   } catch(e) { console.error("Local save failed", e); }
 
-  if(!fbReady){ if(!preserveStatus) syncStatus = navigator.onLine ? 'error' : 'offline'; updateHeaderSub(); return false; }
+  if(!fbReady){ if(!preserveStatus) syncStatus = navigator.onLine ? 'connecting' : 'offline'; updateHeaderSub(); return false; }
   if(!force && state.syncInterval === 'manual') {
     if(!preserveStatus && !navigator.onLine) syncStatus = 'offline';
     updateHeaderSub();
@@ -6172,13 +6181,22 @@ async function pushToCloud(force, suppressToast, options){
     render();
     return true;
   }catch(e){
-    // A cloud write can fail temporarily while internet is available. Preserve
-    // local-first data and show Sync unavailable instead of a false Offline state.
-    if(!preserveStatus) syncStatus = navigator.onLine ? 'error' : 'offline';
+    // A single import/payload write can fail while Firestore is reachable.
+    // Preserve local data and do not downgrade the verified connection state.
+    if(!preserveStatus && !navigator.onLine) syncStatus = 'offline';
+    else if(!preserveStatus && syncStatus !== 'synced') syncStatus = 'connecting';
     if(force && !suppressToast) showToast("Cloud sync failed — check internet connection", true);
     updateHeaderSub();
     return false;
   }
+}
+
+function scheduleCloudVerification(delay){
+  if(cloudRetryTimer || !navigator.onLine || !storageReady || !state.user) return;
+  cloudRetryTimer = window.setTimeout(function(){
+    cloudRetryTimer = null;
+    retryCloudConnection({ silent:true });
+  }, Math.max(1000, Number(delay) || 8000));
 }
 
 async function retryCloudConnection(options){
@@ -6191,9 +6209,10 @@ async function retryCloudConnection(options){
     return false;
   }
   if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
-    syncStatus = 'error';
+    syncStatus = 'connecting';
     updateHeaderSub(); render();
-    if(!opts.silent) showToast('Cloud connection is not ready. Please try again shortly.', true);
+    scheduleCloudVerification(2500);
+    if(!opts.silent) showToast('Cloud connection is still starting. Your local data is safe.');
     return false;
   }
   state._cloudRetryRunning = true;
@@ -6205,18 +6224,25 @@ async function retryCloudConnection(options){
     // navigator.onLine only confirms a network interface. This server read
     // confirms that Firestore is actually reachable before any status is shown.
     await fbDocRef.get({ source:'server' });
-    const synced = await pushToCloud(true, true, { preserveStatus:true });
-    if(!synced) throw new Error('Pending cloud work could not be completed');
+    // This server read proves the cloud is reachable. A queued report/import
+    // replay can require another attempt but must not create a false warning.
+    const replayed = await pushToCloud(true, true, { preserveStatus:true });
     syncStatus = 'synced';
     queueReportCloudBackfill();
     updateHeaderSub(); render();
+    if(!replayed){
+      scheduleCloudVerification(10000);
+      if(!opts.silent) showToast('✓ Cloud connected. Pending data will retry automatically.');
+      return true;
+    }
     if(!opts.silent) showToast('✓ Connection restored and pending sync completed.');
     return true;
   }catch(error){
     console.warn('Verified cloud reconnect failed', error);
-    syncStatus = navigator.onLine ? 'error' : 'offline';
+    syncStatus = navigator.onLine ? 'connecting' : 'offline';
+    if(navigator.onLine) scheduleCloudVerification(8000);
     updateHeaderSub(); render();
-    if(!opts.silent) showToast(navigator.onLine ? 'Internet is available, but cloud sync is temporarily unavailable. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', true);
+    if(!opts.silent) showToast(navigator.onLine ? 'Cloud is checking again. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', !navigator.onLine);
     return false;
   }finally{
     state._cloudRetryRunning = false;
@@ -7165,7 +7191,7 @@ function setTab(tab, fromBack, animateFromBottomNav){
 function syncBadge(){
   if(syncStatus==='synced') return ' · <span style="color:#3DDC84;">☁ Synced</span>';
   if(syncStatus==='connecting') return ' · <span style="color:var(--dim);">☁ Connecting…</span>';
-  if(syncStatus==='error') return ' · <span style="color:#E85D5D;">☁ Sync unavailable</span>';
+  if(syncStatus==='error') return ' · <span style="color:var(--dim);">☁ Reconnecting…</span>';
   return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>' + offlineStockLabel();
 }
 function updateHeaderSub(){
@@ -10593,7 +10619,8 @@ function renderSettings(){
   html += '<div class="ios-section-title">Connection & Recovery</div>';
   html += '<div class="ios-group">';
   const retryLabel = syncStatus === 'synced' ? 'Verify Connection' : (syncStatus === 'connecting' ? 'Checking…' : 'Retry Connection');
-  html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Connection', '<span style="font-size:11px;color:var(--muted);">' + esc(syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Cloud check needed')) + '</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="retryCloudConnection()">' + retryLabel + '</button>');
+  const cloudDetail = syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Checking cloud connection');
+  html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Connection', '<span style="font-size:11px;color:var(--muted);">' + esc(cloudDetail) + '</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="retryCloudConnection()">' + retryLabel + '</button>');
   html += '</div>';
 
   if(state.user.role === 'admin'){
