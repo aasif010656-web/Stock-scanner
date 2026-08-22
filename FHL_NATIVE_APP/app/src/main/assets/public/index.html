@@ -5444,9 +5444,22 @@ let fbPdfDocRef = null;
 let fbPdfPayloadsRef = null;
 let fbReportDocRef = null;
 let fbReportRowsRef = null;
+let fbBrandsDocRef = null;
+let fbBrandsVersionsRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error (legacy error renders as reconnecting)
 let cloudRetryTimer = null;
+let brandsCloudBackfillTimer = null;
+const BRANDS_STORAGE_VERSION = 1;
+const BRANDS_CHUNK_TARGET_BYTES = 180000;
+const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
+let brandsCloudState = { activeVersion:'', updatedAt:0, loaded:false };
+let brandsCloudPending = (function(){
+  try{
+    const value = JSON.parse(localStorage.getItem(BRANDS_PENDING_STORAGE_KEY) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  }catch(e){ return null; }
+})();
 const PRICE_DELETE_TOMBSTONE_STORAGE_KEY = 'price-notifs-deletion-tombstones-v1';
 const PRICE_DELETE_TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const PRICE_DELETE_TOMBSTONE_LIMIT = 800;
@@ -5513,6 +5526,8 @@ function initFirebase(){
     fbPdfPayloadsRef = fbPdfDocRef.collection('payloads');
     fbReportDocRef = db.collection('stockScannerApp').doc('reportData');
     fbReportRowsRef = fbReportDocRef.collection('rows');
+    fbBrandsDocRef = db.collection('stockScannerApp').doc('brandsData');
+    fbBrandsVersionsRef = fbBrandsDocRef.collection('versions');
     fbReady = true;
   }catch(e){
     fbReady = false;
@@ -5728,6 +5743,169 @@ async function deletePdfPayloadFromCloud(record){
   await Promise.all(deletes);
 }
 
+// Brands inventory can contain thousands of imported product records. Keeping all
+// products, overrides, and prices in sharedData eventually exceeds Firestore's 1 MiB
+// document ceiling, so the active state is published atomically through a versioned
+// collection of compact chunks. sharedData only keeps unrelated application state.
+function persistBrandsLocalState(){
+  try{
+    localStorage.setItem('stock-overrides-cache', JSON.stringify(stockOverrides || {}));
+    localStorage.setItem('custom-products-cache', JSON.stringify(customProducts || []));
+    localStorage.setItem('app-prices', JSON.stringify(state.prices || {}));
+    markStockCacheFresh(Date.now());
+    return true;
+  }catch(e){ console.warn('Brands local cache save failed', e); return false; }
+}
+function persistBrandsCloudPending(){
+  try{
+    if(brandsCloudPending) localStorage.setItem(BRANDS_PENDING_STORAGE_KEY, JSON.stringify(brandsCloudPending));
+    else localStorage.removeItem(BRANDS_PENDING_STORAGE_KEY);
+  }catch(e){}
+}
+function markBrandsCloudPending(reason){
+  brandsCloudPending = { updatedAt:Date.now(), reason:String(reason || 'brands-update'), retryCount:Number((brandsCloudPending && brandsCloudPending.retryCount) || 0) };
+  persistBrandsCloudPending();
+  persistBrandsLocalState();
+  return brandsCloudPending;
+}
+function clearBrandsCloudPending(){
+  brandsCloudPending = null;
+  persistBrandsCloudPending();
+}
+function hasBrandsCloudPending(){ return !!(brandsCloudPending && Number(brandsCloudPending.updatedAt || 0)); }
+function hasBrandsPayload(){ return Object.keys(stockOverrides || {}).length > 0 || (customProducts || []).length > 0 || Object.keys(state.prices || {}).length > 0; }
+function brandsPayloadBytes(value){
+  const text = JSON.stringify(value);
+  try{ return new TextEncoder().encode(text).length; }catch(e){ return text.length * 2; }
+}
+function splitBrandsChunks(items){
+  const chunks = [];
+  let current = [], currentBytes = 32;
+  (items || []).forEach(function(item){
+    const itemBytes = brandsPayloadBytes(item) + 1;
+    if(itemBytes > BRANDS_CHUNK_TARGET_BYTES) throw new Error('A Brands record is too large to save safely');
+    if(current.length && currentBytes + itemBytes > BRANDS_CHUNK_TARGET_BYTES){ chunks.push(current); current = []; currentBytes = 32; }
+    current.push(item);
+    currentBytes += itemBytes;
+  });
+  if(current.length) chunks.push(current);
+  return chunks;
+}
+function brandsVersionId(){ return 'brands_' + Date.now() + '_' + Math.random().toString(36).slice(2,10); }
+function brandsChunkId(kind, index){ return kind + '-' + String(index).padStart(5, '0'); }
+async function runBrandsBatched(tasks, limit){
+  const size = Math.max(1, Number(limit) || 6);
+  for(let start=0; start<tasks.length; start += size) await Promise.all(tasks.slice(start, start + size).map(function(task){ return task(); }));
+}
+function applyBrandsState(bundle){
+  const next = bundle || {};
+  stockOverrides = next.stockOverrides && typeof next.stockOverrides === 'object' ? next.stockOverrides : {};
+  customProducts = Array.isArray(next.customProducts) ? next.customProducts : [];
+  state.prices = next.prices && typeof next.prices === 'object' ? next.prices : {};
+  markStockCacheFresh(Number(next.updatedAt || Date.now()));
+  persistBrandsLocalState();
+  rebuildIndex();
+}
+function mergeBrandsOverrides(remote, local){
+  const merged = Object.assign({}, remote || {}, local || {});
+  if(typeof deletedKeys !== 'undefined' && deletedKeys.stockOverrides) deletedKeys.stockOverrides.forEach(function(key){ delete merged[key]; });
+  return merged;
+}
+async function readBrandsStateFromCloud(rootData){
+  if(!fbBrandsVersionsRef || !rootData || !rootData.activeVersion) return null;
+  const versionId = String(rootData.activeVersion);
+  const versionDoc = fbBrandsVersionsRef.doc(versionId);
+  const metaSnap = await versionDoc.get();
+  const meta = metaSnap.exists ? (metaSnap.data() || {}) : {};
+  if(!metaSnap.exists || meta.status !== 'ready') throw new Error('Brands cloud version is incomplete');
+  const counts = {
+    products:Number(meta.productChunkCount || rootData.productChunkCount || 0),
+    overrides:Number(meta.overrideChunkCount || rootData.overrideChunkCount || 0),
+    prices:Number(meta.priceChunkCount || rootData.priceChunkCount || 0)
+  };
+  async function readKind(kind){
+    const refs = Array.from({length:counts[kind]}, function(_, index){ return versionDoc.collection('chunks').doc(brandsChunkId(kind, index)); });
+    const docs = new Array(refs.length);
+    await runBrandsBatched(refs.map(function(ref, index){ return async function(){ docs[index] = await ref.get(); }; }), 6);
+    if(docs.some(function(doc){ return !doc || !doc.exists; })) throw new Error('Brands cloud chunk is unavailable');
+    return docs.reduce(function(items, doc){ return items.concat(Array.isArray((doc.data() || {}).items) ? doc.data().items : []); }, []);
+  }
+  const productItems = await readKind('products');
+  const overrideItems = await readKind('overrides');
+  const priceItems = await readKind('prices');
+  return {
+    activeVersion:versionId,
+    updatedAt:Number(meta.updatedAt || rootData.updatedAt || 0),
+    stockOverrides:overrideItems.reduce(function(result, entry){ if(Array.isArray(entry) && entry[0] !== undefined) result[String(entry[0])] = entry[1]; return result; }, {}),
+    customProducts:productItems,
+    prices:priceItems.reduce(function(result, entry){ if(Array.isArray(entry) && entry[0] !== undefined) result[String(entry[0])] = entry[1]; return result; }, {}),
+    versionMeta:meta
+  };
+}
+async function cleanupPreviousBrandsVersion(previousRoot, activeVersion){
+  if(!previousRoot || !previousRoot.activeVersion || !fbBrandsDocRef || !fbBrandsVersionsRef) return;
+  try{
+    const current = await fbBrandsDocRef.get({source:'server'});
+    const currentData = current.exists ? (current.data() || {}) : {};
+    if(String(currentData.activeVersion || '') !== String(activeVersion || '')) return;
+    const oldVersion = fbBrandsVersionsRef.doc(String(previousRoot.activeVersion));
+    const counts = { products:Number(previousRoot.productChunkCount || 0), overrides:Number(previousRoot.overrideChunkCount || 0), prices:Number(previousRoot.priceChunkCount || 0) };
+    const deletions = [];
+    Object.keys(counts).forEach(function(kind){ for(let index=0; index<counts[kind]; index++) deletions.push(function(){ return oldVersion.collection('chunks').doc(brandsChunkId(kind, index)).delete(); }); });
+    deletions.push(function(){ return oldVersion.delete(); });
+    await runBrandsBatched(deletions, 6);
+  }catch(e){ console.warn('Old Brands version cleanup will be retried later', e); }
+}
+async function syncBrandsStateToCloud(){
+  persistBrandsLocalState();
+  if(!fbReady || !fbBrandsDocRef || !fbBrandsVersionsRef) return false;
+  const rootSnap = await fbBrandsDocRef.get({source:'server'});
+  const previousRoot = rootSnap.exists ? (rootSnap.data() || {}) : {};
+  let remoteState = null;
+  if(previousRoot.activeVersion) remoteState = await readBrandsStateFromCloud(previousRoot);
+  const replaceAll = !!(brandsCloudPending && brandsCloudPending.replaceAll);
+  const mergedProducts = replaceAll ? (customProducts || []).slice() : (remoteState ? unionExtraBarcodes(remoteState.customProducts, customProducts, mergeArrayByKey(remoteState.customProducts, customProducts, function(item){ return item && item.SL; }, deletedKeys.customProducts)) : (customProducts || []).slice());
+  const mergedOverrides = replaceAll ? Object.assign({}, stockOverrides || {}) : mergeBrandsOverrides(remoteState && remoteState.stockOverrides, stockOverrides);
+  const mergedPrices = replaceAll ? Object.assign({}, state.prices || {}) : Object.assign({}, remoteState && remoteState.prices || {}, state.prices || {});
+  const chunks = {
+    products:splitBrandsChunks(mergedProducts),
+    overrides:splitBrandsChunks(Object.entries(mergedOverrides)),
+    prices:splitBrandsChunks(Object.entries(mergedPrices))
+  };
+  const versionId = brandsVersionId();
+  const updatedAt = Date.now();
+  const versionDoc = fbBrandsVersionsRef.doc(versionId);
+  await versionDoc.set({ schemaVersion:BRANDS_STORAGE_VERSION, status:'writing', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, priceChunkCount:chunks.prices.length });
+  const writes = [];
+  Object.keys(chunks).forEach(function(kind){ chunks[kind].forEach(function(items, index){ writes.push(function(){ return versionDoc.collection('chunks').doc(brandsChunkId(kind, index)).set({ items:items }); }); }); });
+  await runBrandsBatched(writes, 6);
+  const versionMeta = { schemaVersion:BRANDS_STORAGE_VERSION, status:'ready', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, priceChunkCount:chunks.prices.length, productCount:mergedProducts.length, overrideCount:Object.keys(mergedOverrides).length, priceCount:Object.keys(mergedPrices).length };
+  await versionDoc.set(versionMeta, {merge:true});
+  await fbBrandsDocRef.set(Object.assign({ activeVersion:versionId }, versionMeta), {merge:true});
+  const verifiedRoot = await fbBrandsDocRef.get({source:'server'});
+  const verifiedData = verifiedRoot.exists ? (verifiedRoot.data() || {}) : {};
+  if(String(verifiedData.activeVersion || '') !== versionId || verifiedData.status !== 'ready') throw new Error('Brands cloud version was not confirmed');
+  stockOverrides = mergedOverrides;
+  customProducts = mergedProducts;
+  state.prices = mergedPrices;
+  brandsCloudState = { activeVersion:versionId, updatedAt:updatedAt, loaded:true };
+  if(typeof deletedKeys !== 'undefined'){
+    deletedKeys.customProducts.clear();
+    deletedKeys.stockOverrides.clear();
+  }
+  persistBrandsLocalState();
+  clearBrandsCloudPending();
+  cleanupPreviousBrandsVersion(previousRoot, versionId);
+  return true;
+}
+function queueBrandsCloudBackfill(delay){
+  if(brandsCloudBackfillTimer || !hasBrandsCloudPending() || !navigator.onLine || !storageReady || !state.user) return;
+  brandsCloudBackfillTimer = window.setTimeout(function(){
+    brandsCloudBackfillTimer = null;
+    pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
+  }, Math.max(250, Number(delay) || 800));
+}
+
 async function loadStorage(){
   try{ const op = localStorage.getItem('operator-name'); if(op) state.operatorName = op; }catch(e){}
   
@@ -5781,17 +5959,25 @@ async function loadStorage(){
     const excelSnap = fbExcelDocRef ? await fbExcelDocRef.get().catch(()=>null) : null;
     const pdfSnap = fbPdfDocRef ? await fbPdfDocRef.get().catch(()=>null) : null;
     const reportSnap = fbReportDocRef ? await fbReportDocRef.get().catch(()=>null) : null;
+    const brandsSnap = fbBrandsDocRef ? await fbBrandsDocRef.get().catch(()=>null) : null;
+    const brandsRoot = brandsSnap && brandsSnap.exists ? (brandsSnap.data() || {}) : {};
+    let remoteBrands = null;
+    if(brandsRoot.activeVersion && !hasBrandsCloudPending()){
+      brandsCloudState.activeVersion = String(brandsRoot.activeVersion);
+      try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
+      catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
+    }
     clearTimeout(loadingTimeout);
     if(snap.exists){
       const data = snap.data();
       // Merge strategy: cloud data takes precedence if it's newer or if local is empty
       // For simplicity in this app, we'll use cloud data but ensure local cache is updated
-      stockOverrides = data.stockOverrides || stockOverrides;
+      if(!hasBrandsCloudPending()) stockOverrides = data.stockOverrides || stockOverrides;
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || scanLog;
-      customProducts = data.customProducts || customProducts;
+      if(!hasBrandsCloudPending()) customProducts = data.customProducts || customProducts;
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
-      state.prices = data.prices || state.prices || {};
+      if(!hasBrandsCloudPending()) state.prices = data.prices || state.prices || {};
       state.appUsers = data.appUsers || state.appUsers || { 'Asif': '949531', 'AJMAL': '6832', 'NIYAS': '1234', 'Das':'1234','Newton':'1234','Rao':'1234','Hussain':'1234','Abu':'1234','Ameer':'1234','Liptu':'1234','Ashmy':'1234','Habeeb':'1234','Mukeeth':'1234' };
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
       state.a7Excels = data.a7Excels || state.a7Excels || [];
@@ -5831,7 +6017,15 @@ async function loadStorage(){
       */
       rebuildIndex();
     } else {
-      await fbDocRef.set({ stockOverrides:{}, scanLog:[], customProducts:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
+      await fbDocRef.set({ scanLog:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
+    }
+    if(remoteBrands){
+      applyBrandsState(remoteBrands);
+      brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
+    } else if(!brandsRoot.activeVersion && hasBrandsPayload()){
+      // Pre-Build 102 cached/legacy inventory stays visible while it is copied into
+      // a durable chunked version. The old sharedData fields are not removed first.
+      markBrandsCloudPending('legacy-migration');
     }
     if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
     if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
@@ -5840,6 +6034,7 @@ async function loadStorage(){
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
     syncStatus = 'synced';
     queueReportCloudBackfill();
+    queueBrandsCloudBackfill();
     if(a7TemplateNeedsPush && fbDocRef){
       fbDocRef.set({ a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION }, { merge: true }).catch(()=>{});
       a7TemplateNeedsPush = false;
@@ -5867,12 +6062,12 @@ async function loadStorage(){
       if(!doc.exists) return;
       if(doc.metadata.hasPendingWrites) return; // this device's own write -- already applied locally
       const data = doc.data();
-      stockOverrides = data.stockOverrides || {};
+      if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) stockOverrides = data.stockOverrides || {};
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || [];
-      customProducts = data.customProducts || [];
+      if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) customProducts = data.customProducts || [];
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
-      state.prices = data.prices || state.prices || {};
+      if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) state.prices = data.prices || state.prices || {};
       state.appUsers = data.appUsers || state.appUsers || { 'Asif': '949531', 'AJMAL': '6832', 'NIYAS': '1234', 'Das':'1234','Newton':'1234','Rao':'1234','Hussain':'1234','Abu':'1234','Ameer':'1234','Liptu':'1234','Ashmy':'1234','Habeeb':'1234','Mukeeth':'1234' };
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
       const prevA7Excels = state.a7Excels || [];
@@ -5967,12 +6162,34 @@ async function loadStorage(){
     if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
     if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = mergePdfMetadata(data.pdfImports || []); cachePdfImports(); render(); });
     if(fbReportDocRef) fbReportDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.reports = mergeReportMetadata(data.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} render(); });
+    if(fbBrandsDocRef) fbBrandsDocRef.onSnapshot(async function(doc){
+      if(!doc.exists || doc.metadata.hasPendingWrites) return;
+      const root = doc.data() || {};
+      if(!root.activeVersion) return;
+      if(hasBrandsCloudPending()){
+        queueBrandsCloudBackfill();
+        return;
+      }
+      if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '')) return;
+      try{
+        const remoteBrands = await readBrandsStateFromCloud(root);
+        if(hasBrandsCloudPending()) return;
+        applyBrandsState(remoteBrands);
+        brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
+        syncStatus = 'synced';
+        updateHeaderSub();
+        render();
+      }catch(e){
+        console.warn('Live Brands cloud update could not be applied', e);
+        queueBrandsCloudBackfill(5000);
+      }
+    }, function(error){ console.warn('Brands Firestore listener unavailable', error); if(navigator.onLine) scheduleCloudVerification(5000); });
   }catch(e){}
 }
 
 // Tracks keys that were EXPLICITLY deleted on this device, so a merge-before-push
 // never silently resurrects them just because another device's cloud copy still has them.
-let deletedKeys = { customProducts: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), appNotifications: new Set(), pdfImports: new Set(), auditLog: new Set() };
+let deletedKeys = { customProducts: new Set(), stockOverrides: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), appNotifications: new Set(), pdfImports: new Set(), auditLog: new Set() };
 function rememberDeletedPriceNotifications(ids, tombstones){
   priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, tombstones);
   (ids || []).forEach(function(id){
@@ -6113,7 +6330,10 @@ async function pushToCloud(force, suppressToast, options){
     try{ if(fbPdfDocRef){ const snap = await fbPdfDocRef.get(); if(snap.exists) cloudPdfData = snap.data() || {}; } }catch(e){}
     try{ if(fbReportDocRef){ const snap = await fbReportDocRef.get(); if(snap.exists) cloudReportData = snap.data() || {}; } }catch(e){}
 
-    const mergedCustomProducts = unionExtraBarcodes(cloudData.customProducts, customProducts, mergeArrayByKey(cloudData.customProducts, customProducts, x=>x.SL, deletedKeys.customProducts));
+    // Brand products, stock overrides, and prices are deliberately saved outside
+    // sharedData. The publisher verifies every chunk and its active root before the
+    // app may report a cloud-synchronized Brands import.
+    if(hasBrandsCloudPending()) await syncBrandsStateToCloud();
     const mergedReports = mergeReportMetadata(cloudReportData.reports || cloudData.reports);
     for(const report of mergedReports){
       if(Array.isArray(report.data) && report.data.length && !report.payloadStored) await saveReportRowsToCloud(report);
@@ -6136,7 +6356,6 @@ async function pushToCloud(force, suppressToast, options){
     const mergedPdfIndex = mergedPdfImports.map(compactPdfMetadata);
     const mergedActiveSessions = mergeArrayByKey(cloudData.activeSessions, state.activeSessions, x=>x.id);
     // Adopt the merged results locally too, so THIS device doesn't lose what others added
-    customProducts = mergedCustomProducts;
     state.reports = mergedReports;
     scanLog = mergedScanLog;
     state.auditLog = mergedAuditLog;
@@ -6155,10 +6374,8 @@ async function pushToCloud(force, suppressToast, options){
     if(fbReportDocRef) await fbReportDocRef.set({ reports: mergedReportIndex, updatedAt: Date.now() }, { merge: true });
     const deleteLegacyField = firebase && firebase.firestore && firebase.firestore.FieldValue ? firebase.firestore.FieldValue.delete() : null;
     const sharedPayload = {
-      stockOverrides,
       stockDataUpdatedAt: stockCacheUpdatedAt || Date.now(),
       scanLog: mergedScanLog, 
-      customProducts: mergedCustomProducts, 
       auditLog: mergedAuditLog, 
       appUsers: state.appUsers || {}, 
       userRoles: state.userRoles || {},
@@ -6172,9 +6389,21 @@ async function pushToCloud(force, suppressToast, options){
       latestExcelUpdate: state.latestExcelUpdate || null,
       stockAdditionNotice: state.stockAdditionNotice || null,
       contactAdminLink: state.contactAdminLink || '',
-      prices: state.prices || {}
+      brandsStorageVersion: BRANDS_STORAGE_VERSION,
+      brandsUpdatedAt: Number(brandsCloudState.updatedAt || stockCacheUpdatedAt || Date.now())
     };
-    if(deleteLegacyField){ sharedPayload.a7Excels = deleteLegacyField; sharedPayload.a4Excels = deleteLegacyField; sharedPayload.pdfImports = deleteLegacyField; sharedPayload.reports = deleteLegacyField; }
+    if(deleteLegacyField){
+      sharedPayload.a7Excels = deleteLegacyField;
+      sharedPayload.a4Excels = deleteLegacyField;
+      sharedPayload.pdfImports = deleteLegacyField;
+      sharedPayload.reports = deleteLegacyField;
+      // Only reached after syncBrandsStateToCloud succeeds when a Brands change is
+      // pending, so legacy data is never deleted before its chunked replacement is
+      // confirmed. Existing small legacy records can safely retire on any later save.
+      sharedPayload.stockOverrides = deleteLegacyField;
+      sharedPayload.customProducts = deleteLegacyField;
+      sharedPayload.prices = deleteLegacyField;
+    }
     await fbDocRef.set(sharedPayload, { merge: true });
     syncStatus = 'synced';
     checkForceLogout();
@@ -6229,6 +6458,7 @@ async function retryCloudConnection(options){
     const replayed = await pushToCloud(true, true, { preserveStatus:true });
     syncStatus = 'synced';
     queueReportCloudBackfill();
+    queueBrandsCloudBackfill();
     updateHeaderSub(); render();
     if(!replayed){
       scheduleCloudVerification(10000);
@@ -6253,9 +6483,15 @@ window.addEventListener('online', function(){
   if(storageReady && state.user) window.setTimeout(function(){ retryCloudConnection({ silent:true }); }, 300);
 });
 
-async function saveStockOverrides(){ await pushToCloud(true, true); }
+async function saveBrandsState(reason){
+  markBrandsCloudPending(reason || 'brands-update');
+  const saved = await pushToCloud(true, true);
+  if(!saved) queueBrandsCloudBackfill(2500);
+  return saved;
+}
+async function saveStockOverrides(){ return saveBrandsState('stock-overrides'); }
 async function saveLog(){ await pushToCloud(); }
-async function saveCustomProducts(){ await pushToCloud(true, true); }
+async function saveCustomProducts(){ return saveBrandsState('custom-products'); }
 async function saveOperatorName(){
   try{ localStorage.setItem('operator-name', state.operatorName||''); }catch(e){}
 }
@@ -6325,7 +6561,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '98';
+const APP_BUILD = '102';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -6764,6 +7000,7 @@ async function handleImportPdf(fileInput){
 function confirmClearLocalOverrides(){
   appConfirm('Clear all local stock changes?', 'Clear Local Overrides').then(function(ok){
     if(!ok) return;
+    Object.keys(stockOverrides || {}).forEach(function(barcode){ deletedKeys.stockOverrides.add(barcode); });
     stockOverrides = {};
     addAuditLog('Overrides Cleared','Cleared all stock overrides');
     saveStockOverrides();
@@ -7848,6 +8085,7 @@ async function saveEditProduct(sl){
     if(oldBarcode !== normBarcode && stockOverrides.hasOwnProperty(oldBarcode)){
       stockOverrides[normBarcode] = stockOverrides[oldBarcode];
       delete stockOverrides[oldBarcode];
+      deletedKeys.stockOverrides.add(oldBarcode);
     }
     const newQty = parseFloat(f.stockQty);
     if(!isNaN(newQty) && newQty >= 0){
@@ -8264,6 +8502,9 @@ async function fullHardReset(){
   state.reports = [];
   state.auditLog = [];
   state.prices = {};
+  markBrandsCloudPending('full-hard-reset');
+  brandsCloudPending.replaceAll = true;
+  persistBrandsCloudPending();
   // Reset ALL_ROWS hidden flags
   ALL_ROWS.forEach(r => { r._hidden = false; r._extraBarcodes = null; });
   // Clear all local storage
@@ -8277,19 +8518,21 @@ async function fullHardReset(){
   rebuildIndex();
   // Push cleared data to cloud
   if(fbReady && fbDocRef){
+    try{ await syncBrandsStateToCloud(); }catch(e){ console.error('Brands reset cloud sync failed', e); }
     fbDocRef.set({
-      stockOverrides: {},
       scanLog: [],
-      customProducts: [],
       auditLog: [],
       reports: [],
-      prices: {},
       appUsers: state.appUsers || {},
       userRoles: state.userRoles || {},
       a7Excels: state.a7Excels || [],
         a4Excels: state.a4Excels || [],
       a7Template: state.a7Template || null, a7TemplateVersion: A7_TEMPLATE_VERSION,
-        appLocked: false
+        appLocked: false,
+        brandsStorageVersion: BRANDS_STORAGE_VERSION,
+        stockOverrides: firebase.firestore.FieldValue.delete(),
+        customProducts: firebase.firestore.FieldValue.delete(),
+        prices: firebase.firestore.FieldValue.delete()
     }).catch(e => console.error('Cloud reset failed', e));
   }
   updateHeaderSub();
@@ -8866,9 +9109,10 @@ async function handleImportExcel(fileInput){
     state.latestExcelUpdate = { ts: Date.now(), fileName: file.name, updatedRows: latestUpdatedRows, updatedQtyTotal: latestUpdatedQtyTotal, updatedValueTotal: latestUpdatedValueTotal, uploadedBy: (state.user && state.user.username) || 'Unknown', uploadedRole: (state.user && state.user.role) || 'unknown' };
     try{ localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
 
-    await saveStockOverrides();
-    await saveCustomProducts();
-    localStorage.setItem('app-prices', JSON.stringify(state.prices));
+    // Persist the entire imported inventory locally before attempting the cloud. The
+    // cloud result is truthful: only a fully verified root plus every Brands chunk
+    // is reported as synchronized; otherwise the durable pending marker retries.
+    const cloudSyncCompleted = await saveBrandsState('brands-excel-import');
     rebuildIndex();
     updateHeaderSub();
     let msg = `✓ Import done — ${updated} stock updates, ${added} new products`;
@@ -8876,10 +9120,7 @@ async function handleImportExcel(fileInput){
     if(priceCount > 0) msg += `, ${priceCount} prices updated`;
     if(skipped > 0) msg += `, ${skipped} rows skipped (no barcode)`;
     render();
-    // Force an immediate cloud sync (regardless of the manual-sync setting) so other devices see this import too.
-    // Local save has already happened above via saveStockOverrides/saveCustomProducts, so data is safe either way.
-    await pushToCloud(true, true);
-    if(syncStatus === 'synced'){
+    if(cloudSyncCompleted === true && !hasBrandsCloudPending()){
       showToast(msg + ' — saved on this device & synced to cloud ✓');
     } else {
       showToast(msg + ' — saved on this device. Cloud sync will retry automatically.', true);
@@ -8917,6 +9158,7 @@ async function deleteProduct(sl){
     // Remove stock override for this barcode if exists
     if(barcode && stockOverrides.hasOwnProperty(barcode)){
       delete stockOverrides[barcode];
+      deletedKeys.stockOverrides.add(barcode);
     }
     // Optimistic: update UI immediately, sync in background
     rebuildIndex();
@@ -8937,6 +9179,7 @@ async function deleteProduct(sl){
     // Remove stock override for this barcode if exists
     if(r.Barcode && stockOverrides.hasOwnProperty(r.Barcode)){
       delete stockOverrides[r.Barcode];
+      deletedKeys.stockOverrides.add(r.Barcode);
     }
     // Store hidden SLs in customProducts as a special marker
     const hiddenMarker = customProducts.find(x=>x.SL==='HIDDEN-MARKER');
@@ -11201,6 +11444,7 @@ async function handleImportData(fileInput){
                 if(art) { state.prices[art] = price; count++; }
             });
             localStorage.setItem('app-prices', JSON.stringify(state.prices));
+            markBrandsCloudPending('data-excel-prices');
             showToast("✓ Prices updated: " + count + " entries");
         }
         
