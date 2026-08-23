@@ -5356,9 +5356,58 @@ else installLucideIconObserver();
 
 const ALL_ROWS = parseData(RAW_DATA);
 let customProducts = [];   // user-added new products (from "Add as new product")
+// Excel rows commonly match the built-in catalogue. Keep imported descriptive field
+// changes (especially Sale Date) in a compact overlay rather than mutating RAW_DATA.
+// This makes date updates durable without duplicating or replacing the base product.
+let productFieldOverrides = {};
 let BARCODE_INDEX = new Map();
 
-function getAllRows(){ return ALL_ROWS.filter(r=>!r._hidden).concat(customProducts); }
+function normalizedOverrideBarcode(value){ return cleanBC(normalizeBarcode13(value)); }
+function applyProductFieldOverride(row){
+  if(!row) return row;
+  const override = productFieldOverrides[normalizedOverrideBarcode(row.Barcode)];
+  return override ? Object.assign({}, row, override) : row;
+}
+function importedDateMillis(value){
+  if(value instanceof Date && !isNaN(value.getTime())) return value.getTime();
+  const text = String(value || '').trim();
+  if(!text) return 0;
+  const monthMatch = text.match(/^(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{2,4})$/);
+  if(monthMatch){
+    const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    const month = months[String(monthMatch[2]).slice(0,3).toLowerCase()];
+    const yearRaw = Number(monthMatch[3]);
+    if(month !== undefined) return new Date(yearRaw < 100 ? 2000 + yearRaw : yearRaw, month, Number(monthMatch[1]), 12).getTime();
+  }
+  const slashMatch = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if(slashMatch){
+    const yearRaw = Number(slashMatch[3]);
+    return new Date(yearRaw < 100 ? 2000 + yearRaw : yearRaw, Number(slashMatch[2]) - 1, Number(slashMatch[1]), 12).getTime();
+  }
+  const parsed = Date.parse(text);
+  return isNaN(parsed) ? 0 : parsed;
+}
+function updateImportedProductFields(barcode, sourceRow, existingRow){
+  const key = normalizedOverrideBarcode(barcode);
+  if(!key) return false;
+  const incomingSaleDate = pick(sourceRow, ['Sale Date','sale date']);
+  if(!incomingSaleDate) return false;
+  const current = Object.assign({}, existingRow || {}, productFieldOverrides[key] || {});
+  const currentTime = importedDateMillis(current['Sale Date']);
+  const incomingTime = importedDateMillis(incomingSaleDate);
+  // Never replace a known newer sale date with an older imported workbook value.
+  if(currentTime && incomingTime && incomingTime < currentTime) return false;
+  const next = Object.assign({}, productFieldOverrides[key] || {}, {
+    'Sale Date': String(incomingSaleDate),
+    'GRN Date': String(pick(sourceRow, ['GRN Date','grn date']) || current['GRN Date'] || ''),
+    'GRN Number': String(pick(sourceRow, ['GRN Number','GRN','grn']) || current['GRN Number'] || ''),
+    'Age Days': String(pick(sourceRow, ['Age Days','age days']) || current['Age Days'] || '')
+  });
+  if(JSON.stringify(productFieldOverrides[key] || {}) === JSON.stringify(next)) return false;
+  productFieldOverrides[key] = next;
+  return true;
+}
+function getAllRows(){ return ALL_ROWS.filter(r=>!r._hidden).map(applyProductFieldOverride).concat((customProducts || []).map(applyProductFieldOverride)); }
 
 // Read-only bridge for the website AI search panel. It searches the same cached
 // product rows already loaded by the legacy app and never writes or mutates data.
@@ -5751,6 +5800,7 @@ function persistBrandsLocalState(){
   try{
     localStorage.setItem('stock-overrides-cache', JSON.stringify(stockOverrides || {}));
     localStorage.setItem('custom-products-cache', JSON.stringify(customProducts || []));
+    localStorage.setItem('brands-product-field-overrides-cache', JSON.stringify(productFieldOverrides || {}));
     localStorage.setItem('app-prices', JSON.stringify(state.prices || {}));
     markStockCacheFresh(Date.now());
     return true;
@@ -5773,7 +5823,7 @@ function clearBrandsCloudPending(){
   persistBrandsCloudPending();
 }
 function hasBrandsCloudPending(){ return !!(brandsCloudPending && Number(brandsCloudPending.updatedAt || 0)); }
-function hasBrandsPayload(){ return Object.keys(stockOverrides || {}).length > 0 || (customProducts || []).length > 0 || Object.keys(state.prices || {}).length > 0; }
+function hasBrandsPayload(){ return Object.keys(stockOverrides || {}).length > 0 || (customProducts || []).length > 0 || Object.keys(productFieldOverrides || {}).length > 0 || Object.keys(state.prices || {}).length > 0; }
 function brandsPayloadBytes(value){
   const text = JSON.stringify(value);
   try{ return new TextEncoder().encode(text).length; }catch(e){ return text.length * 2; }
@@ -5818,6 +5868,7 @@ function applyBrandsState(bundle){
   const next = bundle || {};
   stockOverrides = next.stockOverrides && typeof next.stockOverrides === 'object' ? next.stockOverrides : {};
   customProducts = Array.isArray(next.customProducts) ? next.customProducts : [];
+  productFieldOverrides = next.productFieldOverrides && typeof next.productFieldOverrides === 'object' ? next.productFieldOverrides : {};
   state.prices = next.prices && typeof next.prices === 'object' ? next.prices : {};
   markStockCacheFresh(Number(next.updatedAt || Date.now()));
   persistBrandsLocalState();
@@ -5838,6 +5889,7 @@ async function readBrandsStateFromCloud(rootData){
   const counts = {
     products:Number(meta.productChunkCount || rootData.productChunkCount || 0),
     overrides:Number(meta.overrideChunkCount || rootData.overrideChunkCount || 0),
+    productFields:Number(meta.productFieldChunkCount || rootData.productFieldChunkCount || 0),
     prices:Number(meta.priceChunkCount || rootData.priceChunkCount || 0)
   };
   async function readKind(kind){
@@ -5849,12 +5901,14 @@ async function readBrandsStateFromCloud(rootData){
   }
   const productItems = await readKind('products');
   const overrideItems = await readKind('overrides');
+  const productFieldItems = await readKind('productFields');
   const priceItems = await readKind('prices');
   return {
     activeVersion:versionId,
     updatedAt:Number(meta.updatedAt || rootData.updatedAt || 0),
     stockOverrides:brandsChunkItemsToMap(overrideItems),
     customProducts:productItems,
+    productFieldOverrides:brandsChunkItemsToMap(productFieldItems),
     prices:brandsChunkItemsToMap(priceItems),
     versionMeta:meta
   };
@@ -5866,7 +5920,7 @@ async function cleanupPreviousBrandsVersion(previousRoot, activeVersion){
     const currentData = current.exists ? (current.data() || {}) : {};
     if(String(currentData.activeVersion || '') !== String(activeVersion || '')) return;
     const oldVersion = fbBrandsVersionsRef.doc(String(previousRoot.activeVersion));
-    const counts = { products:Number(previousRoot.productChunkCount || 0), overrides:Number(previousRoot.overrideChunkCount || 0), prices:Number(previousRoot.priceChunkCount || 0) };
+    const counts = { products:Number(previousRoot.productChunkCount || 0), overrides:Number(previousRoot.overrideChunkCount || 0), productFields:Number(previousRoot.productFieldChunkCount || 0), prices:Number(previousRoot.priceChunkCount || 0) };
     const deletions = [];
     Object.keys(counts).forEach(function(kind){ for(let index=0; index<counts[kind]; index++) deletions.push(function(){ return oldVersion.collection('chunks').doc(brandsChunkId(kind, index)).delete(); }); });
     deletions.push(function(){ return oldVersion.delete(); });
@@ -5883,20 +5937,22 @@ async function syncBrandsStateToCloud(){
   const replaceAll = !!(brandsCloudPending && brandsCloudPending.replaceAll);
   const mergedProducts = replaceAll ? (customProducts || []).slice() : (remoteState ? unionExtraBarcodes(remoteState.customProducts, customProducts, mergeArrayByKey(remoteState.customProducts, customProducts, function(item){ return item && item.SL; }, deletedKeys.customProducts)) : (customProducts || []).slice());
   const mergedOverrides = replaceAll ? Object.assign({}, stockOverrides || {}) : mergeBrandsOverrides(remoteState && remoteState.stockOverrides, stockOverrides);
+  const mergedProductFields = replaceAll ? Object.assign({}, productFieldOverrides || {}) : Object.assign({}, remoteState && remoteState.productFieldOverrides || {}, productFieldOverrides || {});
   const mergedPrices = replaceAll ? Object.assign({}, state.prices || {}) : Object.assign({}, remoteState && remoteState.prices || {}, state.prices || {});
   const chunks = {
     products:splitBrandsChunks(mergedProducts),
     overrides:splitBrandsChunks(brandsMapChunkItems(mergedOverrides)),
+    productFields:splitBrandsChunks(brandsMapChunkItems(mergedProductFields)),
     prices:splitBrandsChunks(brandsMapChunkItems(mergedPrices))
   };
   const versionId = brandsVersionId();
   const updatedAt = Date.now();
   const versionDoc = fbBrandsVersionsRef.doc(versionId);
-  await versionDoc.set({ schemaVersion:BRANDS_STORAGE_VERSION, status:'writing', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, priceChunkCount:chunks.prices.length });
+  await versionDoc.set({ schemaVersion:BRANDS_STORAGE_VERSION, status:'writing', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, productFieldChunkCount:chunks.productFields.length, priceChunkCount:chunks.prices.length });
   const writes = [];
   Object.keys(chunks).forEach(function(kind){ chunks[kind].forEach(function(items, index){ writes.push(function(){ return versionDoc.collection('chunks').doc(brandsChunkId(kind, index)).set({ items:items }); }); }); });
   await runBrandsBatched(writes, 6);
-  const versionMeta = { schemaVersion:BRANDS_STORAGE_VERSION, status:'ready', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, priceChunkCount:chunks.prices.length, productCount:mergedProducts.length, overrideCount:Object.keys(mergedOverrides).length, priceCount:Object.keys(mergedPrices).length };
+  const versionMeta = { schemaVersion:BRANDS_STORAGE_VERSION, status:'ready', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, productFieldChunkCount:chunks.productFields.length, priceChunkCount:chunks.prices.length, productCount:mergedProducts.length, overrideCount:Object.keys(mergedOverrides).length, productFieldCount:Object.keys(mergedProductFields).length, priceCount:Object.keys(mergedPrices).length };
   await versionDoc.set(versionMeta, {merge:true});
   await fbBrandsDocRef.set(Object.assign({ activeVersion:versionId }, versionMeta), {merge:true});
   const verifiedRoot = await fbBrandsDocRef.get({source:'server'});
@@ -5904,6 +5960,7 @@ async function syncBrandsStateToCloud(){
   if(String(verifiedData.activeVersion || '') !== versionId || verifiedData.status !== 'ready') throw new Error('Brands cloud version was not confirmed');
   stockOverrides = mergedOverrides;
   customProducts = mergedProducts;
+  productFieldOverrides = mergedProductFields;
   state.prices = mergedPrices;
   brandsCloudState = { activeVersion:versionId, updatedAt:updatedAt, loaded:true };
   if(typeof deletedKeys !== 'undefined'){
@@ -5935,6 +5992,8 @@ async function loadStorage(){
     if(cachedLog) scanLog = JSON.parse(cachedLog);
     const cachedCustom = localStorage.getItem('custom-products-cache');
     if(cachedCustom) customProducts = JSON.parse(cachedCustom);
+    const cachedProductFields = localStorage.getItem('brands-product-field-overrides-cache');
+    if(cachedProductFields) productFieldOverrides = JSON.parse(cachedProductFields);
     const cachedA7 = localStorage.getItem('a7-excels-cache');
     if(cachedA7) state.a7Excels = JSON.parse(cachedA7);
     const cachedA4 = localStorage.getItem('a4-excels-cache');
@@ -6578,7 +6637,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '103';
+const APP_BUILD = '104';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -9041,7 +9100,9 @@ async function handleImportExcel(fileInput){
 
       const existing = BARCODE_INDEX.get(barcode);
       if(existing && existing.length){
-        // Barcode already exists: just update stock qty
+        // Existing base product: preserve its raw catalogue row but retain newer
+        // descriptive fields from the imported workbook (notably Sale Date).
+        updateImportedProductFields(barcode, r, existing[0]);
         if(qty !== null){
           const oldQtyForMovement = stockOverrides.hasOwnProperty(barcode) ? stockOverrides[barcode] : effectiveQty(existing[0]);
           recordStockMovement(barcode, oldQtyForMovement, qty, r, priorDayClosingTs);
