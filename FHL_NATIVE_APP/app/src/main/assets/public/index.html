@@ -6637,7 +6637,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '104';
+const APP_BUILD = '105';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -8117,6 +8117,22 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTs){
   });
   if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
 }
+// A prior import saved the latest inventory quantity but could miss the matching
+// daily sale delta. Recover only a provable difference between the catalogue base
+// plus existing ledger and the imported quantity. This appends one dated movement;
+// it never changes prior rows, stock overrides, products, or prices.
+function repairImportedSaleMovement(barcode, currentRow, importedQty, sourceRow){
+  const sourceTs = importedDateMillis(pick(sourceRow, ['Sale Date','sale date']));
+  const qty = Number(importedQty);
+  const moves = (state.stockMovements || []).filter(function(m){ return m && m.barcode === barcode; });
+  if(!barcode || !currentRow || !Number.isFinite(qty) || !sourceTs || !moves.length) return false;
+  const cutoff = Date.now() - 30*24*60*60*1000;
+  if(sourceTs < cutoff) return false;
+  const recordedQty = (parseFloat(currentRow['Stock Qty']) || 0) + moves.reduce(function(total, movement){ return total + (Number(movement.delta) || 0); }, 0);
+  if(qty === recordedQty) return false;
+  recordStockMovement(barcode, recordedQty, qty, sourceRow, sourceTs);
+  return true;
+}
 function recordBrandsStockAddition(row, oldQty, newQty){
   const addedQty = Number(newQty || 0) - Number(oldQty || 0);
   if(!(addedQty > 0)) return;
@@ -9106,6 +9122,7 @@ async function handleImportExcel(fileInput){
         if(qty !== null){
           const oldQtyForMovement = stockOverrides.hasOwnProperty(barcode) ? stockOverrides[barcode] : effectiveQty(existing[0]);
           recordStockMovement(barcode, oldQtyForMovement, qty, r, priorDayClosingTs);
+          repairImportedSaleMovement(barcode, existing[0], qty, r);
           stockOverrides[barcode] = qty;
           updated++;
           latestUpdatedRows++;
