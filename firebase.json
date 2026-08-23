@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "hosting": {
     "public": "FHL_NATIVE_APP/app/src/main/assets/public",
     "ignore": [

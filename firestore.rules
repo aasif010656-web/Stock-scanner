@@ -1,0 +1,15 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Existing app access is intentionally preserved for shared state and all
+    // nested Brands version/chunk documents introduced for large Excel imports.
+    match /stockScannerApp/{docPath=**} {
+      allow read, write: if true;
+    }
+
+    match /appSettings/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
