@@ -27,13 +27,7 @@ jobs:
       - name: Deploy Firestore Rules for shared Brands state
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-        run: |
-          set -euo pipefail
-          CREDENTIALS="$RUNNER_TEMP/firebase-service-account.json"
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$CREDENTIALS"
-          export GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIALS"
-          npx --yes firebase-tools@13.29.2 deploy --only firestore:rules --project stock-take-9a67a
-          rm -f "$CREDENTIALS"
+        run: node scripts/deploy-firestore-rules.mjs
 
       - name: Deploy synchronized website to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
