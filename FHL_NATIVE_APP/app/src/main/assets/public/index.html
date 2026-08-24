@@ -5495,17 +5495,36 @@ let fbReportDocRef = null;
 let fbReportRowsRef = null;
 let fbBrandsDocRef = null;
 let fbBrandsVersionsRef = null;
+let fbStockMovementDocRef = null;
+let fbStockMovementVersionsRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error (legacy error renders as reconnecting)
 let cloudRetryTimer = null;
 let brandsCloudBackfillTimer = null;
+let stockMovementCloudBackfillTimer = null;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
+const STOCK_MOVEMENT_STORAGE_VERSION = 1;
+const STOCK_MOVEMENT_PENDING_STORAGE_KEY = 'stock-movement-cloud-pending-v1';
+const BRANDS_LAST_SYNC_ERROR_STORAGE_KEY = 'brands-last-cloud-sync-error-v1';
 let brandsCloudState = { activeVersion:'', updatedAt:0, loaded:false };
 let brandsCloudPending = (function(){
   try{
     const value = JSON.parse(localStorage.getItem(BRANDS_PENDING_STORAGE_KEY) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  }catch(e){ return null; }
+})();
+let stockMovementCloudState = { activeVersion:'', updatedAt:0, loaded:false };
+let stockMovementCloudPending = (function(){
+  try{
+    const value = JSON.parse(localStorage.getItem(STOCK_MOVEMENT_PENDING_STORAGE_KEY) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  }catch(e){ return null; }
+})();
+let brandsLastCloudSyncError = (function(){
+  try{
+    const value = JSON.parse(localStorage.getItem(BRANDS_LAST_SYNC_ERROR_STORAGE_KEY) || 'null');
     return value && typeof value === 'object' ? value : null;
   }catch(e){ return null; }
 })();
@@ -5577,6 +5596,8 @@ function initFirebase(){
     fbReportRowsRef = fbReportDocRef.collection('rows');
     fbBrandsDocRef = db.collection('stockScannerApp').doc('brandsData');
     fbBrandsVersionsRef = fbBrandsDocRef.collection('versions');
+    fbStockMovementDocRef = db.collection('stockScannerApp').doc('stockMovementData');
+    fbStockMovementVersionsRef = fbStockMovementDocRef.collection('versions');
     fbReady = true;
   }catch(e){
     fbReady = false;
@@ -5927,6 +5948,89 @@ async function cleanupPreviousBrandsVersion(previousRoot, activeVersion){
     await runBrandsBatched(deletions, 6);
   }catch(e){ console.warn('Old Brands version cleanup will be retried later', e); }
 }
+// Stock Movement records grow with every imported quantity difference. They must not
+// share the single sharedData document with settings and notifications: a large Excel
+// import can otherwise exceed Firestore's 1 MiB document limit after Brands chunks
+// were already safely published. Like Brands inventory, movements are published
+// local-first through a verified, bounded version before legacy data is retired.
+function persistStockMovementCloudPending(){
+  try{
+    if(stockMovementCloudPending) localStorage.setItem(STOCK_MOVEMENT_PENDING_STORAGE_KEY, JSON.stringify(stockMovementCloudPending));
+    else localStorage.removeItem(STOCK_MOVEMENT_PENDING_STORAGE_KEY);
+  }catch(e){}
+}
+function markStockMovementCloudPending(reason){
+  stockMovementCloudPending = { updatedAt:Date.now(), reason:String(reason || 'stock-movement-update'), retryCount:Number((stockMovementCloudPending && stockMovementCloudPending.retryCount) || 0) };
+  persistStockMovementCloudPending();
+  try{ localStorage.setItem('stock-movements-cache', JSON.stringify(state.stockMovements || [])); }catch(e){}
+  return stockMovementCloudPending;
+}
+function clearStockMovementCloudPending(){ stockMovementCloudPending = null; persistStockMovementCloudPending(); }
+function hasStockMovementCloudPending(){ return !!(stockMovementCloudPending && Number(stockMovementCloudPending.updatedAt || 0)); }
+function hasStockMovementPayload(){ return Array.isArray(state.stockMovements) && state.stockMovements.length > 0; }
+function stockMovementVersionId(){ return 'movements_' + Date.now() + '_' + Math.random().toString(36).slice(2,10); }
+async function readStockMovementStateFromCloud(rootData){
+  if(!fbStockMovementVersionsRef || !rootData || !rootData.activeVersion) return null;
+  const versionId = String(rootData.activeVersion);
+  const versionDoc = fbStockMovementVersionsRef.doc(versionId);
+  const metaSnap = await versionDoc.get();
+  const meta = metaSnap.exists ? (metaSnap.data() || {}) : {};
+  if(!metaSnap.exists || meta.status !== 'ready') throw new Error('Stock Movement cloud version is incomplete');
+  const count = Number(meta.chunkCount || rootData.chunkCount || 0);
+  const refs = Array.from({length:count}, function(_, index){ return versionDoc.collection('chunks').doc(brandsChunkId('movements', index)); });
+  const docs = new Array(refs.length);
+  await runBrandsBatched(refs.map(function(ref, index){ return async function(){ docs[index] = await ref.get(); }; }), 6);
+  if(docs.some(function(doc){ return !doc || !doc.exists; })) throw new Error('Stock Movement cloud chunk is unavailable');
+  return { activeVersion:versionId, updatedAt:Number(meta.updatedAt || rootData.updatedAt || 0), movements:docs.reduce(function(items, doc){ return items.concat(Array.isArray((doc.data() || {}).items) ? doc.data().items : []); }, []), versionMeta:meta };
+}
+async function cleanupPreviousStockMovementVersion(previousRoot, activeVersion){
+  if(!previousRoot || !previousRoot.activeVersion || !fbStockMovementDocRef || !fbStockMovementVersionsRef) return;
+  try{
+    const current = await fbStockMovementDocRef.get({source:'server'});
+    const currentData = current.exists ? (current.data() || {}) : {};
+    if(String(currentData.activeVersion || '') !== String(activeVersion || '')) return;
+    const oldVersion = fbStockMovementVersionsRef.doc(String(previousRoot.activeVersion));
+    const deletions = [];
+    for(let index=0; index<Number(previousRoot.chunkCount || 0); index++) deletions.push(function(){ return oldVersion.collection('chunks').doc(brandsChunkId('movements', index)).delete(); });
+    deletions.push(function(){ return oldVersion.delete(); });
+    await runBrandsBatched(deletions, 6);
+  }catch(e){ console.warn('Old Stock Movement version cleanup will be retried later', e); }
+}
+async function syncStockMovementsToCloud(){
+  if(!fbReady || !fbStockMovementDocRef || !fbStockMovementVersionsRef) return false;
+  const rootSnap = await fbStockMovementDocRef.get({source:'server'});
+  const previousRoot = rootSnap.exists ? (rootSnap.data() || {}) : {};
+  let remoteState = null;
+  if(previousRoot.activeVersion) remoteState = await readStockMovementStateFromCloud(previousRoot);
+  const mergedMovements = mergeArrayByKey(remoteState && remoteState.movements, state.stockMovements, function(item){ return item && item.id; }, deletedKeys.stockMovements);
+  const chunks = splitBrandsChunks(mergedMovements);
+  const versionId = stockMovementVersionId();
+  const updatedAt = Date.now();
+  const versionDoc = fbStockMovementVersionsRef.doc(versionId);
+  await versionDoc.set({ schemaVersion:STOCK_MOVEMENT_STORAGE_VERSION, status:'writing', updatedAt:updatedAt, chunkCount:chunks.length });
+  const writes = chunks.map(function(items, index){ return function(){ return versionDoc.collection('chunks').doc(brandsChunkId('movements', index)).set({items:items}); }; });
+  await runBrandsBatched(writes, 6);
+  const versionMeta = { schemaVersion:STOCK_MOVEMENT_STORAGE_VERSION, status:'ready', updatedAt:updatedAt, chunkCount:chunks.length, movementCount:mergedMovements.length };
+  await versionDoc.set(versionMeta, {merge:true});
+  await fbStockMovementDocRef.set(Object.assign({activeVersion:versionId}, versionMeta), {merge:true});
+  const verifiedRoot = await fbStockMovementDocRef.get({source:'server'});
+  const verifiedData = verifiedRoot.exists ? (verifiedRoot.data() || {}) : {};
+  if(String(verifiedData.activeVersion || '') !== versionId || verifiedData.status !== 'ready') throw new Error('Stock Movement cloud version was not confirmed');
+  state.stockMovements = mergedMovements;
+  stockMovementCloudState = {activeVersion:versionId, updatedAt:updatedAt, loaded:true};
+  if(typeof deletedKeys !== 'undefined') deletedKeys.stockMovements.clear();
+  try{ localStorage.setItem('stock-movements-cache', JSON.stringify(state.stockMovements)); }catch(e){}
+  clearStockMovementCloudPending();
+  cleanupPreviousStockMovementVersion(previousRoot, versionId);
+  return true;
+}
+function queueStockMovementCloudBackfill(delay){
+  if(stockMovementCloudBackfillTimer || !hasStockMovementCloudPending() || !navigator.onLine || !storageReady || !state.user) return;
+  stockMovementCloudBackfillTimer = window.setTimeout(function(){
+    stockMovementCloudBackfillTimer = null;
+    pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
+  }, Math.max(500, Number(delay) || 1200));
+}
 async function syncBrandsStateToCloud(){
   persistBrandsLocalState();
   if(!fbReady || !fbBrandsDocRef || !fbBrandsVersionsRef) return false;
@@ -6036,12 +6140,20 @@ async function loadStorage(){
     const pdfSnap = fbPdfDocRef ? await fbPdfDocRef.get().catch(()=>null) : null;
     const reportSnap = fbReportDocRef ? await fbReportDocRef.get().catch(()=>null) : null;
     const brandsSnap = fbBrandsDocRef ? await fbBrandsDocRef.get().catch(()=>null) : null;
+    const stockMovementSnap = fbStockMovementDocRef ? await fbStockMovementDocRef.get().catch(()=>null) : null;
     const brandsRoot = brandsSnap && brandsSnap.exists ? (brandsSnap.data() || {}) : {};
+    const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
+    let remoteStockMovements = null;
     if(brandsRoot.activeVersion && !hasBrandsCloudPending()){
       brandsCloudState.activeVersion = String(brandsRoot.activeVersion);
       try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
       catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
+    }
+    if(stockMovementRoot.activeVersion && !hasStockMovementCloudPending()){
+      stockMovementCloudState.activeVersion = String(stockMovementRoot.activeVersion);
+      try{ remoteStockMovements = await readStockMovementStateFromCloud(stockMovementRoot); }
+      catch(e){ console.warn('Stock Movement cloud state could not be loaded yet; keeping the local cache', e); }
     }
     clearTimeout(loadingTimeout);
     if(snap.exists){
@@ -6059,7 +6171,7 @@ async function loadStorage(){
       state.a7Excels = data.a7Excels || state.a7Excels || [];
       state.a4Excels = data.a4Excels || state.a4Excels || [];
       state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
-      state.stockMovements = data.stockMovements || state.stockMovements || [];
+      if(!remoteStockMovements && !hasStockMovementCloudPending()) state.stockMovements = data.stockMovements || state.stockMovements || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
       cachePdfImports();
@@ -6103,6 +6215,13 @@ async function loadStorage(){
       // a durable chunked version. The old sharedData fields are not removed first.
       markBrandsCloudPending('legacy-migration');
     }
+    if(remoteStockMovements){
+      state.stockMovements = remoteStockMovements.movements;
+      stockMovementCloudState = { activeVersion:remoteStockMovements.activeVersion, updatedAt:remoteStockMovements.updatedAt, loaded:true };
+      try{ localStorage.setItem('stock-movements-cache', JSON.stringify(state.stockMovements)); }catch(e){}
+    } else if(!stockMovementRoot.activeVersion && hasStockMovementPayload()){
+      markStockMovementCloudPending('legacy-migration');
+    }
     if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
     if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
     // Keep cached workbook rows when the dedicated report document returns metadata only.
@@ -6111,6 +6230,7 @@ async function loadStorage(){
     syncStatus = 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
+    queueStockMovementCloudBackfill();
     if(a7TemplateNeedsPush && fbDocRef){
       fbDocRef.set({ a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION }, { merge: true }).catch(()=>{});
       a7TemplateNeedsPush = false;
@@ -6169,7 +6289,7 @@ async function loadStorage(){
       const prevStockAdditionId = String(state._websiteLastStockAdditionId || (state.stockAdditionNotice && state.stockAdditionNotice.id) || '');
       const prevExcelSignature = state._websiteLastExcelSignature || (state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName)) || '';
       state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
-      state.stockMovements = data.stockMovements || state.stockMovements || [];
+      if(!stockMovementCloudState.activeVersion && !hasStockMovementCloudPending()) state.stockMovements = data.stockMovements || state.stockMovements || [];
       const previousAppNotifications = state.appNotifications || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
@@ -6260,6 +6380,27 @@ async function loadStorage(){
         queueBrandsCloudBackfill(5000);
       }
     }, function(error){ console.warn('Brands Firestore listener unavailable', error); if(navigator.onLine) scheduleCloudVerification(5000); });
+    if(fbStockMovementDocRef) fbStockMovementDocRef.onSnapshot(async function(doc){
+      if(!doc.exists || doc.metadata.hasPendingWrites) return;
+      const root = doc.data() || {};
+      if(!root.activeVersion) return;
+      if(hasStockMovementCloudPending()){
+        queueStockMovementCloudBackfill();
+        return;
+      }
+      if(stockMovementCloudState.loaded && String(stockMovementCloudState.activeVersion || '') === String(root.activeVersion || '')) return;
+      try{
+        const remoteMovements = await readStockMovementStateFromCloud(root);
+        if(hasStockMovementCloudPending()) return;
+        state.stockMovements = remoteMovements.movements;
+        stockMovementCloudState = {activeVersion:remoteMovements.activeVersion, updatedAt:remoteMovements.updatedAt, loaded:true};
+        try{ localStorage.setItem('stock-movements-cache', JSON.stringify(state.stockMovements)); }catch(e){}
+        render();
+      }catch(e){
+        console.warn('Live Stock Movement cloud update could not be applied', e);
+        queueStockMovementCloudBackfill(5000);
+      }
+    }, function(error){ console.warn('Stock Movement Firestore listener unavailable', error); if(navigator.onLine) scheduleCloudVerification(5000); });
   }catch(e){}
 }
 
@@ -6369,6 +6510,15 @@ function unionExtraBarcodes(cloudArr, localArr, mergedArr){
   });
   return mergedArr;
 }
+function rememberBrandsCloudSyncError(error, stage){
+  const detail = error && (error.message || error.code) ? String(error.message || error.code) : 'Unknown cloud publishing error';
+  brandsLastCloudSyncError = { at:Date.now(), stage:String(stage || 'brands-import'), detail:detail.slice(0, 240) };
+  try{ localStorage.setItem(BRANDS_LAST_SYNC_ERROR_STORAGE_KEY, JSON.stringify(brandsLastCloudSyncError)); }catch(e){}
+}
+function clearBrandsCloudSyncError(){
+  brandsLastCloudSyncError = null;
+  try{ localStorage.removeItem(BRANDS_LAST_SYNC_ERROR_STORAGE_KEY); }catch(e){}
+}
 
 async function pushToCloud(force, suppressToast, options){
   const preserveStatus = !!(options && options.preserveStatus);
@@ -6410,6 +6560,10 @@ async function pushToCloud(force, suppressToast, options){
     // sharedData. The publisher verifies every chunk and its active root before the
     // app may report a cloud-synchronized Brands import.
     if(hasBrandsCloudPending()) await syncBrandsStateToCloud();
+    // Large Excel imports can create thousands of quantity movements. Publish them
+    // in their own bounded version before writing the small shared settings document.
+    if(!stockMovementCloudState.activeVersion && hasStockMovementPayload()) markStockMovementCloudPending('legacy-migration');
+    if(hasStockMovementCloudPending()) await syncStockMovementsToCloud();
     const mergedReports = mergeReportMetadata(cloudReportData.reports || cloudData.reports);
     for(const report of mergedReports){
       if(Array.isArray(report.data) && report.data.length && !report.payloadStored) await saveReportRowsToCloud(report);
@@ -6423,7 +6577,6 @@ async function pushToCloud(force, suppressToast, options){
     persistPriceDeleteTombstones();
     const priceDeleteIds = new Set(Object.keys(priceDeleteTombstones));
     const mergedPriceNotifs = mergeArrayByKey(cloudData.priceChangeNotifications, state.priceChangeNotifications, x=>x.id, priceDeleteIds);
-        const mergedStockMovements = mergeArrayByKey(cloudData.stockMovements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
     const mergedAppNotifications = mergeArrayByKey(cloudData.appNotifications, state.appNotifications, x=>x.id, deletedKeys.appNotifications);
     const mergedPdfImports = mergeArrayByKey(cloudPdfData.pdfImports || cloudData.pdfImports, state.pdfImports, x=>x.id, deletedKeys.pdfImports);
     for(const pdfRecord of mergedPdfImports){
@@ -6438,7 +6591,6 @@ async function pushToCloud(force, suppressToast, options){
     state.a7Excels = mergedA7Excels;
     state.a4Excels = mergedA4Excels;
     state.priceChangeNotifications = mergedPriceNotifs;
-    state.stockMovements = mergedStockMovements;
     state.appNotifications = mergedAppNotifications;
     state.pdfImports = mergePdfMetadata(mergedPdfImports);
     cachePdfImports();
@@ -6459,7 +6611,7 @@ async function pushToCloud(force, suppressToast, options){
       appLocked: !!state.appLocked,
       priceChangeNotifications: mergedPriceNotifs,
       priceChangeNotificationTombstones: priceDeleteTombstones,
-      stockMovements: mergedStockMovements,
+      stockMovements: state.stockMovements || [],
       appNotifications: mergedAppNotifications,
       activeSessions: mergedActiveSessions,
       latestExcelUpdate: state.latestExcelUpdate || null,
@@ -6468,6 +6620,7 @@ async function pushToCloud(force, suppressToast, options){
       brandsStorageVersion: BRANDS_STORAGE_VERSION,
       brandsUpdatedAt: Number(brandsCloudState.updatedAt || stockCacheUpdatedAt || Date.now())
     };
+    if(stockMovementCloudState.activeVersion && !hasStockMovementCloudPending()) delete sharedPayload.stockMovements;
     if(deleteLegacyField){
       sharedPayload.a7Excels = deleteLegacyField;
       sharedPayload.a4Excels = deleteLegacyField;
@@ -6479,8 +6632,12 @@ async function pushToCloud(force, suppressToast, options){
       sharedPayload.stockOverrides = deleteLegacyField;
       sharedPayload.customProducts = deleteLegacyField;
       sharedPayload.prices = deleteLegacyField;
+      // Only retire this legacy field after syncStockMovementsToCloud has
+      // server-verified a dedicated active version above.
+      if(stockMovementCloudState.activeVersion && !hasStockMovementCloudPending()) sharedPayload.stockMovements = deleteLegacyField;
     }
     await fbDocRef.set(sharedPayload, { merge: true });
+    clearBrandsCloudSyncError();
     syncStatus = 'synced';
     checkForceLogout();
     render();
@@ -6490,7 +6647,8 @@ async function pushToCloud(force, suppressToast, options){
     // Preserve local data and do not downgrade the verified connection state.
     if(!preserveStatus && !navigator.onLine) syncStatus = 'offline';
     else if(!preserveStatus && syncStatus !== 'synced') syncStatus = 'connecting';
-    if(force && !suppressToast) showToast("Cloud sync failed — check internet connection", true);
+    rememberBrandsCloudSyncError(e, hasBrandsCloudPending() ? 'brands-version' : (hasStockMovementCloudPending() ? 'stock-movement-version' : 'shared-data'));
+    if(force && !suppressToast) showToast("Cloud save queued safely — Retry Connection will continue automatically.", true);
     updateHeaderSub();
     return false;
   }
@@ -6535,6 +6693,7 @@ async function retryCloudConnection(options){
     syncStatus = 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
+    queueStockMovementCloudBackfill();
     updateHeaderSub(); render();
     if(!replayed){
       scheduleCloudVerification(10000);
@@ -6637,7 +6796,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '105';
+const APP_BUILD = '106';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -7273,12 +7432,14 @@ function clearWallpaper(){
 // Aging never shows a stale/missing sale figure just because this device hasn't
 // synced in a while.
 async function refreshAgingMovements(){
-  if(!fbReady || !fbDocRef) return;
+  if(!fbReady || !fbStockMovementDocRef) return;
   try{
-    const snap = await fbDocRef.get();
-    if(snap.exists){
-      const data = snap.data() || {};
-      state.stockMovements = mergeArrayByKey(data.stockMovements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
+    const snap = await fbStockMovementDocRef.get();
+    const root = snap.exists ? (snap.data() || {}) : {};
+    if(root.activeVersion && !hasStockMovementCloudPending()){
+      const remoteMovements = await readStockMovementStateFromCloud(root);
+      state.stockMovements = mergeArrayByKey(remoteMovements.movements, state.stockMovements, x=>x.id, deletedKeys.stockMovements);
+      stockMovementCloudState = {activeVersion:remoteMovements.activeVersion, updatedAt:remoteMovements.updatedAt, loaded:true};
       if(state.tab === 'aging') render();
     }
   }catch(e){ /* offline — keep whatever's cached locally */ }
@@ -8115,7 +8276,9 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTs){
     type: type,
     ts: Number(movementTs) || Date.now()
   });
-  if(state.stockMovements.length > 5000) state.stockMovements = state.stockMovements.slice(0, 5000);
+  // Keep the complete movement history. The cloud publisher stores it in bounded
+  // chunks, so a local arbitrary cap must not delete older valid sales before sync.
+  markStockMovementCloudPending('movement-recorded');
 }
 // A prior import saved the latest inventory quantity but could miss the matching
 // daily sale delta. Recover only a provable difference between the catalogue base
@@ -8973,7 +9136,8 @@ async function handleRestoreFile(fileInput){
     state.a7Excels = data.a7Excels || state.a7Excels || [];
     state.a4Excels = data.a4Excels || state.a4Excels || [];
     state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
-      state.stockMovements = data.stockMovements || state.stockMovements || [];
+    state.stockMovements = data.stockMovements || state.stockMovements || [];
+    if(Array.isArray(data.stockMovements) && data.stockMovements.length) markStockMovementCloudPending('backup-restore');
     if((data.a7TemplateVersion || 0) < A7_TEMPLATE_VERSION){
       state.a7Template = DEFAULT_A7_TEMPLATE_B64;
     } else {
@@ -9218,7 +9382,8 @@ async function handleImportExcel(fileInput){
     if(cloudSyncCompleted === true && !hasBrandsCloudPending()){
       showToast(msg + ' — saved on this device & synced to cloud ✓');
     } else {
-      showToast(msg + ' — saved on this device. Cloud sync will retry automatically.', true);
+      const stage = brandsLastCloudSyncError && brandsLastCloudSyncError.stage ? (' (' + brandsLastCloudSyncError.stage.replace(/-/g, ' ') + ')') : '';
+      showToast(msg + ' — saved on this device. Cloud sync queued safely' + stage + '.', true);
     }
   }catch(e){
     showToast("Could not read that Excel file", true);
