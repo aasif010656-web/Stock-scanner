@@ -293,6 +293,19 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 }
 .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}
 .toast.err{background:rgba(255,107,107,0.92);color:#2B0B0B;}
+.brands-import-feedback{position:fixed;inset:0;z-index:180;display:grid;place-items:center;padding:24px;background:rgba(7,10,18,.54);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);pointer-events:none;}
+.brands-import-feedback[hidden]{display:none;}
+.brands-import-feedback-card{width:min(360px,100%);padding:22px 20px 18px;border:1px solid rgba(108,125,255,.38);border-radius:24px;background:linear-gradient(145deg,rgba(30,35,57,.98),rgba(16,20,33,.98));box-shadow:0 26px 70px rgba(0,0,0,.48);text-align:center;}
+.brands-import-spinner{width:42px;height:42px;margin:0 auto 14px;border:4px solid rgba(255,255,255,.15);border-top-color:var(--accent);border-right-color:#9A8CFF;border-radius:50%;animation:brandsImportSpin .82s linear infinite;}
+.brands-import-feedback[data-state="success"] .brands-import-spinner{animation:none;border-color:#3ADC91;background:rgba(58,220,145,.12);position:relative;}
+.brands-import-feedback[data-state="success"] .brands-import-spinner::after{content:'✓';position:absolute;inset:0;display:grid;place-items:center;color:#3ADC91;font-size:25px;font-weight:900;}
+.brands-import-feedback-title{font-size:17px;font-weight:800;color:var(--text);margin-bottom:6px;}
+.brands-import-feedback-detail{font-size:12.5px;line-height:1.45;color:var(--muted);min-height:36px;}
+.brands-import-feedback-track{height:8px;margin-top:15px;border-radius:999px;background:rgba(255,255,255,.09);overflow:hidden;}
+.brands-import-feedback-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,var(--accent),#9A8CFF);transition:width .18s var(--ease-out, ease-out);}
+.brands-import-feedback[data-state="success"] .brands-import-feedback-track{display:none;}
+@keyframes brandsImportSpin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.brands-import-spinner{animation:none;}.brands-import-feedback-bar{transition:none;}}
 .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; background: rgba(20, 23, 34, 0.7); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border-top: 1px solid var(--border); display: flex; max-width: 520px; margin: 0 auto; }
 .bottom-nav button{flex:1;background:transparent;color:var(--muted);padding:10px 0 8px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;}
 .bottom-nav button.active{color:var(--accent);}
@@ -676,6 +689,14 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
 	  <button id="backToTopBtn" onclick="scrollToTop()" aria-label="Back to top" title="Back to top"><span data-lucide="arrow-up" aria-hidden="true"></span></button>
 	</div>
 <div class="toast" id="toast"></div>
+<div class="brands-import-feedback" id="brandsImportFeedback" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true" hidden>
+  <div class="brands-import-feedback-card">
+    <div class="brands-import-spinner" aria-hidden="true"></div>
+    <div class="brands-import-feedback-title" id="brandsImportFeedbackTitle">Importing Brands Excel</div>
+    <div class="brands-import-feedback-detail" id="brandsImportFeedbackDetail">Preparing import…</div>
+    <div class="brands-import-feedback-track" aria-hidden="true"><div class="brands-import-feedback-bar" id="brandsImportFeedbackBar"></div></div>
+  </div>
+</div>
 <div class="modal-overlay" id="barcodeModal">
   <div class="modal-box">
     <div class="modal-close" onclick="closeBarcodeModal()" role="button" tabindex="0" aria-label="Close"><span data-lucide="x" aria-hidden="true"></span></div>
@@ -6775,6 +6796,54 @@ function showToast(msg, isErr){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>{ t.className="toast"; }, 2200);
 }
+let brandsImportFeedbackTimer = null;
+function updateBrandsImportFeedback(){
+  const overlay = document.getElementById('brandsImportFeedback');
+  const title = document.getElementById('brandsImportFeedbackTitle');
+  const detail = document.getElementById('brandsImportFeedbackDetail');
+  const bar = document.getElementById('brandsImportFeedbackBar');
+  if(!overlay || !title || !detail || !bar) return;
+  const progress = state.importProgress || {};
+  if(!progress.active){
+    if(overlay.dataset.state !== 'success'){
+      overlay.hidden = true;
+      overlay.setAttribute('aria-hidden', 'true');
+    }
+    return;
+  }
+  clearTimeout(brandsImportFeedbackTimer);
+  overlay.dataset.state = 'loading';
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  title.textContent = 'Importing Brands Excel';
+  const total = Math.max(0, Number(progress.total || 0));
+  const current = Math.min(total, Math.max(0, Number(progress.current || 0)));
+  const percent = total ? Math.round((current / total) * 100) : 0;
+  detail.textContent = `${progress.label || 'Processing workbook…'} ${current.toLocaleString()} / ${total.toLocaleString()} rows (${percent}%)`;
+  bar.style.width = percent + '%';
+  document.querySelectorAll('[data-brands-import-button]').forEach(btn=>{
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = 'Importing…';
+  });
+}
+function showBrandsImportSuccess(summary, cloudSynced){
+  const overlay = document.getElementById('brandsImportFeedback');
+  const title = document.getElementById('brandsImportFeedbackTitle');
+  const detail = document.getElementById('brandsImportFeedbackDetail');
+  if(!overlay || !title || !detail) return;
+  clearTimeout(brandsImportFeedbackTimer);
+  overlay.dataset.state = 'success';
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  title.textContent = 'Excel import complete';
+  detail.textContent = cloudSynced ? `${summary} Saved and synced to cloud.` : `${summary} Saved safely on this device; cloud sync is queued.`;
+  brandsImportFeedbackTimer = setTimeout(()=>{
+    overlay.hidden = true;
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.dataset.state = '';
+  }, 3600);
+}
 
 // ---------- Device identity (per-device, kept only in localStorage, never synced) ----------
 function getOrCreateDeviceId(){
@@ -6796,7 +6865,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '107';
+const APP_BUILD = '108';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -9171,6 +9240,7 @@ async function handleRestoreFile(fileInput){
 
 function triggerImportExcel(){
   if(state.user && state.user.role === 'promoter'){ showToast('Not available for this account', true); return; }
+  if(state.importProgress && state.importProgress.active){ showToast('Brands Excel import is already running'); return; }
   const inp = document.getElementById('importExcelInput');
   if(inp) inp.click();
 }
@@ -9209,6 +9279,7 @@ function pick(row, keys){
 
 async function handleImportExcel(fileInput){
   if(state.user && state.user.role === 'promoter'){ showToast('Not available for this account', true); if(fileInput) fileInput.value=''; return; }
+  if(state.importProgress && state.importProgress.active){ showToast('Brands Excel import is already running'); if(fileInput) fileInput.value=''; return; }
   const file = fileInput.files && fileInput.files[0];
   if(!file) return;
   try{
@@ -9232,7 +9303,8 @@ async function handleImportExcel(fileInput){
         return lower.includes('price') || lower === 'rate' || lower === 'mrp' || lower.includes('selling');
     });
 
-    state.importProgress = { active: true, current: 0, total: rows.length, label: 'Importing Brands excel...' };
+    state.importProgress = { active: true, current: 0, total: rows.length, label: 'Processing workbook…' };
+    updateBrandsImportFeedback();
     render();
 
     for(let rowIdx=0; rowIdx<rows.length; rowIdx++){
@@ -9359,18 +9431,22 @@ async function handleImportExcel(fileInput){
       // update, instead of the whole import running in one blocking JS tick.
       if(rowIdx % 150 === 0 || rowIdx === rows.length - 1){
         state.importProgress.current = rowIdx + 1;
-        if(state.user && state.user.username === 'Asif') render();
+        state.importProgress.label = 'Updating products and stock…';
+        updateBrandsImportFeedback();
         await new Promise(res => setTimeout(res, 0));
       }
     }
 
     state.importProgress = { active: false, current: 0, total: 0, label: '' };
+    updateBrandsImportFeedback();
     state.latestExcelUpdate = { ts: Date.now(), fileName: file.name, updatedRows: latestUpdatedRows, updatedQtyTotal: latestUpdatedQtyTotal, updatedValueTotal: latestUpdatedValueTotal, uploadedBy: (state.user && state.user.username) || 'Unknown', uploadedRole: (state.user && state.user.role) || 'unknown' };
     try{ localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate)); }catch(e){}
 
     // Persist the entire imported inventory locally before attempting the cloud. The
     // cloud result is truthful: only a fully verified root plus every Brands chunk
     // is reported as synchronized; otherwise the durable pending marker retries.
+    state.importProgress.label = 'Saving safely and verifying cloud sync…';
+    updateBrandsImportFeedback();
     const cloudSyncCompleted = await saveBrandsState('brands-excel-import');
     rebuildIndex();
     updateHeaderSub();
@@ -9380,15 +9456,18 @@ async function handleImportExcel(fileInput){
     if(skipped > 0) msg += `, ${skipped} rows skipped (no barcode)`;
     render();
     if(cloudSyncCompleted === true && !hasBrandsCloudPending()){
+      showBrandsImportSuccess(msg, true);
       showToast(msg + ' — saved on this device & synced to cloud ✓');
     } else {
       const stage = brandsLastCloudSyncError && brandsLastCloudSyncError.stage ? (' (' + brandsLastCloudSyncError.stage.replace(/-/g, ' ') + ')') : '';
+      showBrandsImportSuccess(msg, false);
       showToast(msg + ' — saved on this device. Cloud sync queued safely' + stage + '.', true);
     }
   }catch(e){
     showToast("Could not read that Excel file", true);
   }
   state.importProgress = { active: false, current: 0, total: 0, label: '' };
+  updateBrandsImportFeedback();
   fileInput.value = '';
 }
 
@@ -10871,8 +10950,9 @@ function renderBrands(){
   const isPromoterBrands = state.user && state.user.role === 'promoter';
   let html = '';
   if(!isPromoterBrands){
+    const importing = !!(state.importProgress && state.importProgress.active);
     html += '<div class="btn-row" style="margin-bottom:14px;">';
-    html += '<button class="btn" onclick="triggerImportExcel()">📥 Import Excel (update stock / add products)</button>';
+    html += '<button class="btn" data-brands-import-button onclick="triggerImportExcel()"' + (importing ? ' disabled aria-busy="true"' : '') + '>' + (importing ? 'Importing…' : '📥 Import Excel (update stock / add products)') + '</button>';
     html += '</div>';
   }
 
