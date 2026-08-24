@@ -6796,7 +6796,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '106';
+const APP_BUILD = '107';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -10100,7 +10100,9 @@ function openStockMovementModal(barcode, description){
     html += '<table style="width:100%;border-collapse:collapse;font-size:13px;color:#111111;">';
     html += '<thead><tr style="background:#e8e8e8;"><th style="border:1px solid #ccc;padding:7px;text-align:left;">Date</th><th style="border:1px solid #ccc;padding:7px;text-align:right;">Qty</th><th style="border:1px solid #ccc;padding:7px;text-align:left;">Type</th></tr></thead><tbody>';
     moves.forEach(m=>{
-      const dstr = displayDateTime(m.ts, {day:'2-digit',month:'2-digit',year:'2-digit'});
+      // Stock Movement represents the source workbook's business Sale Date.
+      // It must not inherit the app-wide display-only prior-day adjustment.
+      const dstr = originalDateTime(m.ts, {day:'2-digit',month:'2-digit',year:'2-digit'});
       let label, color;
       if(m.type === 'sale'){ label = 'Sale'; color = '#B3261E'; }
       else if(m.type === 'restock'){ label = 'New Stock'; color = '#1B7F3A'; }
