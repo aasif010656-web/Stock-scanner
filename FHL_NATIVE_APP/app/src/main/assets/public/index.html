@@ -6735,8 +6735,36 @@ async function retryCloudConnection(options){
     render();
   }
 }
+async function refreshCanonicalBrandsState(){
+  if(!storageReady || !state.user || !fbReady || !fbBrandsDocRef || hasBrandsCloudPending()) return false;
+  try{
+    const rootSnap = await fbBrandsDocRef.get({ source:'server' });
+    if(!rootSnap.exists) return false;
+    const root = rootSnap.data() || {};
+    if(!root.activeVersion || hasBrandsCloudPending()) return false;
+    // Always apply the verified server snapshot on resume/reconnect. Relying only
+    // on activeVersion can leave a client showing a stale local summary while the
+    // global header still says Synced.
+    const remoteBrands = await readBrandsStateFromCloud(root);
+    if(hasBrandsCloudPending()) return false;
+    applyBrandsState(remoteBrands);
+    brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
+    syncStatus = 'synced';
+    updateHeaderSub();
+    render();
+    return true;
+  }catch(error){
+    console.warn('Canonical Brands refresh could not be applied', error);
+    return false;
+  }
+}
 window.addEventListener('online', function(){
-  if(storageReady && state.user) window.setTimeout(function(){ retryCloudConnection({ silent:true }); }, 300);
+  if(storageReady && state.user) window.setTimeout(function(){
+    retryCloudConnection({ silent:true }).then(function(){ return refreshCanonicalBrandsState(); });
+  }, 300);
+});
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden && storageReady && state.user) window.setTimeout(refreshCanonicalBrandsState, 300);
 });
 
 async function saveBrandsState(reason){
@@ -6865,7 +6893,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '108';
+const APP_BUILD = '109';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
