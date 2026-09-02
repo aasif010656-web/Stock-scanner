@@ -5389,6 +5389,14 @@ function applyProductFieldOverride(row){
   const override = productFieldOverrides[normalizedOverrideBarcode(row.Barcode)];
   return override ? Object.assign({}, row, override) : row;
 }
+function preferLatestExcelUpdate(current, incoming){
+  const a = current && typeof current === 'object' ? current : null;
+  const b = incoming && typeof incoming === 'object' ? incoming : null;
+  if(!a) return b;
+  if(!b) return a;
+  const at = Number(a.ts || a.updatedAt || 0), bt = Number(b.ts || b.updatedAt || 0);
+  return bt >= at ? b : a;
+}
 function importedDateMillis(value){
   if(value instanceof Date && !isNaN(value.getTime())) return value.getTime();
   const text = String(value || '').trim();
@@ -6127,6 +6135,7 @@ async function loadStorage(){
     if(cachedPriceNotifs) state.priceChangeNotifications = applyPriceDeleteTombstones(JSON.parse(cachedPriceNotifs));
     const cachedMovements = localStorage.getItem('stock-movements-cache');
     if(cachedMovements) state.stockMovements = JSON.parse(cachedMovements);
+    dedupeStockMovements();
     const cachedPdfImports = localStorage.getItem('pdf-imports-cache');
     if(cachedPdfImports) state.pdfImports = normalizePdfImportCollection(JSON.parse(cachedPdfImports));
     const cachedReports = localStorage.getItem('app-reports');
@@ -6199,8 +6208,8 @@ async function loadStorage(){
       state.activeSessions = data.activeSessions || state.activeSessions || [];
       handleRemoteSessionRevocation();
       if(data.contactAdminLink !== undefined){ state.contactAdminLink = data.contactAdminLink || ''; try{ localStorage.setItem('contact-admin-link', state.contactAdminLink); }catch(e){} }
-      state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
-      if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
+      state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, data.latestExcelUpdate);
+      if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, excelData.latestExcelUpdate); }
       if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
       if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
       state.contactAdminLink = data.contactAdminLink || state.contactAdminLink || '';
@@ -6228,22 +6237,24 @@ async function loadStorage(){
     } else {
       await fbDocRef.set({ scanLog:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
-    if(remoteBrands){
+    if(remoteBrands && !hasBrandsCloudPending()){
       applyBrandsState(remoteBrands);
       brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
-    } else if(!brandsRoot.activeVersion && hasBrandsPayload()){
+    } else if(!remoteBrands && !brandsRoot.activeVersion && hasBrandsPayload()){
       // Pre-Build 102 cached/legacy inventory stays visible while it is copied into
       // a durable chunked version. The old sharedData fields are not removed first.
       markBrandsCloudPending('legacy-migration');
     }
     if(remoteStockMovements){
       state.stockMovements = remoteStockMovements.movements;
+      const removedMovementDuplicates = dedupeStockMovements();
+      if(removedMovementDuplicates) markStockMovementCloudPending('deduplicated-movement-history');
       stockMovementCloudState = { activeVersion:remoteStockMovements.activeVersion, updatedAt:remoteStockMovements.updatedAt, loaded:true };
       try{ localStorage.setItem('stock-movements-cache', JSON.stringify(state.stockMovements)); }catch(e){}
     } else if(!stockMovementRoot.activeVersion && hasStockMovementPayload()){
       markStockMovementCloudPending('legacy-migration');
     }
-    if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = excelData.latestExcelUpdate || state.latestExcelUpdate || null; }
+    if(excelSnap && excelSnap.exists){ const excelData = excelSnap.data() || {}; state.a7Excels = excelData.a7Excels || state.a7Excels || []; state.a4Excels = excelData.a4Excels || state.a4Excels || []; state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, excelData.latestExcelUpdate); }
     if(pdfSnap && pdfSnap.exists){ const pdfData = pdfSnap.data() || {}; state.pdfImports = mergePdfMetadata(pdfData.pdfImports || state.pdfImports || []); cachePdfImports(); }
     // Keep cached workbook rows when the dedicated report document returns metadata only.
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
@@ -6317,7 +6328,7 @@ async function loadStorage(){
       cachePdfImports();
       state.activeSessions = data.activeSessions || state.activeSessions || [];
       handleRemoteSessionRevocation();
-      state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null;
+      state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, data.latestExcelUpdate);
       state.stockAdditionNotice = data.stockAdditionNotice || state.stockAdditionNotice || null;
       const latestExcelSignature = state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName) || '';
       const nextStockAddition = state.stockAdditionNotice || null;
@@ -6376,7 +6387,7 @@ async function loadStorage(){
       if(navigator.onLine) scheduleCloudVerification(5000);
       updateHeaderSub(); render();
     });
-    if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = data.latestExcelUpdate || state.latestExcelUpdate || null; render(); });
+    if(fbExcelDocRef) fbExcelDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.a7Excels = data.a7Excels || state.a7Excels || []; state.a4Excels = data.a4Excels || state.a4Excels || []; state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, data.latestExcelUpdate); render(); });
     if(fbPdfDocRef) fbPdfDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.pdfImports = mergePdfMetadata(data.pdfImports || []); cachePdfImports(); render(); });
     if(fbReportDocRef) fbReportDocRef.onSnapshot(function(doc){ if(!doc.exists || doc.metadata.hasPendingWrites) return; const data = doc.data() || {}; state.reports = mergeReportMetadata(data.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} render(); });
     if(fbBrandsDocRef) fbBrandsDocRef.onSnapshot(async function(doc){
@@ -6580,6 +6591,9 @@ async function pushToCloud(force, suppressToast, options){
     // Brand products, stock overrides, and prices are deliberately saved outside
     // sharedData. The publisher verifies every chunk and its active root before the
     // app may report a cloud-synchronized Brands import.
+    // A cloud read can still contain an older latest-update field; never let that
+    // stale metadata replace a newer locally completed import.
+    state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, cloudExcelData.latestExcelUpdate);
     if(hasBrandsCloudPending()) await syncBrandsStateToCloud();
     // Large Excel imports can create thousands of quantity movements. Publish them
     // in their own bounded version before writing the small shared settings document.
@@ -7210,6 +7224,7 @@ function notificationVisibleToCurrentUser(item){
   if(item.audience === 'staff-admin' && !isStaffOrAdmin()) return false;
   if(item.audience === 'promoters' && state.user.role !== 'promoter') return false;
   if(item.audience === 'staff-promoters' && !isStaffOrAdmin() && state.user.role !== 'promoter') return false;
+  if(item.audience === 'all') return true;
   if(item.party && !isStaffOrAdmin()) return currentUserPartyCodes().includes(normalizedPartyCode(item.party));
   return true;
 }
@@ -7239,6 +7254,48 @@ function addAppNotification(item){
   try{ localStorage.setItem('app-notifications-cache', JSON.stringify(state.appNotifications)); }catch(e){}
   updateNotificationBadge();
   if(fbReady && fbDocRef) pushToCloud(true, true).catch(()=>{});
+}
+
+function openCustomNotificationComposer(){
+  if(!isAdminUser()){ showToast('Admin access required', true); return; }
+  openActionModal('<div style="font-weight:800;font-size:18px;margin-bottom:6px;">Send Custom Notification</div>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:14px;">This message will sync to the selected users through Firestore.</div>' +
+    '<label style="display:block;font-size:12px;font-weight:700;margin:8px 0 5px;">Title</label>' +
+    '<input id="customNotificationTitle" maxlength="80" placeholder="Notification title" style="width:100%;box-sizing:border-box;margin:0;" />' +
+    '<label style="display:block;font-size:12px;font-weight:700;margin:12px 0 5px;">Message</label>' +
+    '<textarea id="customNotificationMessage" maxlength="500" rows="4" placeholder="Write your message" style="width:100%;box-sizing:border-box;margin:0;resize:vertical;"></textarea>' +
+    '<label style="display:block;font-size:12px;font-weight:700;margin:12px 0 5px;">Send to</label>' +
+    '<select id="customNotificationAudience" onchange="toggleCustomNotificationParty()" style="width:100%;box-sizing:border-box;margin:0;">' +
+      '<option value="all">Everyone</option><option value="staff-admin">Staff and Admin</option><option value="promoters">Promoters</option><option value="admin">Admin only</option><option value="party">Specific Party ID</option>' +
+    '</select>' +
+    '<input id="customNotificationParty" maxlength="30" placeholder="Party ID (only for Specific Party ID)" style="display:none;width:100%;box-sizing:border-box;margin:8px 0 0;" />' +
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;"><button class="btn btn-ghost" onclick="closeActionModal()">Cancel</button><button class="btn btn-accent" onclick="publishCustomNotification()">Send Notification</button></div>');
+  const title = document.getElementById('customNotificationTitle');
+  if(title) title.focus();
+}
+function toggleCustomNotificationParty(){
+  const audience = document.getElementById('customNotificationAudience');
+  const party = document.getElementById('customNotificationParty');
+  if(party) party.style.display = audience && audience.value === 'party' ? 'block' : 'none';
+}
+function publishCustomNotification(){
+  if(!isAdminUser()){ closeActionModal(); showToast('Admin access required', true); return; }
+  const titleEl = document.getElementById('customNotificationTitle');
+  const messageEl = document.getElementById('customNotificationMessage');
+  const audienceEl = document.getElementById('customNotificationAudience');
+  const partyEl = document.getElementById('customNotificationParty');
+  const title = String(titleEl && titleEl.value || '').trim();
+  const message = String(messageEl && messageEl.value || '').trim();
+  const audience = String(audienceEl && audienceEl.value || 'all');
+  const party = audience === 'party' ? normalizedPartyCode(partyEl && partyEl.value) : '';
+  if(!title || !message){ showToast('Enter both a title and message', true); return; }
+  if(audience === 'party' && !party){ showToast('Enter a valid Party ID', true); return; }
+  addAppNotification({
+    category:'custom', title:title, message:message, audience:audience, party:party,
+    author:String(state.user.username || 'Admin'), ts:Date.now()
+  });
+  closeActionModal();
+  showToast('Custom notification sent');
 }
 function normalizePdfImportCollection(source){
   const rawItems = Array.isArray(source) ? source : (source && typeof source === 'object' ? Object.keys(source).map(function(key){ return Object.assign({id:key}, source[key] || {}); }) : []);
@@ -8354,6 +8411,35 @@ function getRecentSaleQty(barcode, days){
     .reduce((sum, m) => sum + Math.abs(m.delta), 0);
 }
 
+function movementDisplayDateKey(movement){
+  const d = new Date(Number(movement && movement.ts) || 0);
+  if(!Number.isFinite(d.getTime())) return '';
+  return String(d.getFullYear()) + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function movementDuplicateKey(movement){
+  if(!movement || !movement.barcode) return '';
+  return [String(movement.barcode), String(Number(movement.delta) || 0), String(movement.type || ''), movementDisplayDateKey(movement)].join('|');
+}
+function dedupeStockMovements(){
+  const movements = Array.isArray(state.stockMovements) ? state.stockMovements : [];
+  const seen = new Set();
+  const kept = [];
+  let removed = 0;
+  movements.forEach(function(movement){
+    const key = movementDuplicateKey(movement);
+    // Only collapse exact same barcode/delta/type/display-date rows. Distinct
+    // movements (different delta, type, or date) remain untouched.
+    if(key && seen.has(key)){ removed++; return; }
+    if(key) seen.add(key);
+    kept.push(movement);
+  });
+  if(removed){
+    state.stockMovements = kept;
+    try{ localStorage.setItem('stock-movements-cache', JSON.stringify(kept)); }catch(e){}
+  }
+  return removed;
+}
+
 function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTs){
   oldQty = parseFloat(oldQty); if(isNaN(oldQty)) oldQty = 0;
   newQty = parseFloat(newQty); if(isNaN(newQty)) newQty = 0;
@@ -8365,6 +8451,10 @@ function recordStockMovement(barcode, oldQty, newQty, sourceRow, movementTs){
   else if(delta < 0) type = 'sale';
   else if(Math.abs(delta) === 1) type = 'ambiguous';
   else type = 'restock';
+  if(sourceRow && movementTs && Array.isArray(state.stockMovements)){
+    const candidate = { barcode:barcode, delta:delta, type:type, ts:Number(movementTs) || Date.now() };
+    if(state.stockMovements.some(function(existing){ return movementDuplicateKey(existing) === movementDuplicateKey(candidate); })) return;
+  }
   if(!state.stockMovements) state.stockMovements = [];
   state.stockMovements.unshift({
     id: 'mv_' + Date.now() + '_' + Math.random().toString(36).slice(2,8),
@@ -11270,6 +11360,7 @@ function renderSettings(){
     html += promoterActions;
     html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="confirmClearLocalOverrides()">Clear</button>');
     html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="openUserManagementWindow()">Open</button>');
+    html += iosRow('🔔', 'linear-gradient(#FF9F0A,#FF453A)', 'Custom Notification', '<button class="btn btn-accent btn-sm" onclick="openCustomNotificationComposer()">Compose</button>');
     html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="openAuditLogWindow()">View</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
     html += '</div>';
     html += '<div class="ios-section-title">Data & Sync</div>';
