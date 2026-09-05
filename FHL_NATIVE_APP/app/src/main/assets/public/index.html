@@ -6188,14 +6188,19 @@ async function loadStorage(){
     clearTimeout(loadingTimeout);
     if(snap.exists){
       const data = snap.data();
-      // Merge strategy: cloud data takes precedence if it's newer or if local is empty
-      // For simplicity in this app, we'll use cloud data but ensure local cache is updated
-      if(!hasBrandsCloudPending()) stockOverrides = data.stockOverrides || stockOverrides;
+      // A versioned Brands snapshot is authoritative. Legacy sharedData fields may
+      // survive on older devices or an older app build, so never let them overwrite
+      // verified/chunked stock, products, or prices after an APK update. If the
+      // versioned chunks are temporarily unavailable, retain the local cache and let
+      // the canonical refresh/retry load the verified snapshot instead.
+      const hasVersionedBrandsRoot = !!String(brandsRoot.activeVersion || '').trim();
+      const allowLegacyBrandsData = !hasVersionedBrandsRoot && !hasBrandsCloudPending();
+      if(allowLegacyBrandsData) stockOverrides = data.stockOverrides || stockOverrides;
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLog = data.scanLog || scanLog;
-      if(!hasBrandsCloudPending()) customProducts = data.customProducts || customProducts;
+      if(allowLegacyBrandsData) customProducts = data.customProducts || customProducts;
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
-      if(!hasBrandsCloudPending()) state.prices = data.prices || state.prices || {};
+      if(allowLegacyBrandsData) state.prices = data.prices || state.prices || {};
       state.appUsers = data.appUsers || state.appUsers || { 'Asif': '949531', 'AJMAL': '6832', 'NIYAS': '1234', 'Das':'1234','Newton':'1234','Rao':'1234','Hussain':'1234','Abu':'1234','Ameer':'1234','Liptu':'1234','Ashmy':'1234','Habeeb':'1234','Mukeeth':'1234' };
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
       state.a7Excels = data.a7Excels || state.a7Excels || [];
@@ -7297,6 +7302,38 @@ function publishCustomNotification(){
   closeActionModal();
   showToast('Custom notification sent');
 }
+
+function notifyExcelImportCompleted(update, cloudSyncCompleted){
+  const latest = update || {};
+  const signature = String(latest.ts || (latest.fileName || '') + '|' + (latest.updatedRows || 0) + '|' + (latest.updatedQtyTotal || 0) + '|' + (latest.updatedValueTotal || 0));
+  if(!signature) return;
+  const dedupeKey = 'excel-import-notification-sent-' + signature;
+  let alreadySent = false;
+  try{ alreadySent = localStorage.getItem(dedupeKey) === '1'; }catch(e){}
+  if(alreadySent) return;
+  const fileName = String(latest.fileName || 'Stock data');
+  const uploader = String(latest.uploadedBy || 'a team member');
+  const rows = Number(latest.updatedRows || 0);
+  const qty = Number(latest.updatedQtyTotal || 0);
+  const value = Number(latest.updatedValueTotal || 0);
+  const syncText = cloudSyncCompleted === true && !hasBrandsCloudPending() ? 'Synced to cloud.' : 'Saved safely; cloud sync is queued.';
+  const title = 'Excel import completed';
+  const body = fileName + ' imported by ' + uploader + ' · ' + rows + ' rows, ' + qty + ' pcs, ' + value.toFixed(2) + ' KD. ' + syncText;
+  addAppNotification({id:'excel-import-' + signature, category:'import', audience:'all', tab:'brands', ts:Number(latest.ts || Date.now()), title:title, message:body});
+  if(window.AndroidNative && typeof window.AndroidNative.postExcelImportNotification === 'function'){
+    try{ window.AndroidNative.postExcelImportNotification(title, body); }catch(e){}
+  } else if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications){
+    try{
+      const ln = window.Capacitor.Plugins.LocalNotifications;
+      (async function(){
+        const permission = ln.requestPermissions ? await ln.requestPermissions() : {display:'granted'};
+        if(permission && permission.display === 'granted') await ln.schedule({notifications:[{id:Math.abs(Number(latest.ts || Date.now())) % 2147483647 || 1, title:title, body:body, extra:{tab:'brands', category:'import'}}]});
+      })().catch(function(){});
+    }catch(e){}
+  }
+  try{ localStorage.setItem(dedupeKey, '1'); }catch(e){}
+}
+
 function normalizePdfImportCollection(source){
   const rawItems = Array.isArray(source) ? source : (source && typeof source === 'object' ? Object.keys(source).map(function(key){ return Object.assign({id:key}, source[key] || {}); }) : []);
   return rawItems.map(function(record, index){
@@ -8823,7 +8860,7 @@ function restoreSavedSession(){
       const parsed = JSON.parse(raw);
       const savedUser = parsed && parsed.user ? parsed.user : parsed;
       if(savedUser && savedUser.username){
-        state.user = savedUser;
+        state.user = Object.assign({}, savedUser, { role: savedUser.username === 'Asif' ? 'admin' : normalizeRoleKey(savedUser.role || 'staff') });
         state.sessionToken = parsed.sessionToken || makeSessionToken();
         state.sessionLoginTs = Number(parsed.loginTs) || Date.now();
         startSessionHeartbeat();
@@ -8856,7 +8893,7 @@ function login(username, password, remember){
     const targetKey = Object.keys(users).find(k => k.toLowerCase() === password.toLowerCase() && k.toLowerCase() !== 'asif');
     if(targetKey){
       const roleInfo = (state.userRoles && state.userRoles[targetKey]) ? state.userRoles[targetKey] : null;
-      const role = roleInfo && roleInfo.role ? roleInfo.role : 'staff';
+      const role = normalizeRoleKey(roleInfo && roleInfo.role ? roleInfo.role : 'staff');
       const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
       const brandCodes = (roleInfo && Array.isArray(roleInfo.brandCodes)) ? roleInfo.brandCodes : [];
       state.user = { username: 'Asif', role: role, partyCodes: partyCodes, brandCodes: brandCodes, viewingAs: targetKey };
@@ -8880,7 +8917,7 @@ function login(username, password, remember){
   if(state.appLocked && roleOfFinder !== 'admin'){ showToast('🔒 Login is locked by admin. Promoters cannot login right now.', true); return; }
     const realName = foundKey;
     const roleInfo = (state.userRoles && state.userRoles[realName]) ? state.userRoles[realName] : null;
-    const role = realName === 'Asif' ? 'admin' : (roleInfo && roleInfo.role ? roleInfo.role : 'staff');
+    const role = realName === 'Asif' ? 'admin' : normalizeRoleKey(roleInfo && roleInfo.role ? roleInfo.role : 'staff');
     const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
     const brandCodes = (roleInfo && Array.isArray(roleInfo.brandCodes)) ? roleInfo.brandCodes : [];
     state.user = { username: realName, role: role, partyCodes: partyCodes, brandCodes: brandCodes };
@@ -9573,6 +9610,7 @@ async function handleImportExcel(fileInput){
     if(priceCount > 0) msg += `, ${priceCount} prices updated`;
     if(skipped > 0) msg += `, ${skipped} rows skipped (no barcode)`;
     render();
+    notifyExcelImportCompleted(state.latestExcelUpdate, cloudSyncCompleted);
     if(cloudSyncCompleted === true && !hasBrandsCloudPending()){
       showBrandsImportSuccess(msg, true);
       showToast(msg + ' — saved on this device & synced to cloud ✓');
@@ -10351,8 +10389,12 @@ async function deleteA7Excel(id){
   showToast('Deleted');
 }
 
+function normalizeRoleKey(role){
+  return String(role || '').trim().toLowerCase();
+}
 function isStaffOrAdmin(){
-  return !!(state.user && (state.user.role === 'staff' || state.user.role === 'admin'));
+  const role = normalizeRoleKey(state.user && state.user.role);
+  return !!(state.user && (role === 'staff' || role === 'admin'));
 }
 
 function renderA7(){
