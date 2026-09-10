@@ -5538,6 +5538,10 @@ const STOCK_MOVEMENT_STORAGE_VERSION = 1;
 const STOCK_MOVEMENT_PENDING_STORAGE_KEY = 'stock-movement-cloud-pending-v1';
 const BRANDS_LAST_SYNC_ERROR_STORAGE_KEY = 'brands-last-cloud-sync-error-v1';
 let brandsCloudState = { activeVersion:'', updatedAt:0, loaded:false };
+// Monotonic token invalidates any asynchronous remote snapshot read that began
+// before a newer listener event or local publish. Without this, an old snapshot
+// can finish after an Excel import and restore pre-import stock/price values.
+let brandsRemoteApplyGeneration = 0;
 let brandsCloudPending = (function(){
   try{
     const value = JSON.parse(localStorage.getItem(BRANDS_PENDING_STORAGE_KEY) || 'null');
@@ -5863,7 +5867,10 @@ function persistBrandsCloudPending(){
   }catch(e){}
 }
 function markBrandsCloudPending(reason){
-  brandsCloudPending = { updatedAt:Date.now(), reason:String(reason || 'brands-update'), retryCount:Number((brandsCloudPending && brandsCloudPending.retryCount) || 0) };
+  // Persist the active snapshot that this local edit was based on. Automatic
+  // retries must never merge local state over a newer import from another device.
+  const baseVersion = brandsCloudState && brandsCloudState.activeVersion != null ? String(brandsCloudState.activeVersion || '') : '';
+  brandsCloudPending = { updatedAt:Date.now(), reason:String(reason || 'brands-update'), baseVersion:baseVersion, retryCount:Number((brandsCloudPending && brandsCloudPending.retryCount) || 0) };
   persistBrandsCloudPending();
   persistBrandsLocalState();
   return brandsCloudPending;
@@ -6061,10 +6068,27 @@ function queueStockMovementCloudBackfill(delay){
   }, Math.max(500, Number(delay) || 1200));
 }
 async function syncBrandsStateToCloud(){
+  // Cancel any in-flight listener/refresh read before publishing local edits.
+  ++brandsRemoteApplyGeneration;
   persistBrandsLocalState();
   if(!fbReady || !fbBrandsDocRef || !fbBrandsVersionsRef) return false;
   const rootSnap = await fbBrandsDocRef.get({source:'server'});
   const previousRoot = rootSnap.exists ? (rootSnap.data() || {}) : {};
+  const previousActiveVersion = String(previousRoot.activeVersion || '');
+  if(brandsCloudPending && Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion') && String(brandsCloudPending.baseVersion || '') !== previousActiveVersion){
+    brandsCloudPending.conflict = 'newer-active-version';
+    brandsCloudPending.conflictVersion = previousActiveVersion;
+    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+    persistBrandsCloudPending();
+    throw new Error('Brands cloud has a newer active version; stale pending retry was rejected');
+  }
+  if(brandsCloudPending && !Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion')){
+    brandsCloudPending.conflict = 'missing-base-version';
+    brandsCloudPending.conflictVersion = previousActiveVersion;
+    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+    persistBrandsCloudPending();
+    throw new Error('Brands pending state has no base version; stale retry was rejected');
+  }
   let remoteState = null;
   if(previousRoot.activeVersion) remoteState = await readBrandsStateFromCloud(previousRoot);
   const replaceAll = !!(brandsCloudPending && brandsCloudPending.replaceAll);
@@ -6087,7 +6111,18 @@ async function syncBrandsStateToCloud(){
   await runBrandsBatched(writes, 6);
   const versionMeta = { schemaVersion:BRANDS_STORAGE_VERSION, status:'ready', updatedAt:updatedAt, productChunkCount:chunks.products.length, overrideChunkCount:chunks.overrides.length, productFieldChunkCount:chunks.productFields.length, priceChunkCount:chunks.prices.length, productCount:mergedProducts.length, overrideCount:Object.keys(mergedOverrides).length, productFieldCount:Object.keys(mergedProductFields).length, priceCount:Object.keys(mergedPrices).length };
   await versionDoc.set(versionMeta, {merge:true});
-  await fbBrandsDocRef.set(Object.assign({ activeVersion:versionId }, versionMeta), {merge:true});
+  // Activate only if the root is still the version we read before building this
+  // snapshot. This prevents a stale device from activating an older snapshot
+  // after another device has completed a newer Excel import.
+  await fbBrandsDocRef.firestore.runTransaction(function(transaction){
+    return transaction.get(fbBrandsDocRef).then(function(latestRootSnap){
+      const latestRoot = latestRootSnap.exists ? (latestRootSnap.data() || {}) : {};
+      if(String(latestRoot.activeVersion || '') !== previousActiveVersion){
+        throw new Error('Brands cloud changed during publish; newer active version preserved');
+      }
+      transaction.set(fbBrandsDocRef, Object.assign({ activeVersion:versionId }, versionMeta), {merge:true});
+    });
+  });
   const verifiedRoot = await fbBrandsDocRef.get({source:'server'});
   const verifiedData = verifiedRoot.exists ? (verifiedRoot.data() || {}) : {};
   if(String(verifiedData.activeVersion || '') !== versionId || verifiedData.status !== 'ready') throw new Error('Brands cloud version was not confirmed');
@@ -6399,6 +6434,7 @@ async function loadStorage(){
       if(!doc.exists || doc.metadata.hasPendingWrites) return;
       const root = doc.data() || {};
       if(!root.activeVersion) return;
+      const applyGeneration = ++brandsRemoteApplyGeneration;
       if(hasBrandsCloudPending()){
         queueBrandsCloudBackfill();
         return;
@@ -6406,7 +6442,7 @@ async function loadStorage(){
       if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '')) return;
       try{
         const remoteBrands = await readBrandsStateFromCloud(root);
-        if(hasBrandsCloudPending()) return;
+        if(applyGeneration !== brandsRemoteApplyGeneration || hasBrandsCloudPending()) return;
         applyBrandsState(remoteBrands);
         brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
         syncStatus = 'synced';
@@ -6756,6 +6792,7 @@ async function retryCloudConnection(options){
 }
 async function refreshCanonicalBrandsState(){
   if(!storageReady || !state.user || !fbReady || !fbBrandsDocRef || hasBrandsCloudPending()) return false;
+  const applyGeneration = ++brandsRemoteApplyGeneration;
   try{
     const rootSnap = await fbBrandsDocRef.get({ source:'server' });
     if(!rootSnap.exists) return false;
@@ -6765,7 +6802,7 @@ async function refreshCanonicalBrandsState(){
     // on activeVersion can leave a client showing a stale local summary while the
     // global header still says Synced.
     const remoteBrands = await readBrandsStateFromCloud(root);
-    if(hasBrandsCloudPending()) return false;
+    if(applyGeneration !== brandsRemoteApplyGeneration || hasBrandsCloudPending()) return false;
     applyBrandsState(remoteBrands);
     brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
     syncStatus = 'synced';
