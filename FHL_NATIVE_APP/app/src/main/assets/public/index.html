@@ -5384,6 +5384,38 @@ let productFieldOverrides = {};
 let BARCODE_INDEX = new Map();
 
 function normalizedOverrideBarcode(value){ return cleanBC(normalizeBarcode13(value)); }
+function normalizedPriceKey(value){
+  const raw = String(value == null ? '' : value).trim();
+  if(!raw) return '';
+  return normalizedOverrideBarcode(raw) || raw;
+}
+function priceForRow(row, fallback){
+  const prices = state.prices || {};
+  const keys = [];
+  const addKey = function(value){
+    const raw = String(value == null ? '' : value).trim();
+    if(!raw) return;
+    const normalized = normalizedPriceKey(raw);
+    if(normalized && !keys.includes(normalized)) keys.push(normalized);
+    if(raw && !keys.includes(raw)) keys.push(raw);
+  };
+  addKey(row && row.Barcode);
+  addKey(row && row.Product);
+  for(const key of keys){
+    const value = prices[key];
+    if(value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return fallback == null ? '' : fallback;
+}
+function setPriceForKey(key, value){
+  if(!state.prices) state.prices = {};
+  const raw = String(key == null ? '' : key).trim();
+  if(!raw) return '';
+  const normalized = normalizedPriceKey(raw);
+  state.prices[normalized || raw] = value;
+  if(raw !== normalized) state.prices[raw] = value;
+  return normalized || raw;
+}
 function applyProductFieldOverride(row){
   if(!row) return row;
   const override = productFieldOverrides[normalizedOverrideBarcode(row.Barcode)];
@@ -9532,10 +9564,10 @@ async function handleImportExcel(fileInput){
       if(priceCol && r[priceCol] !== undefined && r[priceCol] !== '') {
           const p = String(r[priceCol]).trim();
           if(p) {
-              const oldPrice = state.prices[barcode];
-              state.prices[barcode] = p;
               const art = pick(r, ['Code','ART CODE','code','Product','product']);
-              if(art) state.prices[art] = p;
+              const oldPrice = priceForRow({ Barcode: barcode, Product: art }, '');
+              setPriceForKey(barcode, p);
+              if(art) setPriceForKey(art, p);
               priceCount++;
               // Record a permanent price-change notification tagged to the party,
               // so whoever handles that party's line can see what changed and when.
@@ -10055,7 +10087,7 @@ function renderScan(){
         html += detailRow('Barcode', r.Barcode||'-');
       }
       html += '</div>';
-      const itemPriceP = state.prices ? (state.prices[r.Barcode] || state.prices[r.Product] || '-') : '-';
+      const itemPriceP = priceForRow(r, '-');
       if(itemPriceP !== '-') {
         html += '<div style="grid-column:1/-1; margin-top:10px; padding:16px; background:linear-gradient(135deg, rgba(242,183,5,0.20), rgba(242,183,5,0.06)); border: 2px solid var(--accent); border-radius:14px; text-align:center;">';
         html += '<div class="detail-label" style="color:var(--accent); font-weight:800; font-size:11px; letter-spacing:0.5px; margin-bottom:6px;">PRICE</div>';
@@ -10097,7 +10129,7 @@ function renderScan(){
     }
 
     html += detailRow('WAC', fmtMoney(r.WAC));
-    const itemPrice = state.prices ? (state.prices[r.Barcode] || state.prices[r.Product] || '-') : '-';
+    const itemPrice = priceForRow(r, '-');
     if(itemPrice !== '-') {
         html += '<div style="grid-column:1/-1; margin-top:10px; padding:16px; background:linear-gradient(135deg, rgba(242,183,5,0.20), rgba(242,183,5,0.06)); border: 2px solid var(--accent); border-radius:14px; text-align:center;">';
         html += '<div class="detail-label" style="color:var(--accent); font-weight:800; font-size:11px; letter-spacing:0.5px; margin-bottom:6px;">PRICE</div>';
@@ -10201,7 +10233,7 @@ function addA7Barcode(code){
     return;
   }
   const row = matches[0];
-  const price = state.prices ? (state.prices[row.Barcode] || state.prices[row.Product] || '') : '';
+  const price = priceForRow(row, '');
   state.a7Slots[emptyIdx] = { barcode: code, description: row.Description || '', price: price };
   state.a7Input = '';
   playSuccessSound();
@@ -10655,7 +10687,7 @@ function addA4Barcode(code){
     return;
   }
   const row = matches[0];
-  const price = state.prices ? (state.prices[row.Barcode] || state.prices[row.Product] || '') : '';
+  const price = priceForRow(row, '');
   state.a4Slots[emptyIdx] = { barcode: code, description: row.Description || '', price: price };
   state.a4Input = '';
   playSuccessSound();
@@ -10899,7 +10931,7 @@ function addCERow(code){
     return;
   }
   const row = matches[0];
-  const price = state.prices ? (state.prices[row.Barcode] || state.prices[row.Product] || '') : '';
+  const price = priceForRow(row, '');
   state.createExcelRows.push({
     barcode: row.Barcode || code,
     artCode: row.Product || '',
@@ -11040,7 +11072,7 @@ function renderProductCard(r, showBrandChip){
     }
     html += detailRow('Brand', r.Brand||'OTHERS / UNBRANDED');
     html += detailRow('WAC', fmtMoney(r.WAC));
-    const itemPrice = state.prices ? (state.prices[r.Barcode] || state.prices[r.Product] || '-') : '-';
+    const itemPrice = priceForRow(r, '-');
     if(itemPrice !== '-') {
         html += '<div style="grid-column:1/-1; margin-top:8px; padding:12px; background:linear-gradient(135deg, rgba(242,183,5,0.16), rgba(242,183,5,0.06)); border-radius:12px; border:1.5px solid var(--accent); text-align:center;"><div class="detail-label" style="color:var(--accent); font-weight:800; letter-spacing:0.5px; margin-bottom:4px;">PRICE</div><div class="detail-value" style="font-size:28px; font-weight:900; color:var(--accent); letter-spacing:0.3px;">' + fmtMoney(itemPrice) + '</div></div>';
     }
@@ -12005,8 +12037,8 @@ async function handleImportData(fileInput){
                 const bc = String(r.Barcode || r.barcode || r['Barcode No'] || r['BARCODE'] || '').trim();
                 const art = String(r.Product || r.product || r.Article || r.article || r['Article code'] || r['ARTICLE'] || '').trim();
                 const price = r[priceCol];
-                if(bc) { state.prices[bc] = price; count++; }
-                if(art) { state.prices[art] = price; count++; }
+                if(bc) { setPriceForKey(bc, price); count++; }
+                if(art) { setPriceForKey(art, price); count++; }
             });
             localStorage.setItem('app-prices', JSON.stringify(state.prices));
             markBrandsCloudPending('data-excel-prices');
