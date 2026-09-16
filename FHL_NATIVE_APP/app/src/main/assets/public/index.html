@@ -5557,7 +5557,7 @@ const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
 const STOCK_MOVEMENT_STORAGE_VERSION = 1;
 const STOCK_MOVEMENT_PENDING_STORAGE_KEY = 'stock-movement-cloud-pending-v1';
 const BRANDS_LAST_SYNC_ERROR_STORAGE_KEY = 'brands-last-cloud-sync-error-v1';
-let brandsCloudState = { activeVersion:'', updatedAt:0, loaded:false };
+var brandsCloudState = { activeVersion:'', updatedAt:0, loaded:false };
 // Monotonic token invalidates any asynchronous remote snapshot read that began
 // before a newer listener event or local publish. Without this, an old snapshot
 // can finish after an Excel import and restore pre-import stock/price values.
