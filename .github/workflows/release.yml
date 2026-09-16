@@ -75,8 +75,13 @@ jobs:
           text = re.sub(r"const APP_VERSION = '[^']+';", "const APP_VERSION = '%s';" % os.environ['RELEASE_VERSION'], text, count=1)
           text = re.sub(r"const APP_BUILD = '[^']+';", "const APP_BUILD = '%s';" % os.environ['RELEASE_BUILD'], text, count=1)
           path.write_text(text)
+          sw_path = Path('app/src/main/assets/public/sw.js')
+          sw = sw_path.read_text()
+          sw = re.sub(r"const CACHE_NAME = '[^']+';", "const CACHE_NAME = 'fhl-electronics-%s-build-%s';" % (os.environ['RELEASE_VERSION'], os.environ['RELEASE_BUILD']), sw, count=1)
+          sw_path.write_text(sw)
           PY
           grep -nE "const APP_(VERSION|BUILD)" app/src/main/assets/public/index.html
+          grep -n "const CACHE_NAME" app/src/main/assets/public/sw.js
 
       - name: Build signed release APK
         working-directory: ${{ env.PROJECT_DIR }}
