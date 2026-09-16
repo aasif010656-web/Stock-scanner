@@ -9803,7 +9803,8 @@ function toggleLoginPassword(){
 }
 
 // ---------- Render ----------
-let renderFrame = 0;
+// Use an eagerly initialized binding so startup callbacks cannot observe a temporal dead zone.
+var renderFrame = 0;
 function render(){
   closeStaleTransientOverlays();
   if(renderFrame) return;
