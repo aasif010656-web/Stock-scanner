@@ -5436,7 +5436,27 @@ function updateImportedProductFields(barcode, sourceRow, existingRow){
   productFieldOverrides[key] = next;
   return true;
 }
-function getAllRows(){ return ALL_ROWS.filter(r=>!r._hidden).map(applyProductFieldOverride).concat((customProducts || []).map(applyProductFieldOverride)); }
+function getAuthoritativeBrandsRowKeys(){
+  if(!brandsCloudState || !brandsCloudState.loaded || !String(brandsCloudState.activeVersion || '').trim()) return null;
+  const keys = new Set();
+  Object.keys(stockOverrides || {}).forEach(function(key){
+    const normalized = normalizedOverrideBarcode(key);
+    if(normalized) keys.add(normalized);
+  });
+  return keys;
+}
+function getAllRows(){
+  const rows = ALL_ROWS.filter(r=>!r._hidden).map(applyProductFieldOverride).concat((customProducts || []).map(applyProductFieldOverride));
+  const activeKeys = getAuthoritativeBrandsRowKeys();
+  if(!activeKeys) return rows;
+  const unique = new Map();
+  rows.forEach(function(row){
+    const key = normalizedOverrideBarcode(row && row.Barcode);
+    if(!key || !activeKeys.has(key) || unique.has(key)) return;
+    unique.set(key, row);
+  });
+  return Array.from(unique.values());
+}
 
 // Read-only bridge for the website AI search panel. It searches the same cached
 // product rows already loaded by the legacy app and never writes or mutates data.
@@ -5927,6 +5947,8 @@ function applyBrandsState(bundle){
   customProducts = Array.isArray(next.customProducts) ? next.customProducts : [];
   productFieldOverrides = next.productFieldOverrides && typeof next.productFieldOverrides === 'object' ? next.productFieldOverrides : {};
   state.prices = next.prices && typeof next.prices === 'object' ? next.prices : {};
+  const appliedVersion = String(next.activeVersion || '').trim();
+  if(appliedVersion) brandsCloudState = { activeVersion:appliedVersion, updatedAt:Number(next.updatedAt || Date.now()), loaded:true };
   markStockCacheFresh(Number(next.updatedAt || Date.now()));
   persistBrandsLocalState();
   rebuildIndex();
@@ -6840,6 +6862,8 @@ function effectiveQty(row){
   // Offline mode intentionally keeps showing the last locally saved stock snapshot.
   // The header label makes it clear that the values are not live.
   if(syncStatus === 'offline' && !stockCacheLoaded) return 0;
+  const normalizedBarcode = normalizedOverrideBarcode(row && row.Barcode);
+  if(normalizedBarcode && stockOverrides.hasOwnProperty(normalizedBarcode)) return stockOverrides[normalizedBarcode];
   if(row.Barcode && stockOverrides.hasOwnProperty(row.Barcode)) return stockOverrides[row.Barcode];
   return parseFloat(row["Stock Qty"]) || 0;
 }
