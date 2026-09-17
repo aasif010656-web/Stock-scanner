@@ -5932,6 +5932,11 @@ function clearBrandsCloudPending(){
   persistBrandsCloudPending();
 }
 function hasBrandsCloudPending(){ return !!(brandsCloudPending && Number(brandsCloudPending.updatedAt || 0)); }
+function pendingBrandsIsSupersededBy(activeVersion){
+  if(!hasBrandsCloudPending()) return false;
+  if(!Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion')) return true;
+  return String(brandsCloudPending.baseVersion || '') !== String(activeVersion || '');
+}
 function hasBrandsPayload(){ return Object.keys(stockOverrides || {}).length > 0 || (customProducts || []).length > 0 || Object.keys(productFieldOverrides || {}).length > 0 || Object.keys(state.prices || {}).length > 0; }
 function brandsPayloadBytes(value){
   const text = JSON.stringify(value);
@@ -6267,7 +6272,7 @@ async function loadStorage(){
     // A stale local pending marker must not block a newer authoritative cloud
     // snapshot. The guarded server version is the source of truth after a
     // confirmed overwrite; load it first and clear the obsolete marker below.
-    if(brandsRoot.activeVersion){
+    if(brandsRoot.activeVersion && (!hasBrandsCloudPending() || pendingBrandsIsSupersededBy(brandsRoot.activeVersion))){
       brandsCloudState.activeVersion = String(brandsRoot.activeVersion);
       try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
       catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
@@ -6493,10 +6498,12 @@ async function loadStorage(){
       const root = doc.data() || {};
       if(!root.activeVersion) return;
       const applyGeneration = ++brandsRemoteApplyGeneration;
+      if(hasBrandsCloudPending() && !pendingBrandsIsSupersededBy(root.activeVersion)) return;
       if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '')) return;
       try{
         const remoteBrands = await readBrandsStateFromCloud(root);
         if(applyGeneration !== brandsRemoteApplyGeneration) return;
+        if(hasBrandsCloudPending() && !pendingBrandsIsSupersededBy(remoteBrands.activeVersion)) return;
         clearBrandsCloudPending();
         applyBrandsState(remoteBrands);
         brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
