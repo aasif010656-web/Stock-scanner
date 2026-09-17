@@ -6306,7 +6306,6 @@ async function loadStorage(){
     // snapshot. The guarded server version is the source of truth after a
     // confirmed overwrite; load it first and clear the obsolete marker below.
     if(brandsRoot.activeVersion && (!hasBrandsCloudPending() || pendingBrandsIsSupersededBy(brandsRoot.activeVersion))){
-      brandsCloudState.activeVersion = String(brandsRoot.activeVersion);
       try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
       catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
     }
@@ -6532,7 +6531,10 @@ async function loadStorage(){
       if(!root.activeVersion) return;
       const applyGeneration = ++brandsRemoteApplyGeneration;
       if(hasBrandsCloudPending() && !pendingBrandsIsSupersededBy(root.activeVersion)) return;
-      if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '')) return;
+      const localOverrideCount = Object.keys(stockOverrides || {}).length;
+      const rootOverrideCount = Number(root.overrideCount || 0);
+      const localSnapshotMatchesRoot = !rootOverrideCount || localOverrideCount === rootOverrideCount;
+      if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '') && localSnapshotMatchesRoot) return;
       try{
         const remoteBrands = await readBrandsStateFromCloud(root);
         if(applyGeneration !== brandsRemoteApplyGeneration) return;
