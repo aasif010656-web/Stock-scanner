@@ -5578,6 +5578,7 @@ let fbBrandsDocRef = null;
 let fbBrandsVersionsRef = null;
 let fbStockMovementDocRef = null;
 let fbStockMovementVersionsRef = null;
+let fbClientErrorsRef = null;
 let fbReady = false;
 let syncStatus = 'connecting'; // connecting | synced | offline | error (legacy error renders as reconnecting)
 let cloudRetryTimer = null;
@@ -5683,12 +5684,44 @@ function initFirebase(){
     fbBrandsVersionsRef = fbBrandsDocRef.collection('versions');
     fbStockMovementDocRef = db.collection('stockScannerApp').doc('stockMovementData');
     fbStockMovementVersionsRef = fbStockMovementDocRef.collection('versions');
+    fbClientErrorsRef = db.collection('stockScannerApp').doc('clientErrors').collection('events');
     fbReady = true;
   }catch(e){
     fbReady = false;
     syncStatus = 'error';
   }
 }
+
+let lastClientErrorReportAt = 0;
+function sanitizeClientError(value){
+  let text = '';
+  try{ text = String(value && (value.stack || value.message) || value || 'Unknown client error'); }catch(e){ text = 'Unknown client error'; }
+  return text.replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
+    .replace(/(password|token|secret|apiKey)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .slice(0, 500);
+}
+function reportClientError(error, context){
+  const now = Date.now();
+  if(now - lastClientErrorReportAt < 15000 || !fbReady || !fbClientErrorsRef) return;
+  lastClientErrorReportAt = now;
+  const detail = sanitizeClientError(error);
+  const payload = {
+    message: detail,
+    context: String(context || 'runtime').slice(0, 80),
+    appVersion: String(window.APP_BUILD || 'unknown').slice(0, 40),
+    tab: String(typeof state !== 'undefined' && state && state.tab || 'unknown').slice(0, 40),
+    role: String(typeof state !== 'undefined' && state && state.user && state.user.role || 'anonymous').slice(0, 30),
+    syncStatus: String(syncStatus || 'unknown').slice(0, 30),
+    userAgent: String(navigator.userAgent || '').slice(0, 180),
+    createdAt: now
+  };
+  try{
+    fbClientErrorsRef.doc(String(now) + '-' + Math.random().toString(36).slice(2,8)).set(payload).catch(function(){});
+  }catch(e){}
+}
+window.addEventListener('error', function(event){ reportClientError(event.error || event.message, 'window-error'); });
+window.addEventListener('unhandledrejection', function(event){ reportClientError(event.reason, 'unhandled-rejection'); });
 
 function reportCloudId(report){
   return String((report && (report.id || report.name)) || '').trim().replace(/[^a-z0-9_-]+/gi, '_').slice(0,120);
@@ -11632,15 +11665,6 @@ function shareAgingParty(party) {
         
         // 2. Share logic
         if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){
-            function arrayBufferToBase64(buffer) {
-                let binary = '';
-                let bytes = new Uint8Array(buffer);
-                let len = bytes.byteLength;
-                for (let i = 0; i < len; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
-                return window.btoa(binary);
-            }
             window.AndroidNative.shareFile(arrayBufferToBase64(wbout), fileName);
         } else if(navigator.share) {
             const file = new File([blob], fileName, {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
@@ -11685,7 +11709,12 @@ function toggleAgingParty(party) {
     state.openAgingParty = (state.openAgingParty === party) ? null : party;
     render();
 }
-
+function arrayBufferToBase64(buffer){
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for(let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return window.btoa(binary);
+}
 function exportAgingExcel(partyFilter){
     let targetParties = partyFilter ? [partyFilter] : AGING_TARGET_PARTIES.slice();
     if(!partyFilter && state.user && state.user.role === 'promoter'){
@@ -11735,15 +11764,6 @@ function exportAgingExcel(partyFilter){
     
     if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){
         // Native share via base64
-        function arrayBufferToBase64(buffer) {
-            let binary = '';
-            let bytes = new Uint8Array(buffer);
-            let len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
-            return window.btoa(binary);
-        }
         window.AndroidNative.shareFile(arrayBufferToBase64(buf), fileName);
     } else {
         // Browser download
