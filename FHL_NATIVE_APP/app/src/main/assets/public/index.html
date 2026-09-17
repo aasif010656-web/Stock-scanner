@@ -6264,7 +6264,10 @@ async function loadStorage(){
     const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
     let remoteStockMovements = null;
-    if(brandsRoot.activeVersion && !hasBrandsCloudPending()){
+    // A stale local pending marker must not block a newer authoritative cloud
+    // snapshot. The guarded server version is the source of truth after a
+    // confirmed overwrite; load it first and clear the obsolete marker below.
+    if(brandsRoot.activeVersion){
       brandsCloudState.activeVersion = String(brandsRoot.activeVersion);
       try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
       catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
@@ -6331,7 +6334,8 @@ async function loadStorage(){
     } else {
       await fbDocRef.set({ scanLog:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
-    if(remoteBrands && !hasBrandsCloudPending()){
+    if(remoteBrands){
+      clearBrandsCloudPending();
       applyBrandsState(remoteBrands);
       brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
     } else if(!remoteBrands && !brandsRoot.activeVersion && hasBrandsPayload()){
@@ -6489,14 +6493,11 @@ async function loadStorage(){
       const root = doc.data() || {};
       if(!root.activeVersion) return;
       const applyGeneration = ++brandsRemoteApplyGeneration;
-      if(hasBrandsCloudPending()){
-        queueBrandsCloudBackfill();
-        return;
-      }
       if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '')) return;
       try{
         const remoteBrands = await readBrandsStateFromCloud(root);
-        if(applyGeneration !== brandsRemoteApplyGeneration || hasBrandsCloudPending()) return;
+        if(applyGeneration !== brandsRemoteApplyGeneration) return;
+        clearBrandsCloudPending();
         applyBrandsState(remoteBrands);
         brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
         syncStatus = 'synced';
