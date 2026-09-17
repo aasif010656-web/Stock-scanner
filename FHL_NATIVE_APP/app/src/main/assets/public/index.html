@@ -5469,7 +5469,11 @@ function updateImportedProductFields(barcode, sourceRow, existingRow){
   return true;
 }
 function getAuthoritativeBrandsRowKeys(){
-  if(!brandsCloudState || !brandsCloudState.loaded || !String(brandsCloudState.activeVersion || '').trim()) return null;
+  const hasVersion = brandsCloudState && brandsCloudState.loaded && String(brandsCloudState.activeVersion || '').trim();
+  // Older installed builds may have the complete chunked override cache but no
+  // persisted active-version marker. While offline, those cached keys are still
+  // safer than mixing the old embedded workbook with the latest stock snapshot.
+  if(!hasVersion && syncStatus !== 'offline') return null;
   const keys = new Set();
   Object.keys(stockOverrides || {}).forEach(function(key){
     const normalized = normalizedOverrideBarcode(key);
@@ -5587,10 +5591,16 @@ let stockMovementCloudBackfillTimer = null;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
+const BRANDS_ACTIVE_VERSION_STORAGE_KEY = 'brands-active-version-v1';
 const STOCK_MOVEMENT_STORAGE_VERSION = 1;
 const STOCK_MOVEMENT_PENDING_STORAGE_KEY = 'stock-movement-cloud-pending-v1';
 const BRANDS_LAST_SYNC_ERROR_STORAGE_KEY = 'brands-last-cloud-sync-error-v1';
-var brandsCloudState = { activeVersion:'', updatedAt:0, loaded:false };
+var brandsCloudState = (function(){
+  try{
+    const cached = JSON.parse(localStorage.getItem(BRANDS_ACTIVE_VERSION_STORAGE_KEY) || 'null');
+    return cached && cached.activeVersion ? { activeVersion:String(cached.activeVersion), updatedAt:Number(cached.updatedAt || 0), loaded:true } : { activeVersion:'', updatedAt:0, loaded:false };
+  }catch(e){ return { activeVersion:'', updatedAt:0, loaded:false }; }
+})();
 // Monotonic token invalidates any asynchronous remote snapshot read that began
 // before a newer listener event or local publish. Without this, an old snapshot
 // can finish after an Excel import and restore pre-import stock/price values.
@@ -5941,6 +5951,9 @@ function persistBrandsLocalState(){
     localStorage.setItem('custom-products-cache', JSON.stringify(customProducts || []));
     localStorage.setItem('brands-product-field-overrides-cache', JSON.stringify(productFieldOverrides || {}));
     localStorage.setItem('app-prices', JSON.stringify(state.prices || {}));
+    if(brandsCloudState && brandsCloudState.activeVersion){
+      localStorage.setItem(BRANDS_ACTIVE_VERSION_STORAGE_KEY, JSON.stringify({ activeVersion:String(brandsCloudState.activeVersion), updatedAt:Number(brandsCloudState.updatedAt || Date.now()) }));
+    }
     markStockCacheFresh(Date.now());
     return true;
   }catch(e){ console.warn('Brands local cache save failed', e); return false; }
