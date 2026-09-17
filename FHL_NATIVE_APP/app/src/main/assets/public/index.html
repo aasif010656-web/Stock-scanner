@@ -5473,7 +5473,7 @@ function getAuthoritativeBrandsRowKeys(){
   // Older installed builds may have the complete chunked override cache but no
   // persisted active-version marker. While offline, those cached keys are still
   // safer than mixing the old embedded workbook with the latest stock snapshot.
-  if(!hasVersion && syncStatus !== 'offline') return null;
+  if(!hasVersion && navigator.onLine !== false) return null;
   const keys = new Set();
   Object.keys(stockOverrides || {}).forEach(function(key){
     const normalized = normalizedOverrideBarcode(key);
