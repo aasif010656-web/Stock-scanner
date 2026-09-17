@@ -10256,6 +10256,28 @@ function renderScan(){
 function isCompleteBarcodeLength(v){
   return /^\d{13}$/.test(String(v||'').trim());
 }
+function normalizeScannedBarcode(value){
+  let code = String(value == null ? '' : value).trim();
+  // Hardware scanners may include a GS1/Code-128 symbology identifier. Some
+  // Android scanner bridges drop the closing bracket, so accept both forms.
+  code = code.replace(/^(?:\]?C1|\]?E0|\]?E4)/i, '');
+  return code.trim();
+}
+function barcodeMatchesForScan(value){
+  const code = normalizeScannedBarcode(value);
+  if(!code) return [];
+  const variants = [code, normalizeBarcode13(code), cleanBC(code)];
+  const digits = code.replace(/\D/g, '');
+  if(digits && digits !== code) variants.push(digits, normalizeBarcode13(digits), cleanBC(digits));
+  const seen = new Set();
+  for(const key of variants){
+    if(!key || seen.has(key)) continue;
+    seen.add(key);
+    const matches = BARCODE_INDEX.get(key);
+    if(matches && matches.length) return matches;
+  }
+  return [];
+}
 
 // ================= A7 Talker Tool =================
 function openA7(){
@@ -10279,7 +10301,7 @@ function addCompactBarcode(code, target){
 function addA7Barcode(code){
   code = (code||'').trim();
   if(!code) return;
-  if(code.startsWith(']C1') || code.startsWith(']E0') || code.startsWith(']E4')) code = code.substring(3);
+  code = normalizeScannedBarcode(code);
   if(!state.a7Slots || state.a7Slots.length !== 6) state.a7Slots = [null,null,null,null,null,null];
   const emptyIdx = state.a7Slots.findIndex(s=>!s);
   if(emptyIdx === -1){
@@ -10287,7 +10309,7 @@ function addA7Barcode(code){
     state.a7Input = ''; render();
     return;
   }
-  const matches = BARCODE_INDEX.get(code) || BARCODE_INDEX.get(cleanBC(code));
+  const matches = barcodeMatchesForScan(code);
   if(!matches || matches.length === 0){
     showToast('Barcode not found in Brands', true);
     playErrorSound();
@@ -10732,7 +10754,7 @@ function closeA4(){ setTab('scan'); }
 function addA4Barcode(code){
   code = (code||'').trim();
   if(!code) return;
-  if(code.startsWith(']C1') || code.startsWith(']E0') || code.startsWith(']E4')) code = code.substring(3);
+  code = normalizeScannedBarcode(code);
   if(!state.a4Slots || state.a4Slots.length !== 5) state.a4Slots = [null,null,null,null,null];
   const emptyIdx = state.a4Slots.findIndex(s=>!s);
   if(emptyIdx === -1){
@@ -10741,7 +10763,7 @@ function addA4Barcode(code){
     state.a4Input = ''; render();
     return;
   }
-  const matches = BARCODE_INDEX.get(code) || BARCODE_INDEX.get(cleanBC(code));
+  const matches = barcodeMatchesForScan(code);
   if(!matches || matches.length === 0){
     showToast('Barcode not found in Brands', true);
     playErrorSound();
