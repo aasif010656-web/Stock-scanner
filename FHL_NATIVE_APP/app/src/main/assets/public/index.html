@@ -7138,7 +7138,6 @@ let state = {
   deviceId: getOrCreateDeviceId(),
   deviceName: getStoredDeviceName(),
   brandQuery: '',
-  brandCategoryFilter: '',
   brandSort: 'count', // count | az | party | recent
   selectedBrand: null,
   productSort: 'az', // az | qty_desc | qty_asc
@@ -8372,15 +8371,6 @@ function visibleRowsForUser(){
     }
   }
   return rows;
-}
-function brandCategoryOptions(){
-  const categories = new Set();
-  visibleRowsForUser().forEach(r=>categories.add(String(r.Brand || 'OTHERS / UNBRANDED').trim() || 'OTHERS / UNBRANDED'));
-  return Array.from(categories).sort((a,b)=>a.localeCompare(b));
-}
-function categoryFilteredRows(){
-  const category = String(state.brandCategoryFilter || '').trim().toLowerCase();
-  return visibleRowsForUser().filter(r=>!category || String(r.Brand || 'OTHERS / UNBRANDED').trim().toLowerCase() === category);
 }
 function buildGroupedIndex(){
   const map = new Map();
@@ -11156,10 +11146,9 @@ function renderBrandProductResultsHTML(){
 
 function renderBrandMainResultsHTML(){
   const rawQuery = state.brandQuery.trim();
-  const category = String(state.brandCategoryFilter || '').trim();
-  if(rawQuery || category){
+  if(rawQuery){
     const q = rawQuery.toLowerCase();
-    const matches = categoryFilteredRows().filter(r => productMatches(r,q));
+    const matches = visibleRowsForUser().filter(r => productMatches(r,q));
     const CAP = 200;
     let html = '<div class="divider-label">' + matches.length + ' matching product' + (matches.length===1?'':'s') + '</div>';
     if(matches.length===0){
@@ -11232,10 +11221,6 @@ function renderBrands(){
   html += '<div class="search-wrap" style="position:relative;"><input type="text" id="brandQueryInput" value="' + esc(state.brandQuery) + '" oninput="setBrandQuery(this.value)" placeholder="Search 4,150 products: name, barcode or model..." />';
   if(state.brandQuery) html += '<div class="search-clear" onclick="state.brandQuery=\'\';document.getElementById(\'brandQueryInput\').value=\'\';refreshBrandResults();">✕</div>';
   html += '</div>';
-  const categories = brandCategoryOptions();
-  html += '<div class="search-wrap" style="margin-top:8px;"><select id="brandCategoryFilter" aria-label="Filter products by category" onchange="setBrandCategoryFilter(this.value)" style="width:100%;"><option value="">All categories (' + categories.length + ')</option>';
-  categories.forEach(category=>{ html += '<option value="' + esc(category) + '"' + (String(state.brandCategoryFilter||'').toLowerCase()===category.toLowerCase()?' selected':'') + '>' + esc(category) + '</option>'; });
-  html += '</select></div>';
 
   if(!state.brandQuery.trim()){
     const sortLabels = { count: 'Most Stocked', az: 'A–Z', party: 'By Party' };
@@ -11269,10 +11254,6 @@ function setBrandPartyFilter(v){
   state.brandPartyFilter=v;
   if(_debounceTimers.brandPartyFilter) clearTimeout(_debounceTimers.brandPartyFilter);
   _debounceTimers.brandPartyFilter = setTimeout(refreshBrandResults, 120);
-}
-function setBrandCategoryFilter(v){
-  state.brandCategoryFilter = String(v || '');
-  render();
 }
 function setProductQuery(v){
   state.productQuery=v;
