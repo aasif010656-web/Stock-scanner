@@ -6260,6 +6260,10 @@ async function loadStorage(){
     if(cachedA4) state.a4Excels = JSON.parse(cachedA4);
     const cachedPriceNotifs = localStorage.getItem('price-notifs-cache');
     if(cachedPriceNotifs) state.priceChangeNotifications = applyPriceDeleteTombstones(JSON.parse(cachedPriceNotifs));
+    const cachedAppNotifications = localStorage.getItem('app-notifications-cache');
+    if(cachedAppNotifications) state.appNotifications = JSON.parse(cachedAppNotifications);
+    const cachedAudit = localStorage.getItem('audit-log-cache');
+    if(cachedAudit) state.auditLog = JSON.parse(cachedAudit);
     const cachedMovements = localStorage.getItem('stock-movements-cache');
     if(cachedMovements) state.stockMovements = JSON.parse(cachedMovements);
     dedupeStockMovements();
@@ -6702,6 +6706,7 @@ async function pushToCloud(force, suppressToast, options){
     localStorage.setItem('a7-excels-cache', JSON.stringify(state.a7Excels || []));
     localStorage.setItem('a4-excels-cache', JSON.stringify(state.a4Excels || []));
     localStorage.setItem('price-notifs-cache', JSON.stringify(state.priceChangeNotifications || []));
+    localStorage.setItem('app-notifications-cache', JSON.stringify(state.appNotifications || []));
     localStorage.setItem('stock-movements-cache', JSON.stringify(state.stockMovements || []));
     if(state.latestExcelUpdate) localStorage.setItem('latest-excel-update-cache', JSON.stringify(state.latestExcelUpdate));
     try{ if(state._lastLogoutCheck) localStorage.setItem('last-logout-check', String(state._lastLogoutCheck)); }catch(e){}
@@ -6936,7 +6941,8 @@ async function saveOperatorName(){
 function effectiveQty(row){
   // Offline mode intentionally keeps showing the last locally saved stock snapshot.
   // The header label makes it clear that the values are not live.
-  if(syncStatus === 'offline' && !stockCacheLoaded) return 0;
+  // Never replace the last-known/embedded quantity with zero merely because the
+  // connection is offline; an offline screen must remain useful and truthful.
   const normalizedBarcode = normalizedOverrideBarcode(row && row.Barcode);
   if(normalizedBarcode && stockOverrides.hasOwnProperty(normalizedBarcode)) return stockOverrides[normalizedBarcode];
   if(row.Barcode && stockOverrides.hasOwnProperty(row.Barcode)) return stockOverrides[row.Barcode];
@@ -7148,7 +7154,7 @@ let state = {
 	  websiteNotifications: (function(){ try{ const saved=localStorage.getItem('fhl-website-notifications'); return Array.isArray(JSON.parse(saved)) ? JSON.parse(saved) : []; }catch(e){ return []; } })(),
 	  importProgress: { active: false, current: 0, total: 0, label: '' }, // Brands import progress — shown only in Asif's Settings
     stockMovements: [], // {id, barcode, delta, type:'sale'|'restock'|'ambiguous', ts} — recorded whenever a stock qty changes
-  appNotifications: [], // role/party-aware in-app alerts, synchronized through the shared Firestore document
+  appNotifications: JSON.parse(localStorage.getItem('app-notifications-cache') || '[]'), // role/party-aware in-app alerts, synchronized through the shared Firestore document
   pdfImports: JSON.parse(localStorage.getItem('pdf-imports-cache') || '[]'), // staff/admin PDF import records synchronized through Firestore
   activeSessions: [], // {id, username, role, deviceId, deviceName, loginTs, lastSeen, revokedAt}
   sessionToken: '',
