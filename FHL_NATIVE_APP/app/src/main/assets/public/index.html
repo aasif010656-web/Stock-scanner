@@ -6180,6 +6180,18 @@ async function syncBrandsStateToCloud(){
   const rootSnap = await fbBrandsDocRef.get({source:'server'});
   const previousRoot = rootSnap.exists ? (rootSnap.data() || {}) : {};
   const previousActiveVersion = String(previousRoot.activeVersion || '');
+  // An import can be started immediately after login, before the initial
+  // authoritative Brands snapshot has finished loading. In that narrow race
+  // markBrandsCloudPending() has a deliberately empty baseVersion, although
+  // the local import is valid. Establish the server version as the base now;
+  // the merge below still preserves remote products/prices that this device
+  // did not edit. Do not do this for an already-loaded snapshot: a non-empty
+  // baseVersion mismatch there is a real concurrent-writer conflict.
+  if(brandsCloudPending && Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion') && !String(brandsCloudPending.baseVersion || '') && !brandsCloudState.loaded){
+    brandsCloudPending.baseVersion = previousActiveVersion;
+    brandsCloudPending.baseVersionEstablishedAt = Date.now();
+    persistBrandsCloudPending();
+  }
   if(brandsCloudPending && Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion') && String(brandsCloudPending.baseVersion || '') !== previousActiveVersion){
     brandsCloudPending.conflict = 'newer-active-version';
     brandsCloudPending.conflictVersion = previousActiveVersion;
