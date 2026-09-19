@@ -5599,6 +5599,7 @@ const BRANDS_ACTIVE_VERSION_STORAGE_KEY = 'brands-active-version-v1';
 const STOCK_MOVEMENT_STORAGE_VERSION = 1;
 const STOCK_MOVEMENT_PENDING_STORAGE_KEY = 'stock-movement-cloud-pending-v1';
 const BRANDS_LAST_SYNC_ERROR_STORAGE_KEY = 'brands-last-cloud-sync-error-v1';
+const USER_MANAGEMENT_PENDING_STORAGE_KEY = 'user-management-cloud-pending-v1';
 var brandsCloudState = (function(){
   try{
     const cached = JSON.parse(localStorage.getItem(BRANDS_ACTIVE_VERSION_STORAGE_KEY) || 'null');
@@ -5628,6 +5629,17 @@ let brandsLastCloudSyncError = (function(){
     return value && typeof value === 'object' ? value : null;
   }catch(e){ return null; }
 })();
+let userManagementCloudPending = (function(){
+  try{ return localStorage.getItem(USER_MANAGEMENT_PENDING_STORAGE_KEY) === '1'; }catch(e){ return false; }
+})();
+function markUserManagementCloudPending(){
+  userManagementCloudPending = true;
+  try{ localStorage.setItem(USER_MANAGEMENT_PENDING_STORAGE_KEY, '1'); }catch(e){}
+}
+function clearUserManagementCloudPending(){
+  userManagementCloudPending = false;
+  try{ localStorage.removeItem(USER_MANAGEMENT_PENDING_STORAGE_KEY); }catch(e){}
+}
 const PRICE_DELETE_TOMBSTONE_STORAGE_KEY = 'price-notifs-deletion-tombstones-v1';
 const PRICE_DELETE_TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const PRICE_DELETE_TOMBSTONE_LIMIT = 800;
@@ -6177,6 +6189,27 @@ function queueStockMovementCloudBackfill(delay){
     pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
   }, Math.max(500, Number(delay) || 1200));
 }
+async function syncUserManagementToCloud(){
+  if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
+    markUserManagementCloudPending();
+    return false;
+  }
+  try{
+    const payload = { appUsers: state.appUsers || {}, userRoles: state.userRoles || {} };
+    await fbDocRef.firestore.runTransaction(function(transaction){
+      return transaction.get(fbDocRef).then(function(){
+        transaction.set(fbDocRef, payload, { merge:true });
+      });
+    });
+    clearUserManagementCloudPending();
+    return true;
+  }catch(error){
+    markUserManagementCloudPending();
+    console.warn('User Management cloud sync queued safely', error);
+    return false;
+  }
+}
+
 async function syncBrandsStateToCloud(){
   // Cancel any in-flight listener/refresh read before publishing local edits.
   ++brandsRemoteApplyGeneration;
@@ -6772,13 +6805,16 @@ async function pushToCloud(force, suppressToast, options){
     // instead of blind-overwriting them — this is what stops another device's
     // just-imported products/reports from vanishing when this device syncs.
     let cloudData = {}, cloudExcelData = {}, cloudPdfData = {}, cloudReportData = {};
-    try{
-      const freshSnap = await fbDocRef.get();
-      if(freshSnap.exists) cloudData = freshSnap.data() || {};
-    }catch(e){ /* couldn't re-fetch (offline) — fall back to local state as-is */ }
-    try{ if(fbExcelDocRef){ const snap = await fbExcelDocRef.get(); if(snap.exists) cloudExcelData = snap.data() || {}; } }catch(e){}
-    try{ if(fbPdfDocRef){ const snap = await fbPdfDocRef.get(); if(snap.exists) cloudPdfData = snap.data() || {}; } }catch(e){}
-    try{ if(fbReportDocRef){ const snap = await fbReportDocRef.get(); if(snap.exists) cloudReportData = snap.data() || {}; } }catch(e){}
+    const cloudReads = await Promise.all([
+      fbDocRef.get({source:'server'}).catch(function(){ return null; }),
+      fbExcelDocRef ? fbExcelDocRef.get().catch(function(){ return null; }) : Promise.resolve(null),
+      fbPdfDocRef ? fbPdfDocRef.get().catch(function(){ return null; }) : Promise.resolve(null),
+      fbReportDocRef ? fbReportDocRef.get().catch(function(){ return null; }) : Promise.resolve(null)
+    ]);
+    if(cloudReads[0] && cloudReads[0].exists) cloudData = cloudReads[0].data() || {};
+    if(cloudReads[1] && cloudReads[1].exists) cloudExcelData = cloudReads[1].data() || {};
+    if(cloudReads[2] && cloudReads[2].exists) cloudPdfData = cloudReads[2].data() || {};
+    if(cloudReads[3] && cloudReads[3].exists) cloudReportData = cloudReads[3].data() || {};
 
     // Brand products, stock overrides, and prices are deliberately saved outside
     // sharedData. The publisher verifies every chunk and its active root before the
@@ -6786,6 +6822,7 @@ async function pushToCloud(force, suppressToast, options){
     // A cloud read can still contain an older latest-update field; never let that
     // stale metadata replace a newer locally completed import.
     state.latestExcelUpdate = preferLatestExcelUpdate(state.latestExcelUpdate, cloudExcelData.latestExcelUpdate);
+    if(userManagementCloudPending) await syncUserManagementToCloud();
     if(hasBrandsCloudPending()) await syncBrandsStateToCloud();
     // Large Excel imports can create thousands of quantity movements. Publish them
     // in their own bounded version before writing the small shared settings document.
@@ -6864,6 +6901,7 @@ async function pushToCloud(force, suppressToast, options){
       if(stockMovementCloudState.activeVersion && !hasStockMovementCloudPending()) sharedPayload.stockMovements = deleteLegacyField;
     }
     await fbDocRef.set(sharedPayload, { merge: true });
+    clearUserManagementCloudPending();
     clearBrandsCloudSyncError();
     syncStatus = 'synced';
     checkForceLogout();
@@ -6911,11 +6949,8 @@ async function retryCloudConnection(options){
   try{
     const db = firebase.firestore();
     if(typeof db.enableNetwork === 'function') await db.enableNetwork();
-    // navigator.onLine only confirms a network interface. This server read
-    // confirms that Firestore is actually reachable before any status is shown.
-    await fbDocRef.get({ source:'server' });
-    // This server read proves the cloud is reachable. A queued report/import
-    // replay can require another attempt but must not create a false warning.
+    // pushToCloud performs the authoritative server read and replays pending
+    // User Management, Brands, stock movement, and shared-data writes together.
     const replayed = await pushToCloud(true, true, { preserveStatus:true });
     syncStatus = 'synced';
     queueReportCloudBackfill();
@@ -7650,7 +7685,6 @@ function openPasswordModal(username){
 }
 async function savePasswordModal(){
   if(!isAdminUser()){ closeActionModal(); showToast('Only Admin can manage users', true); return; }
-  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   const username = state._passwordEditUser;
   const input = document.getElementById('passwordModalInput');
   const newPass = input ? input.value : '';
@@ -7658,8 +7692,9 @@ async function savePasswordModal(){
   state.appUsers[username] = newPass;
   addAuditLog('Password Changed', 'Changed password for user ' + username);
   closeActionModal();
+  const userCloudSynced = await syncUserManagementToCloud();
   await pushToCloud(true, true); render();
-  showToast('✓ Password updated for ' + username);
+  showToast(userCloudSynced ? '✓ Password updated for ' + username : 'Password updated locally; cloud sync queued.', !userCloudSynced);
 }
 function openRoleModal(username){
   if(username === 'Asif'){ showToast('Cannot change primary admin role', true); return; }
@@ -7684,7 +7719,6 @@ function openRoleModal(username){
 }
 async function saveRoleModal(){
   if(!isAdminUser()){ closeActionModal(); showToast('Only Admin can manage users', true); return; }
-  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   const username = state._roleEditUser;
   const roleEl = document.getElementById('roleModalRole');
   const partyEl = document.getElementById('roleModalParties');
@@ -7697,8 +7731,9 @@ async function saveRoleModal(){
   state.userRoles[username] = { role, partyCodes, brandCodes };
   addAuditLog('Role Changed', 'Set ' + username + ' to role ' + role + (partyCodes.length ? ' (parties: ' + partyCodes.join('/') + ')' : '') + (brandCodes.length ? ' (brands: ' + brandCodes.join('/') + ')' : ''));
   closeActionModal();
+  const userCloudSynced = await syncUserManagementToCloud();
   await pushToCloud(true, true); render();
-  showToast('✓ Role updated for ' + username);
+  showToast(userCloudSynced ? '✓ Role updated for ' + username : 'Role updated locally; cloud sync queued.', !userCloudSynced);
 }
 function selectTheme(themeId){
   applyTheme(themeId);
@@ -11404,7 +11439,6 @@ function getUserBrandCodes(u){
 }
 async function saveUser(){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
-  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   const u = state.userForm.username.trim();
   const p = state.userForm.password.trim();
   if(!u || !p){ showToast('Enter username and password', true); return; }
@@ -11420,17 +11454,20 @@ async function saveUser(){
   }
   addAuditLog('User Saved', 'Added/Updated user ' + u + ' (role: ' + (u==='Asif'?'admin':role) + (partyCodes.length ? ', parties: ' + partyCodes.join('/') : '') + (brandCodes.length ? ', brands: ' + brandCodes.join('/') : '') + ')');
   state.userForm = { username: '', password: '', role: 'promoter', partyCodes: '', brandCodes: '' };
+  const userCloudSynced = await syncUserManagementToCloud();
   await pushToCloud(true, true); render();
+  showToast(userCloudSynced ? '✓ User saved to cloud' : 'User saved locally; cloud sync queued.', !userCloudSynced);
 }
 async function deleteUser(u){
   if(!isAdminUser()){ showToast('Only Admin can manage users', true); return; }
-  if(!fbReady || !fbDocRef){ showToast('User Management requires an active Firestore connection', true); return; }
   if(u === 'Asif'){ showToast('Cannot delete primary admin', true); return; }
   if(!(await appConfirm('Delete user ' + u + '?', 'Delete User'))) return;
   delete state.appUsers[u];
   if(state.userRoles) delete state.userRoles[u];
   addAuditLog('User Deleted', 'Deleted user ' + u);
+  const userCloudSynced = await syncUserManagementToCloud();
   await pushToCloud(true, true); render();
+  showToast(userCloudSynced ? '✓ User deleted from cloud' : 'User deleted locally; cloud sync queued.', !userCloudSynced);
 }
 
 function changeUserPassword(u){
