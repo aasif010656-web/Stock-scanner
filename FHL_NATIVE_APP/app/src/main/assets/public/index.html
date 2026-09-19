@@ -5968,7 +5968,8 @@ function markBrandsCloudPending(reason){
   // Persist the active snapshot that this local edit was based on. Automatic
   // retries must never merge local state over a newer import from another device.
   const baseVersion = brandsCloudState && brandsCloudState.activeVersion != null ? String(brandsCloudState.activeVersion || '') : '';
-  brandsCloudPending = { updatedAt:Date.now(), reason:String(reason || 'brands-update'), baseVersion:baseVersion, retryCount:Number((brandsCloudPending && brandsCloudPending.retryCount) || 0) };
+  const pendingReason = String(reason || 'brands-update');
+  brandsCloudPending = { updatedAt:Date.now(), reason:pendingReason, baseVersion:baseVersion, retryCount:Number((brandsCloudPending && brandsCloudPending.retryCount) || 0), allowImportRebase:pendingReason === 'brands-excel-import' };
   persistBrandsCloudPending();
   persistBrandsLocalState();
   return brandsCloudPending;
@@ -6193,18 +6194,37 @@ async function syncBrandsStateToCloud(){
     persistBrandsCloudPending();
   }
   if(brandsCloudPending && Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion') && String(brandsCloudPending.baseVersion || '') !== previousActiveVersion){
-    brandsCloudPending.conflict = 'newer-active-version';
-    brandsCloudPending.conflictVersion = previousActiveVersion;
-    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-    persistBrandsCloudPending();
-    throw new Error('Brands cloud has a newer active version; stale pending retry was rejected');
+    if(brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import'){
+      // A user Excel import is a new local edit, not an old snapshot retry.
+      // Rebase it onto the latest server version and let the merge below retain
+      // remote products/prices while applying this workbook's local changes.
+      brandsCloudPending.conflict = 'import-rebased';
+      brandsCloudPending.conflictVersion = previousActiveVersion;
+      brandsCloudPending.baseVersion = previousActiveVersion;
+      brandsCloudPending.rebasedAt = Date.now();
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+    }else{
+      brandsCloudPending.conflict = 'newer-active-version';
+      brandsCloudPending.conflictVersion = previousActiveVersion;
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+      throw new Error('Brands cloud has a newer active version; stale pending retry was rejected');
+    }
   }
   if(brandsCloudPending && !Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion')){
-    brandsCloudPending.conflict = 'missing-base-version';
-    brandsCloudPending.conflictVersion = previousActiveVersion;
-    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-    persistBrandsCloudPending();
-    throw new Error('Brands pending state has no base version; stale retry was rejected');
+    if(brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import'){
+      brandsCloudPending.baseVersion = previousActiveVersion;
+      brandsCloudPending.rebasedAt = Date.now();
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+    }else{
+      brandsCloudPending.conflict = 'missing-base-version';
+      brandsCloudPending.conflictVersion = previousActiveVersion;
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+      throw new Error('Brands pending state has no base version; stale retry was rejected');
+    }
   }
   let remoteState = null;
   if(previousRoot.activeVersion) remoteState = await readBrandsStateFromCloud(previousRoot);
@@ -12818,27 +12838,37 @@ try{
 })();
 
 // ---------- Init ----------
+function showStartupRecovery(error){
+  console.error('FHL startup failed', error);
+  try{ storageReady = true; syncStatus = navigator.onLine ? 'error' : 'offline'; }catch(e){}
+  const message = error && error.message ? String(error.message) : 'Startup error';
+  document.body.innerHTML = '<main style="min-height:100vh;background:#0b0d14;color:#f5f7fb;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Arial,sans-serif"><section style="width:min(420px,100%);background:#171b27;border:1px solid #30384d;border-radius:20px;padding:24px;box-shadow:0 16px 40px #0008"><h2 style="margin:0 0 10px">FHL ELECTRONICS</h2><p style="color:#b8c0d4;line-height:1.5">App startup was interrupted. Local data is safe. Tap Retry to open the app again.</p><button onclick="location.reload()" style="width:100%;border:0;border-radius:12px;padding:13px;background:#3b82f6;color:#fff;font-weight:700;font-size:16px">Retry</button><small style="display:block;margin-top:14px;color:#76819a;word-break:break-word">'+lucideText(message.slice(0,160))+'</small></section></main>';
+}
 (async function init(){
-  restoreSavedSession();
-  loadWebsiteNotificationsForUser();
-  state.reports = JSON.parse(localStorage.getItem('app-reports') || '[]');
-  state.openReportIndex = null;
-  state.openAgingParty = null;
-  
-  // Monthly check for ageing list
-  const currentMonth = new Date().getMonth();
-  if(state.agingMonthly !== currentMonth) {
-      state.agingMonthly = currentMonth;
-      // You could trigger a sync or a specific cleanup here if needed
+  try{
+    restoreSavedSession();
+    loadWebsiteNotificationsForUser();
+    state.reports = JSON.parse(localStorage.getItem('app-reports') || '[]');
+    state.openReportIndex = null;
+    state.openAgingParty = null;
+    
+    // Monthly check for ageing list
+    const currentMonth = new Date().getMonth();
+    if(state.agingMonthly !== currentMonth) {
+        state.agingMonthly = currentMonth;
+        // You could trigger a sync or a specific cleanup here if needed
+    }
+    
+    const savedTheme = localStorage.getItem('app-theme');
+    applyTheme(savedTheme || state.theme);
+    if(state.user && state.user.username === 'Asif') state.operatorName = 'Asif';
+    initFirebase();
+    render();
+    await loadStorage();
+    // Website intentionally has no app-update UI; native Android retains its own update flow.
+  }catch(error){
+    showStartupRecovery(error);
   }
-  
-  const savedTheme = localStorage.getItem('app-theme');
-  applyTheme(savedTheme || state.theme);
-  if(state.user && state.user.username === 'Asif') state.operatorName = 'Asif';
-  initFirebase();
-  render();
-  await loadStorage();
-  // Website intentionally has no app-update UI; native Android retains its own update flow.
 })();
 </script>
 </body>
