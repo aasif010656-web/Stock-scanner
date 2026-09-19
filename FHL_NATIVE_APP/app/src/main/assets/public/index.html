@@ -5557,11 +5557,15 @@ function rebuildIndex(){
   });
 }
 
-rebuildIndex();
-
 let stockOverrides = JSON.parse(localStorage.getItem('stock-overrides-cache') || '{}');
 let scanLog = JSON.parse(localStorage.getItem('scan-log-cache') || '[]');
 let storageReady = false;
+
+// Build the initial lookup only after offline cache-backed variables exist.
+// When navigator.onLine is false, getAuthoritativeBrandsRowKeys() reads the
+// cached stock overrides; running this before the let declaration caused an
+// offline-only startup ReferenceError and a black WebView screen.
+rebuildIndex();
 
 // ---------- Firebase (cross-device cloud sync) ----------
 const firebaseConfig = {
