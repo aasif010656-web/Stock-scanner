@@ -8144,12 +8144,13 @@ function checkDuplicate(barcode){
 }
 
 function lookupBarcode(code){
-  code = (code||'').trim();
+  code = normalizeScannedBarcode(code);
   if(!code) return;
-  // Sanitize GS1/Symbology prefixes
-  if(code.startsWith(']C1') || code.startsWith(']E0') || code.startsWith(']E4')) code = code.substring(3);
   state.barcodeSuggestions = []; state.showSuggestions = false;
-  const matches = BARCODE_INDEX.get(code);
+  // Use the same normalized variants for manual typing and hardware/camera
+  // scans. This is important for UPC-A 12-digit input, which is indexed as
+  // EAN-13 with a leading zero.
+  const matches = barcodeMatchesForScan(code);
   if(!matches || matches.length===0){
     state.notFoundCode = code; state.matchedRow=null; state.multiMatches=null; state.duplicateWarning=null;
     playErrorSound();
@@ -12473,25 +12474,20 @@ function wireEvents(){
         return;
       }
 
-      const v = mi.value.trim();
+      const v = normalizeScannedBarcode(mi.value.trim());
       if(!v){ state.barcodeSuggestions=[]; state.showSuggestions=false; state.manualInput=''; render(); return; }
 
       const is13Digit = /^\d{13}$/.test(v);
       const is12Digit = /^\d{12}$/.test(v);
 
-      if(is13Digit){
-        // 13 digits: auto-detect immediately
+      if(is13Digit || is12Digit){
+        // Complete EAN-13 and UPC-A values: auto-detect immediately. UPC-A
+        // is normalized by barcodeMatchesForScan to its indexed 13-digit key.
         state.barcodeSuggestions = [];
         state.showSuggestions = false;
         state.manualInput = '';
         lookupBarcode(v);
         mi.value = '';
-        return;
-      }
-
-      if(is12Digit){
-        // 12 digits: show suggestions, do not auto-detect
-        updateBarcodeSuggestions(v);
         return;
       }
 
