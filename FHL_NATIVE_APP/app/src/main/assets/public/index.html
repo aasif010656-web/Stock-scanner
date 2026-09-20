@@ -8212,15 +8212,28 @@ function updateBarcodeSuggestions(val){
   const v = val.trim();
   // Save current input value to state so render() can restore it
   state.manualInput = val;
+  const restoreManualScanFocus = function(){
+    setTimeout(function(){
+      const input = document.getElementById('manualBarcodeInput');
+      if(input && state.tab === 'scan'){
+        input.value = state.manualInput || val;
+        input.focus();
+        try{ input.setSelectionRange(input.value.length, input.value.length); }catch(e){}
+      }
+    }, 0);
+  };
   // Show suggestions for any input >= 2 chars
   if(!v || v.length < 2){
     state.barcodeSuggestions = []; state.showSuggestions = false;
-    render(); return;
+    render(); restoreManualScanFocus(); return;
   }
   const suggestions = getBarcodeNumberSuggestions(v);
   state.barcodeSuggestions = suggestions;
   state.showSuggestions = suggestions.length > 0;
   render();
+  // render() rebuilds the legacy screen HTML. Restore focus and caret after
+  // suggestion updates so typing does not stop after the first few characters.
+  restoreManualScanFocus();
 }
 
 function selectBarcodeSuggestion(barcode){
@@ -12453,10 +12466,14 @@ function wireEvents(){
   if(mi){
     mi.addEventListener('keydown', (e)=>{
       if(e.key==='Enter'){
+        e.preventDefault();
+        e.stopPropagation();
         if(state.tab === 'a7'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a7'); mi.value=''; return; }
         if(state.tab === 'a4'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a4'); mi.value=''; return; }
+        const typed = normalizeScannedBarcode(mi.value);
+        state.manualInput = '';
         state.barcodeSuggestions = []; state.showSuggestions = false;
-        lookupBarcode(mi.value);
+        lookupBarcode(typed);
         mi.value='';
       }
     });
