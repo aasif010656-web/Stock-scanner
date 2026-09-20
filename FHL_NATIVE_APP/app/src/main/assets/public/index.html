@@ -8250,7 +8250,13 @@ function submitManualScanInput(input){
   // Android WebView keyboards may send an IME action without a DOM keydown.
   // This shared path is therefore called from key, change, blur, and complete
   // input events so Go/Enter behaves like a physical scanner terminator.
+  const numericBarcode = /^\d+$/.test(typed);
   const complete = /^\d{12,13}$/.test(typed);
+  // Android may emit change/IME events while the user is still entering a
+  // barcode. Never turn a single digit (or any short numeric prefix) into a
+  // lookup; only a complete UPC/EAN may be submitted automatically.
+  if(numericBarcode && !complete) return false;
+  if(numericBarcode && typed.length > 13) return false;
   if(!complete && state.manualInput === typed && !state.showSuggestions && !state.matchedRow && !state.notFoundCode) return false;
   state.manualInput = '';
   state.barcodeSuggestions = []; state.showSuggestions = false;
