@@ -12495,7 +12495,10 @@ function wireEvents(){
       }
     });
     mi.addEventListener('keyup', (e)=>{
-      if((e.key === 'Enter' || e.key === 'Go' || e.key === 'Unidentified') && state.tab === 'scan') submitManualScanInput(mi);
+      // Some Android keyboards report ordinary digit keyups as
+      // "Unidentified". Never treat that as Go/Enter or a single digit such
+      // as 0 will be submitted immediately.
+      if((e.key === 'Enter' || e.key === 'Go') && state.tab === 'scan') submitManualScanInput(mi);
     });
     mi.addEventListener('change', ()=>submitManualScanInput(mi));
     mi.addEventListener('blur', ()=>{
