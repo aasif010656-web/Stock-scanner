@@ -8243,6 +8243,23 @@ function selectBarcodeSuggestion(barcode){
   lookupBarcode(barcode);
 }
 
+function submitManualScanInput(input){
+  if(!input || state.tab !== 'scan') return false;
+  const typed = normalizeScannedBarcode(input.value);
+  if(!typed) return false;
+  // Android WebView keyboards may send an IME action without a DOM keydown.
+  // This shared path is therefore called from key, change, blur, and complete
+  // input events so Go/Enter behaves like a physical scanner terminator.
+  const complete = /^\d{12,13}$/.test(typed);
+  if(!complete && state.manualInput === typed && !state.showSuggestions && !state.matchedRow && !state.notFoundCode) return false;
+  state.manualInput = '';
+  state.barcodeSuggestions = []; state.showSuggestions = false;
+  lookupBarcode(typed);
+  const current = document.getElementById('manualBarcodeInput');
+  if(current) current.value = '';
+  return true;
+}
+
 function pickMatch(idx){
   state.matchedRow = state.multiMatches[idx];
   state.multiMatches = null;
@@ -10094,6 +10111,10 @@ function renderNow(){
   else if(state.tab==='a7') c.innerHTML = renderA7();
   else if(state.tab==='a4') c.innerHTML = renderA4();
   else if(state.tab==='createExcel') c.innerHTML = renderCreateExcel();
+  // render() replaces the legacy content DOM, including manualBarcodeInput.
+  // Rebind its keyboard/IME listeners on every render; without this call the
+  // visible input accepts text but never submits a barcode.
+  wireEvents();
   c.classList.remove('tab-transition-enter');
   delete c.dataset.tabTransitionDirection;
   const pendingTabTransition = state._pendingTabTransition;
@@ -12470,12 +12491,18 @@ function wireEvents(){
         e.stopPropagation();
         if(state.tab === 'a7'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a7'); mi.value=''; return; }
         if(state.tab === 'a4'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a4'); mi.value=''; return; }
-        const typed = normalizeScannedBarcode(mi.value);
-        state.manualInput = '';
-        state.barcodeSuggestions = []; state.showSuggestions = false;
-        lookupBarcode(typed);
-        mi.value='';
+        submitManualScanInput(mi);
       }
+    });
+    mi.addEventListener('keyup', (e)=>{
+      if((e.key === 'Enter' || e.key === 'Go' || e.key === 'Unidentified') && state.tab === 'scan') submitManualScanInput(mi);
+    });
+    mi.addEventListener('change', ()=>submitManualScanInput(mi));
+    mi.addEventListener('blur', ()=>{
+      // Only submit complete numeric barcodes on blur; article-code suggestions
+      // must remain available while the user moves focus around the screen.
+      const typed = normalizeScannedBarcode(mi.value);
+      if(/^\d{12,13}$/.test(typed)) submitManualScanInput(mi);
     });
     mi.addEventListener('input', ()=>{
       if(state.tab === 'a7'){
@@ -12500,11 +12527,7 @@ function wireEvents(){
       if(is13Digit || is12Digit){
         // Complete EAN-13 and UPC-A values: auto-detect immediately. UPC-A
         // is normalized by barcodeMatchesForScan to its indexed 13-digit key.
-        state.barcodeSuggestions = [];
-        state.showSuggestions = false;
-        state.manualInput = '';
-        lookupBarcode(v);
-        mi.value = '';
+        submitManualScanInput(mi);
         return;
       }
 
