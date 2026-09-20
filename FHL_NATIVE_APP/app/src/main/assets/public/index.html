@@ -5524,7 +5524,16 @@ function cleanBC(bc){ return String(bc||'').replace(/^0+/, ''); }
 // Converts a 12-digit (UPC-A style) numeric barcode to 13-digit by adding a leading zero,
 // matching standard EAN-13 conversion. Leaves everything else untouched.
 function normalizeBarcode13(code){
-  const s = String(code||'').trim();
+  let s = String(code == null ? '' : code).trim();
+  // SheetJS can return Excel numeric barcode cells with a trailing .0.
+  if(/^\d+\.0$/.test(s)) s = s.slice(0, -2);
+  // Keep barcode keys stable when a spreadsheet number is rendered in
+  // scientific notation by the WebView/Excel parser.
+  const scientific = s.match(/^(\d+(?:\.\d+)?)e\+(\d+)$/i);
+  if(scientific){
+    const expanded = Number(s).toFixed(0);
+    if(/^\d+$/.test(expanded)) s = expanded;
+  }
   if(/^\d{12}$/.test(s)) return '0' + s;
   return s;
 }
@@ -7011,9 +7020,20 @@ document.addEventListener('visibilitychange', function(){
 
 async function saveBrandsState(reason){
   markBrandsCloudPending(reason || 'brands-update');
-  const saved = await pushToCloud(true, true);
-  if(!saved) queueBrandsCloudBackfill(2500);
-  return saved;
+  // Publish the authoritative Brands version first. Previously this was buried
+  // inside pushToCloud(), so an unrelated large report/PDF/stock-movement write
+  // could abort the broad sync before the Excel snapshot was activated.
+  let brandsSaved = false;
+  try{ brandsSaved = await syncBrandsStateToCloud(); }
+  catch(error){
+    rememberBrandsCloudSyncError(error, 'brands-version');
+    brandsSaved = false;
+  }
+  // Shared metadata is allowed to retry independently; it must not make a
+  // successfully activated Brands snapshot look like an import failure.
+  await pushToCloud(true, true);
+  if(!brandsSaved) queueBrandsCloudBackfill(2500);
+  return brandsSaved;
 }
 async function saveStockOverrides(){ return saveBrandsState('stock-overrides'); }
 async function saveLog(){ await pushToCloud(); }
