@@ -6958,9 +6958,20 @@ async function retryCloudConnection(options){
   try{
     const db = firebase.firestore();
     if(typeof db.enableNetwork === 'function') await db.enableNetwork();
-    // pushToCloud performs the authoritative server read and replays pending
-    // User Management, Brands, stock movement, and shared-data writes together.
-    const replayed = await pushToCloud(true, true, { preserveStatus:true });
+    // Brands is the authoritative inventory source. Apply it before the broad
+    // shared-data replay; the latter may contain legacy reports/movements and
+    // must never keep the user on a stale local stock/price snapshot.
+    await Promise.race([
+      refreshCanonicalBrandsState(),
+      new Promise(function(resolve){ setTimeout(resolve, 10000); })
+    ]);
+    // The remaining shared-data replay is best-effort. A slow legacy payload
+    // must not hold the UI in Connecting forever; its pending markers and the
+    // scheduled retry preserve the data safely.
+    const replayed = await Promise.race([
+      pushToCloud(true, true, { preserveStatus:true }),
+      new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 10000); })
+    ]);
     syncStatus = 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
