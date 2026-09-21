@@ -7024,11 +7024,27 @@ async function saveBrandsState(reason){
   // inside pushToCloud(), so an unrelated large report/PDF/stock-movement write
   // could abort the broad sync before the Excel snapshot was activated.
   let brandsSaved = false;
-  try{ brandsSaved = await syncBrandsStateToCloud(); }
-  catch(error){
-    rememberBrandsCloudSyncError(error, 'brands-version');
-    brandsSaved = false;
+  let lastBrandsError = null;
+  // Firestore can be reachable while its WebView network/auth handshake is
+  // still settling. A one-shot publish used to return "queued" here and leave
+  // the activeVersion unchanged until a later reconnect happened. For an Excel
+  // import, retry the authoritative version publish immediately and require its
+  // root verification before reporting completion.
+  for(let attempt = 0; attempt < 3 && !brandsSaved; attempt++){
+    try{
+      if(firebase && firebase.firestore && typeof firebase.firestore().enableNetwork === 'function'){
+        await firebase.firestore().enableNetwork();
+      }
+      brandsSaved = await syncBrandsStateToCloud();
+      if(!brandsSaved) throw new Error('Brands publisher is not ready');
+    }catch(error){
+      lastBrandsError = error;
+      rememberBrandsCloudSyncError(error, 'brands-version-attempt-' + (attempt + 1));
+      brandsSaved = false;
+      if(attempt < 2) await new Promise(function(resolve){ setTimeout(resolve, 500 * (attempt + 1)); });
+    }
   }
+  if(!brandsSaved && lastBrandsError) rememberBrandsCloudSyncError(lastBrandsError, 'brands-version-final');
   // Shared metadata is allowed to retry independently; it must not make a
   // successfully activated Brands snapshot look like an import failure.
   await pushToCloud(true, true);
