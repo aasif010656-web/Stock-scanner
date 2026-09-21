@@ -10206,7 +10206,14 @@ function stockSummaryCategory(row){
 function getDashboardAnalytics(){
   const rows = getAllRows().filter(stockSummaryRowVisible);
   const stockRows = rows.map(row => ({row, qty:Number(effectiveQty(row)) || 0}));
-  const totalQty = stockRows.reduce((sum,item) => sum + item.qty, 0);
+  // Staff/admin totals must reflect every key in the verified chunked Brands
+  // snapshot. A few imported barcodes can legitimately lack a matching row in
+  // the legacy embedded workbook; summing only getAllRows() silently dropped
+  // those pieces (the reported 17,709 vs 17,718 discrepancy). Promoters remain
+  // party-filtered and therefore continue using their visible rows only.
+  const authoritativeAdminSnapshot = !isPromoterUser() && brandsCloudState && brandsCloudState.loaded && Object.keys(stockOverrides || {}).length > 0;
+  const authoritativeTotalQty = authoritativeAdminSnapshot ? Object.keys(stockOverrides).reduce(function(sum, key){ return sum + (Number(stockOverrides[key]) || 0); }, 0) : null;
+  const totalQty = authoritativeTotalQty == null ? stockRows.reduce((sum,item) => sum + item.qty, 0) : authoritativeTotalQty;
   const valueFor = item => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return item.qty * unit; };
   const stockValue = stockRows.reduce((sum,item) => sum + valueFor(item), 0);
   const homeAppliancesValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'home').reduce((sum,item) => sum + valueFor(item), 0);
@@ -10218,7 +10225,7 @@ function getDashboardAnalytics(){
   const topRow = topSale ? rows.find(r => String(r.Barcode || r.Product || '') === String(topSale)) : null;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const recentPriceChanges = (state.priceChangeNotifications || []).filter(n => Number(n.ts || 0) >= cutoff).length;
-  return {totalQty, stockValue, homeAppliancesValue, electronicsValue, productCount:stockRows.length, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
+  return {totalQty, stockValue, homeAppliancesValue, electronicsValue, productCount:authoritativeAdminSnapshot ? Object.keys(stockOverrides).length : stockRows.length, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
 }
 
 function renderScan(){
