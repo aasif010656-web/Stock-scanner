@@ -6421,7 +6421,8 @@ async function loadStorage(){
       const allowLegacyBrandsData = !hasVersionedBrandsRoot && !hasBrandsCloudPending();
       if(allowLegacyBrandsData) stockOverrides = data.stockOverrides || stockOverrides;
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
-      scanLog = data.scanLog || scanLog;
+      scanLogTombstones = mergeScanLogTombstones(scanLogTombstones, data.scanLogTombstones);
+      scanLog = (data.scanLog || scanLog).filter(function(item){ return item && !scanLogTombstones[String(item.id || '')]; });
       if(allowLegacyBrandsData) customProducts = data.customProducts || customProducts;
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
       if(allowLegacyBrandsData) state.prices = data.prices || state.prices || {};
@@ -6464,7 +6465,7 @@ async function loadStorage(){
       */
       rebuildIndex();
     } else {
-      await fbDocRef.set({ scanLog:[], auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
+      await fbDocRef.set({ scanLog:[], scanLogTombstones:{}, auditLog:[], appUsers: state.appUsers, userRoles: state.userRoles || {}, priceChangeNotifications: [], priceChangeNotificationTombstones: {}, stockMovements: [], appNotifications: [], activeSessions: [], a7Template: DEFAULT_A7_TEMPLATE_B64, a7TemplateVersion: A7_TEMPLATE_VERSION });
     }
     if(remoteBrands){
       clearBrandsCloudPending();
@@ -6522,7 +6523,9 @@ async function loadStorage(){
       const data = doc.data();
       if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) stockOverrides = data.stockOverrides || {};
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
-      scanLog = data.scanLog || [];
+      scanLogTombstones = mergeScanLogTombstones(scanLogTombstones, data.scanLogTombstones);
+      try{ localStorage.setItem('scan-log-tombstones-cache', JSON.stringify(scanLogTombstones)); }catch(e){}
+      scanLog = (data.scanLog || []).filter(function(item){ return item && !scanLogTombstones[String(item.id || '')]; });
       if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) customProducts = data.customProducts || [];
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
       if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) state.prices = data.prices || state.prices || {};
@@ -6671,6 +6674,8 @@ async function loadStorage(){
 
 // Tracks keys that were EXPLICITLY deleted on this device, so a merge-before-push
 // never silently resurrects them just because another device's cloud copy still has them.
+let scanLogTombstones = {};
+try{ scanLogTombstones = normalizeScanLogTombstones(JSON.parse(localStorage.getItem('scan-log-tombstones-cache') || '{}')); }catch(e){ scanLogTombstones = {}; }
 let deletedKeys = { customProducts: new Set(), stockOverrides: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), appNotifications: new Set(), pdfImports: new Set(), auditLog: new Set() };
 function rememberDeletedPriceNotifications(ids, tombstones){
   priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, tombstones);
@@ -6753,6 +6758,20 @@ function mergeArrayByKey(cloudArr, localArr, keyFn, deletedSet){
   });
   return Array.from(map.values());
 }
+function normalizeScanLogTombstones(value){
+  const out = {};
+  if(value && typeof value === 'object') Object.keys(value).forEach(function(id){ if(String(id || '').trim()) out[String(id)] = Number(value[id]) || Date.now(); });
+  return out;
+}
+function mergeScanLogTombstones(local, remote){
+  return Object.assign({}, normalizeScanLogTombstones(remote), normalizeScanLogTombstones(local));
+}
+function markScanLogDeleted(id){
+  const key = String(id || '').trim();
+  if(!key) return;
+  scanLogTombstones[key] = Date.now();
+  try{ localStorage.setItem('scan-log-tombstones-cache', JSON.stringify(scanLogTombstones)); }catch(e){}
+}
 
 // mergeArrayByKey above takes "local wins" on a same-SL collision — fine for most
 // fields, but it means a device pushing a stale local copy of a product could
@@ -6792,6 +6811,7 @@ async function pushToCloud(force, suppressToast, options){
     markStockCacheFresh(Date.now());
     localStorage.setItem('stock-overrides-cache', JSON.stringify(stockOverrides));
     localStorage.setItem('scan-log-cache', JSON.stringify(scanLog));
+    localStorage.setItem('scan-log-tombstones-cache', JSON.stringify(scanLogTombstones));
     localStorage.setItem('custom-products-cache', JSON.stringify(customProducts));
     localStorage.setItem('audit-log-cache', JSON.stringify(state.auditLog || []));
     localStorage.setItem('a7-excels-cache', JSON.stringify(state.a7Excels || []));
@@ -6842,7 +6862,9 @@ async function pushToCloud(force, suppressToast, options){
       if(Array.isArray(report.data) && report.data.length && !report.payloadStored) await saveReportRowsToCloud(report);
     }
     const mergedReportIndex = mergedReports.map(reportMetadata);
-    const mergedScanLog = mergeArrayByKey(cloudData.scanLog, scanLog, x=>x.id);
+    scanLogTombstones = mergeScanLogTombstones(scanLogTombstones, cloudData.scanLogTombstones);
+    const deletedScanLogIds = new Set(Object.keys(scanLogTombstones));
+    const mergedScanLog = mergeArrayByKey(cloudData.scanLog, scanLog, x=>x.id, deletedScanLogIds);
     const mergedAuditLog = mergeArrayByKey(cloudData.auditLog, state.auditLog, x=>x.id || (x.action+'|'+x.detail+'|'+x.ts), deletedKeys.auditLog);
     const mergedA7Excels = mergeArrayByKey(cloudExcelData.a7Excels || cloudData.a7Excels, state.a7Excels, x=>x.id, deletedKeys.a7Excels);
     const mergedA4Excels = mergeArrayByKey(cloudExcelData.a4Excels || cloudData.a4Excels, state.a4Excels, x=>x.id, deletedKeys.a4Excels);
@@ -6876,7 +6898,8 @@ async function pushToCloud(force, suppressToast, options){
     const deleteLegacyField = firebase && firebase.firestore && firebase.firestore.FieldValue ? firebase.firestore.FieldValue.delete() : null;
     const sharedPayload = {
       stockDataUpdatedAt: stockCacheUpdatedAt || Date.now(),
-      scanLog: mergedScanLog, 
+      scanLog: mergedScanLog,
+      scanLogTombstones: scanLogTombstones,
       auditLog: mergedAuditLog, 
       appUsers: state.appUsers || {}, 
       userRoles: state.userRoles || {},
@@ -8368,7 +8391,6 @@ function saveScan(){
       history: [{ts: new Date().toISOString(), qty: addQty}],
       deviceId: state.deviceId, deviceName: state.deviceName||''
     });
-    if(scanLog.length>2000) scanLog = scanLog.slice(0,2000);
     state.lastAction = { type:'new', id: newId };
     // Optimistic: update UI immediately, sync in background
     state.matchedRow = null; state.scannedQty=1; state.duplicateWarning=null;
@@ -9070,6 +9092,7 @@ function fallbackCopy(text){
 
 async function clearLog(){
   if(!(await appConfirm('Clear the entire scan log? This cannot be undone.', 'Clear Scan Log'))) return;
+  scanLog.forEach(function(item){ if(item && item.id) markScanLogDeleted(item.id); });
   scanLog = [];
   await saveLog();
   updateHeaderSub();
@@ -9287,6 +9310,7 @@ async function fullHardReset(){
   // Clear all in-memory data
   stockOverrides = {};
   scanLog = [];
+  scanLogTombstones = {};
   customProducts = [];
   state.reports = [];
   state.auditLog = [];
@@ -9299,6 +9323,7 @@ async function fullHardReset(){
   // Clear all local storage
   localStorage.removeItem('stock-overrides-cache');
   localStorage.removeItem('scan-log-cache');
+  localStorage.removeItem('scan-log-tombstones-cache');
   localStorage.removeItem('custom-products-cache');
   localStorage.removeItem('audit-log-cache');
   localStorage.removeItem('app-reports');
@@ -9310,6 +9335,7 @@ async function fullHardReset(){
     try{ await syncBrandsStateToCloud(); }catch(e){ console.error('Brands reset cloud sync failed', e); }
     fbDocRef.set({
       scanLog: [],
+      scanLogTombstones: {},
       auditLog: [],
       reports: [],
       appUsers: state.appUsers || {},
@@ -9626,7 +9652,7 @@ function exportBackup(){
     version: 1,
     exportedAt: new Date().toISOString(),
     operatorName: state.operatorName||'',
-    stockOverrides, scanLog, customProducts, auditLog: state.auditLog || [], appUsers: state.appUsers || {}, userRoles: state.userRoles || {}, a7Excels: state.a7Excels || [], priceChangeNotifications: state.priceChangeNotifications || [], priceChangeNotificationTombstones: priceDeleteTombstones,
+    stockOverrides, scanLog, scanLogTombstones, customProducts, auditLog: state.auditLog || [], appUsers: state.appUsers || {}, userRoles: state.userRoles || {}, a7Excels: state.a7Excels || [], priceChangeNotifications: state.priceChangeNotifications || [], priceChangeNotificationTombstones: priceDeleteTombstones,
         a4Excels: state.a4Excels || [], a7Template: state.a7Template || null, a7TemplateVersion: A7_TEMPLATE_VERSION
   };
   try{
@@ -9662,7 +9688,9 @@ async function handleRestoreFile(fileInput){
       return;
     }
     stockOverrides = data.stockOverrides || {};
-    scanLog = data.scanLog || [];
+    scanLogTombstones = normalizeScanLogTombstones(data.scanLogTombstones || {});
+    scanLog = (data.scanLog || []).filter(function(item){ return item && !scanLogTombstones[String(item.id || '')]; });
+    try{ localStorage.setItem('scan-log-tombstones-cache', JSON.stringify(scanLogTombstones)); }catch(e){}
     customProducts = data.customProducts || [];
     state.auditLog = data.auditLog || state.auditLog || [];
     state.appUsers = data.appUsers || state.appUsers || { 'Asif': '949531', 'AJMAL': '6832', 'NIYAS': '1234', 'Das':'1234','Newton':'1234','Rao':'1234','Hussain':'1234','Abu':'1234','Ameer':'1234','Liptu':'1234','Ashmy':'1234','Habeeb':'1234','Mukeeth':'1234' };
@@ -9940,6 +9968,7 @@ async function handleImportExcel(fileInput){
 async function deleteLogEntry(id){
   if(!(await appConfirm('Delete this log entry?', 'Delete Log Entry'))) return;
   scanLog = scanLog.filter(l=>l.id!==id);
+  markScanLogDeleted(id);
   addAuditLog('Log Deleted', 'Deleted scan log entry ' + id);
   // Optimistic: update UI immediately, sync in background
   updateHeaderSub();
