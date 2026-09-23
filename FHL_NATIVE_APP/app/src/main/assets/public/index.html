@@ -8293,7 +8293,7 @@ function selectBarcodeSuggestion(barcode){
   lookupBarcode(barcode);
 }
 
-function submitManualScanInput(input){
+function submitManualScanInput(input, explicitSubmit){
   if(!input || state.tab !== 'scan') return false;
   const typed = normalizeScannedBarcode(input.value);
   if(!typed) return false;
@@ -8305,7 +8305,9 @@ function submitManualScanInput(input){
   // Android may emit change/IME events while the user is still entering a
   // barcode. Never turn a single digit (or any short numeric prefix) into a
   // lookup; only a complete UPC/EAN may be submitted automatically.
-  if(numericBarcode && !complete) return false;
+  // Short numeric values are normally ART CODEs. They may be suggested while
+  // typing, but must only be looked up after an explicit Enter/Go action.
+  if(numericBarcode && !complete && !explicitSubmit) return false;
   if(numericBarcode && typed.length > 13) return false;
   if(!complete && state.manualInput === typed && !state.showSuggestions && !state.matchedRow && !state.notFoundCode) return false;
   state.manualInput = '';
@@ -9074,6 +9076,21 @@ function copyTextToClipboard(text){
   } else {
     fallbackCopy(text);
   }
+}
+const longPressCopyTimers = new WeakMap();
+function beginIdentifierLongPress(target, value, event){
+  if(event && event.stopPropagation) event.stopPropagation();
+  const timer = setTimeout(function(){
+    longPressCopyTimers.delete(target);
+    if(event && event.preventDefault) event.preventDefault();
+    copyTextToClipboard(String(value || '').trim());
+    showToast('✓ Number copied');
+  }, 550);
+  longPressCopyTimers.set(target, timer);
+}
+function endIdentifierLongPress(target){
+  const timer = longPressCopyTimers.get(target);
+  if(timer){ clearTimeout(timer); longPressCopyTimers.delete(target); }
 }
 function fallbackCopy(text){
   try{
@@ -10344,6 +10361,7 @@ function renderScan(){
     if(isPromoter){
       html += '<div class="card">';
       html += '<div class="product-title">' + esc(r.Description) + '</div>';
+      html += '<div style="margin:10px 0 12px;padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(59,130,246,.07));border:1px solid rgba(96,165,250,.55);display:flex;align-items:center;justify-content:space-between;gap:10px;"><span style="font-size:13px;font-weight:700;color:var(--muted);">STOCK QTY</span><strong style="font-size:24px;line-height:1;color:var(--text);">' + fmtInt(qty) + '</strong></div>';
       const scanBarcodesP = r._mergedBarcodes && r._mergedBarcodes.length > 1 ? r._mergedBarcodes : (r.Barcode ? [r.Barcode] : []);
       html += '<div class="detail-grid">';
       if(scanBarcodesP.length > 1){
@@ -11340,11 +11358,14 @@ function renderProductCard(r, showBrandChip){
   html += '<div class="product-title" style="margin-bottom:4px;">' + esc(r.Description) + '</div>';
   html += '<div class="chip-row" style="margin-bottom:0;">';
   if(showBrandChip) html += '<span class="chip">' + esc(r.Brand || "OTHERS / UNBRANDED") + '</span>';
-  html += '<span class="chip">ART CODE ' + esc(r.Product) + '</span>';
+  const artCodeValue = String(r.Product || '').trim();
+  const artCodeJs = esc(artCodeValue).replace(/'/g,"\\'");
+  html += '<span class="chip chip-clickable" onpointerdown="beginIdentifierLongPress(this,\'' + artCodeJs + '\',event)" onpointerup="endIdentifierLongPress(this)" onpointercancel="endIdentifierLongPress(this)" onpointerleave="endIdentifierLongPress(this)" oncontextmenu="event.preventDefault();return false;" onclick="event.stopPropagation();copyTextToClipboard(\'' + artCodeJs + '\')">ART CODE ' + esc(artCodeValue) + '</span>';
   // Show all barcodes: primary + merged/extra barcodes
   const allBarcodes = r._mergedBarcodes && r._mergedBarcodes.length > 1 ? r._mergedBarcodes : (r.Barcode ? [r.Barcode] : []);
   allBarcodes.forEach(bc=>{
-    html += '<span class="chip chip-clickable" onclick="event.stopPropagation();openBarcodeModal(\'' + esc(bc).replace(/'/g,"\\'") + '\')">🔳 ' + esc(bc) + '</span>';
+    const barcodeJs = esc(String(bc || '')).replace(/'/g,"\\'");
+    html += '<span class="chip chip-clickable" onpointerdown="beginIdentifierLongPress(this,\'' + barcodeJs + '\',event)" onpointerup="endIdentifierLongPress(this)" onpointercancel="endIdentifierLongPress(this)" onpointerleave="endIdentifierLongPress(this)" oncontextmenu="event.preventDefault();return false;" onclick="event.stopPropagation();openBarcodeModal(\'' + barcodeJs + '\')">🔳 ' + esc(bc) + '</span>';
   });
   html += '<span class="chip-accent chip-clickable" onclick="event.stopPropagation();openStockMovementModal(\'' + esc(r.Barcode).replace(/'/g,"\\'") + '\', \'' + esc(r.Description).replace(/'/g,"\\'") + '\')"><span class="stock-indicator ' + getStockColorClass(qty) + '"></span>Stock Qty ' + fmtInt(qty) + '</span>';
   html += '</div></div>';
@@ -12568,14 +12589,14 @@ function wireEvents(){
         e.stopPropagation();
         if(state.tab === 'a7'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a7'); mi.value=''; return; }
         if(state.tab === 'a4'){ addCompactBarcode(mi.value.replace(/[^0-9]/g,''), 'a4'); mi.value=''; return; }
-        submitManualScanInput(mi);
+        submitManualScanInput(mi, true);
       }
     });
     mi.addEventListener('keyup', (e)=>{
       // Some Android keyboards report ordinary digit keyups as
       // "Unidentified". Never treat that as Go/Enter or a single digit such
       // as 0 will be submitted immediately.
-      if((e.key === 'Enter' || e.key === 'Go') && state.tab === 'scan') submitManualScanInput(mi);
+      if((e.key === 'Enter' || e.key === 'Go') && state.tab === 'scan') submitManualScanInput(mi, true);
     });
     mi.addEventListener('change', ()=>submitManualScanInput(mi));
     mi.addEventListener('blur', ()=>{
@@ -12607,7 +12628,7 @@ function wireEvents(){
         // Wait until all 13 EAN digits are present. Submitting at 12 digits
         // cleared the field before the user could finish typing a 13-digit
         // barcode.
-        submitManualScanInput(mi);
+        submitManualScanInput(mi, false);
         return;
       }
 
