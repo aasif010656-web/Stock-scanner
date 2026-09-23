@@ -10215,7 +10215,15 @@ function getDashboardAnalytics(){
   const authoritativeTotalQty = authoritativeAdminSnapshot ? Object.keys(stockOverrides).reduce(function(sum, key){ return sum + (Number(stockOverrides[key]) || 0); }, 0) : null;
   const totalQty = authoritativeTotalQty == null ? stockRows.reduce((sum,item) => sum + item.qty, 0) : authoritativeTotalQty;
   const valueFor = item => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return item.qty * unit; };
-  const stockValue = stockRows.reduce((sum,item) => sum + valueFor(item), 0);
+  const calculatedStockValue = stockRows.reduce((sum,item) => sum + valueFor(item), 0);
+  // The workbook's stock value is authoritative for the active Brands
+  // snapshot. Recomputing from legacy embedded WAC/price rows can omit valid
+  // imported barcodes and produced the reported 103,056.38 instead of the
+  // verified 23.09 value 108,416.761. Bind the metadata to the same snapshot
+  // timestamp so an older cached Excel value cannot override a newer snapshot.
+  const latestExcel = state.latestExcelUpdate || {};
+  const authoritativeStockValue = authoritativeAdminSnapshot && latestExcel.updatedValueTotal != null && String(latestExcel.ts || '') === String(brandsCloudState.updatedAt || '') ? Number(latestExcel.updatedValueTotal) : null;
+  const stockValue = authoritativeStockValue == null ? calculatedStockValue : authoritativeStockValue;
   const homeAppliancesValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'home').reduce((sum,item) => sum + valueFor(item), 0);
   const electronicsValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'electronics').reduce((sum,item) => sum + valueFor(item), 0);
   const brands = new Set(stockRows.map(item => String(item.row.Brand || '').trim()).filter(Boolean));
