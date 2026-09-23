@@ -8199,9 +8199,9 @@ function lookupBarcode(code){
   state.barcodeSuggestions = []; state.showSuggestions = false;
   // Use the same normalized variants for manual typing and hardware/camera
   // scans. This is important for UPC-A 12-digit input, which is indexed as
-  // EAN-13 with a leading zero. Promoters only receive their assigned party
-  // or brand products; staff/admin retain the full result set.
-  const matches = barcodeMatchesForScan(code).filter(stockSummaryRowVisible);
+  // EAN-13 with a leading zero. Promoters may view any product price; stock
+  // quantity is assignment-scoped in the result renderer below.
+  const matches = barcodeMatchesForScan(code);
   if(!matches || matches.length===0){
     state.notFoundCode = code; state.matchedRow=null; state.multiMatches=null; state.duplicateWarning=null;
     playErrorSound();
@@ -10362,7 +10362,7 @@ function renderScan(){
     if(isPromoter){
       html += '<div class="card">';
       html += '<div class="product-title">' + esc(r.Description) + '</div>';
-      html += '<div style="margin:10px 0 12px;padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(59,130,246,.07));border:1px solid rgba(96,165,250,.55);display:flex;align-items:center;justify-content:space-between;gap:10px;"><span style="font-size:13px;font-weight:700;color:var(--muted);">STOCK QTY</span><strong style="font-size:24px;line-height:1;color:var(--text);">' + fmtInt(qty) + '</strong></div>';
+      if(stockSummaryRowVisible(r)) html += '<div style="margin:10px 0 12px;padding:10px 14px;border-radius:12px;background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(59,130,246,.07));border:1px solid rgba(96,165,250,.55);display:flex;align-items:center;justify-content:space-between;gap:10px;"><span style="font-size:13px;font-weight:700;color:var(--muted);">STOCK QTY</span><strong style="font-size:24px;line-height:1;color:var(--text);">' + fmtInt(qty) + '</strong></div>';
       const scanBarcodesP = r._mergedBarcodes && r._mergedBarcodes.length > 1 ? r._mergedBarcodes : (r.Barcode ? [r.Barcode] : []);
       html += '<div class="detail-grid">';
       if(scanBarcodesP.length > 1){
