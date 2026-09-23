@@ -8199,8 +8199,9 @@ function lookupBarcode(code){
   state.barcodeSuggestions = []; state.showSuggestions = false;
   // Use the same normalized variants for manual typing and hardware/camera
   // scans. This is important for UPC-A 12-digit input, which is indexed as
-  // EAN-13 with a leading zero.
-  const matches = barcodeMatchesForScan(code);
+  // EAN-13 with a leading zero. Promoters only receive their assigned party
+  // or brand products; staff/admin retain the full result set.
+  const matches = barcodeMatchesForScan(code).filter(stockSummaryRowVisible);
   if(!matches || matches.length===0){
     state.notFoundCode = code; state.matchedRow=null; state.multiMatches=null; state.duplicateWarning=null;
     playErrorSound();
@@ -8309,7 +8310,7 @@ function submitManualScanInput(input, explicitSubmit){
   // typing, but must only be looked up after an explicit Enter/Go action.
   if(numericBarcode && !complete && !explicitSubmit) return false;
   if(numericBarcode && typed.length > 13) return false;
-  if(!complete && state.manualInput === typed && !state.showSuggestions && !state.matchedRow && !state.notFoundCode) return false;
+  if(!explicitSubmit && !complete && state.manualInput === typed && !state.showSuggestions && !state.matchedRow && !state.notFoundCode) return false;
   state.manualInput = '';
   state.barcodeSuggestions = []; state.showSuggestions = false;
   lookupBarcode(typed);
