@@ -6331,6 +6331,17 @@ function queueBrandsCloudBackfill(delay){
   }, Math.max(250, Number(delay) || 800));
 }
 
+// A Firestore request can remain pending indefinitely on some mobile networks.
+// Keep startup local-first and let the existing reconnect path retry the missed
+// read instead of holding the whole website in Connecting forever.
+function cloudReadWithTimeout(read, timeout){
+  const limit = Math.max(800, Number(timeout) || 2200);
+  return Promise.race([
+    Promise.resolve().then(read).catch(function(){ return null; }),
+    new Promise(function(resolve){ window.setTimeout(function(){ resolve(null); }, limit); })
+  ]);
+}
+
 async function loadStorage(){
   try{ const op = localStorage.getItem('operator-name'); if(op) state.operatorName = op; }catch(e){}
   
@@ -6389,12 +6400,12 @@ async function loadStorage(){
 
   try{
     const startupReads = await Promise.all([
-      fbDocRef.get().catch(()=>null),
-      fbExcelDocRef ? fbExcelDocRef.get().catch(()=>null) : Promise.resolve(null),
-      fbPdfDocRef ? fbPdfDocRef.get().catch(()=>null) : Promise.resolve(null),
-      fbReportDocRef ? fbReportDocRef.get().catch(()=>null) : Promise.resolve(null),
-      fbBrandsDocRef ? fbBrandsDocRef.get().catch(()=>null) : Promise.resolve(null),
-      fbStockMovementDocRef ? fbStockMovementDocRef.get().catch(()=>null) : Promise.resolve(null)
+      cloudReadWithTimeout(()=>fbDocRef.get(), 2200),
+      fbExcelDocRef ? cloudReadWithTimeout(()=>fbExcelDocRef.get(), 2200) : Promise.resolve(null),
+      fbPdfDocRef ? cloudReadWithTimeout(()=>fbPdfDocRef.get(), 2200) : Promise.resolve(null),
+      fbReportDocRef ? cloudReadWithTimeout(()=>fbReportDocRef.get(), 2200) : Promise.resolve(null),
+      fbBrandsDocRef ? cloudReadWithTimeout(()=>fbBrandsDocRef.get(), 2200) : Promise.resolve(null),
+      fbStockMovementDocRef ? cloudReadWithTimeout(()=>fbStockMovementDocRef.get(), 2200) : Promise.resolve(null)
     ]);
     const snap = startupReads[0], excelSnap = startupReads[1], pdfSnap = startupReads[2],
       reportSnap = startupReads[3], brandsSnap = startupReads[4], stockMovementSnap = startupReads[5];
@@ -6402,17 +6413,20 @@ async function loadStorage(){
     const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
     let remoteStockMovements = null;
+    let startupCloudIncomplete = false;
     // A stale local pending marker must not block a newer authoritative cloud
     // snapshot. The guarded server version is the source of truth after a
     // confirmed overwrite; load it first and clear the obsolete marker below.
     if(brandsRoot.activeVersion && (!hasBrandsCloudPending() || pendingBrandsIsSupersededBy(brandsRoot.activeVersion))){
-      try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
+      try{ remoteBrands = await cloudReadWithTimeout(()=>readBrandsStateFromCloud(brandsRoot), 2200); }
       catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
+      if(!remoteBrands) startupCloudIncomplete = true;
     }
     if(stockMovementRoot.activeVersion && !hasStockMovementCloudPending()){
       stockMovementCloudState.activeVersion = String(stockMovementRoot.activeVersion);
-      try{ remoteStockMovements = await readStockMovementStateFromCloud(stockMovementRoot); }
+      try{ remoteStockMovements = await cloudReadWithTimeout(()=>readStockMovementStateFromCloud(stockMovementRoot), 2200); }
       catch(e){ console.warn('Stock Movement cloud state could not be loaded yet; keeping the local cache', e); }
+      if(!remoteStockMovements) startupCloudIncomplete = true;
     }
     clearTimeout(loadingTimeout);
     if(snap.exists){
@@ -6495,7 +6509,7 @@ async function loadStorage(){
     // Keep cached workbook rows when the dedicated report document returns metadata only.
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
-    syncStatus = 'synced';
+    syncStatus = startupCloudIncomplete ? (navigator.onLine ? 'connecting' : 'offline') : 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
