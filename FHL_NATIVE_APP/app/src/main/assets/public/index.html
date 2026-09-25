@@ -6635,7 +6635,7 @@ async function loadStorage(){
       console.warn('Shared Firestore listener unavailable', listenerError);
       // A listener interruption is recoverable and does not prove that the
       // device is offline. Recheck the server without alarming the user.
-      syncStatus = navigator.onLine ? 'connecting' : 'offline';
+      if(syncStatus !== 'synced') syncStatus = navigator.onLine ? 'connecting' : 'offline';
       if(navigator.onLine) scheduleCloudVerification(5000);
       updateHeaderSub(); render();
     });
@@ -6988,14 +6988,15 @@ async function retryCloudConnection(options){
     return false;
   }
   if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
-    syncStatus = 'connecting';
+    if(syncStatus !== 'synced') syncStatus = 'connecting';
     updateHeaderSub(); render();
     scheduleCloudVerification(1200);
     if(!opts.silent) showToast('Cloud connection is still starting. Your local data is safe.');
     return false;
   }
   state._cloudRetryRunning = true;
-  syncStatus = 'connecting';
+  const wasCloudSynced = syncStatus === 'synced';
+  if(!wasCloudSynced) syncStatus = 'connecting';
   updateHeaderSub(); render();
   try{
     const db = firebase.firestore();
@@ -7028,7 +7029,7 @@ async function retryCloudConnection(options){
     return true;
   }catch(error){
     console.warn('Verified cloud reconnect failed', error);
-    syncStatus = navigator.onLine ? 'connecting' : 'offline';
+    if(!wasCloudSynced) syncStatus = navigator.onLine ? 'connecting' : 'offline';
     if(navigator.onLine) scheduleCloudVerification(2500);
     updateHeaderSub(); render();
     if(!opts.silent) showToast(navigator.onLine ? 'Cloud is checking again. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', !navigator.onLine);
