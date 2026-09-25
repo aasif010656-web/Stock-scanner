@@ -6372,7 +6372,8 @@ async function loadStorage(){
     return;
   }
 
-  // Force storageReady after 5 seconds no matter what to prevent stuck loading screen
+  // Local-first startup must not wait on a slow cloud read. The listener and
+  // reconnect path continue in the background after this short fast-start window.
   const loadingTimeout = setTimeout(() => {
     if(!storageReady){
       
@@ -6384,15 +6385,19 @@ async function loadStorage(){
       render();
       console.log("Firebase load timed out - keeping local data and marking cloud unavailable");
     }
-  }, 5000);
+  }, 2500);
 
   try{
-    const snap = await fbDocRef.get();
-    const excelSnap = fbExcelDocRef ? await fbExcelDocRef.get().catch(()=>null) : null;
-    const pdfSnap = fbPdfDocRef ? await fbPdfDocRef.get().catch(()=>null) : null;
-    const reportSnap = fbReportDocRef ? await fbReportDocRef.get().catch(()=>null) : null;
-    const brandsSnap = fbBrandsDocRef ? await fbBrandsDocRef.get().catch(()=>null) : null;
-    const stockMovementSnap = fbStockMovementDocRef ? await fbStockMovementDocRef.get().catch(()=>null) : null;
+    const startupReads = await Promise.all([
+      fbDocRef.get().catch(()=>null),
+      fbExcelDocRef ? fbExcelDocRef.get().catch(()=>null) : Promise.resolve(null),
+      fbPdfDocRef ? fbPdfDocRef.get().catch(()=>null) : Promise.resolve(null),
+      fbReportDocRef ? fbReportDocRef.get().catch(()=>null) : Promise.resolve(null),
+      fbBrandsDocRef ? fbBrandsDocRef.get().catch(()=>null) : Promise.resolve(null),
+      fbStockMovementDocRef ? fbStockMovementDocRef.get().catch(()=>null) : Promise.resolve(null)
+    ]);
+    const snap = startupReads[0], excelSnap = startupReads[1], pdfSnap = startupReads[2],
+      reportSnap = startupReads[3], brandsSnap = startupReads[4], stockMovementSnap = startupReads[5];
     const brandsRoot = brandsSnap && brandsSnap.exists ? (brandsSnap.data() || {}) : {};
     const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
@@ -6956,7 +6961,7 @@ function scheduleCloudVerification(delay){
   cloudRetryTimer = window.setTimeout(function(){
     cloudRetryTimer = null;
     retryCloudConnection({ silent:true });
-  }, Math.max(1000, Number(delay) || 8000));
+  }, Math.max(500, Number(delay) || 2500));
 }
 
 async function retryCloudConnection(options){
@@ -6971,7 +6976,7 @@ async function retryCloudConnection(options){
   if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
     syncStatus = 'connecting';
     updateHeaderSub(); render();
-    scheduleCloudVerification(2500);
+    scheduleCloudVerification(1200);
     if(!opts.silent) showToast('Cloud connection is still starting. Your local data is safe.');
     return false;
   }
@@ -6986,14 +6991,14 @@ async function retryCloudConnection(options){
     // must never keep the user on a stale local stock/price snapshot.
     await Promise.race([
       refreshCanonicalBrandsState(),
-      new Promise(function(resolve){ setTimeout(resolve, 10000); })
+      new Promise(function(resolve){ setTimeout(resolve, 2500); })
     ]);
     // The remaining shared-data replay is best-effort. A slow legacy payload
     // must not hold the UI in Connecting forever; its pending markers and the
     // scheduled retry preserve the data safely.
     const replayed = await Promise.race([
       pushToCloud(true, true, { preserveStatus:true }),
-      new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 10000); })
+      new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 2500); })
     ]);
     syncStatus = 'synced';
     queueReportCloudBackfill();
@@ -7001,7 +7006,7 @@ async function retryCloudConnection(options){
     queueStockMovementCloudBackfill();
     updateHeaderSub(); render();
     if(!replayed){
-      scheduleCloudVerification(10000);
+      scheduleCloudVerification(2500);
       if(!opts.silent) showToast('✓ Cloud connected. Pending data will retry automatically.');
       return true;
     }
@@ -7010,7 +7015,7 @@ async function retryCloudConnection(options){
   }catch(error){
     console.warn('Verified cloud reconnect failed', error);
     syncStatus = navigator.onLine ? 'connecting' : 'offline';
-    if(navigator.onLine) scheduleCloudVerification(8000);
+    if(navigator.onLine) scheduleCloudVerification(2500);
     updateHeaderSub(); render();
     if(!opts.silent) showToast(navigator.onLine ? 'Cloud is checking again. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', !navigator.onLine);
     return false;
@@ -7732,13 +7737,21 @@ function confirmClearLocalOverrides(){
 function openUpdatePrompt(message, url){
   state._pendingUpdateUrl = url || '';
   openActionModal(
-    '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">App Update Available</div>' +
-    '<div style="font-size:14px;line-height:1.5;margin-bottom:16px;">' + esc(message) + '</div>' +
+    '<div style="font-weight:800;font-size:18px;color:var(--text);margin-bottom:10px;">App Update Available</div>' +
+    '<div style="font-size:14px;line-height:1.5;color:var(--muted);margin-bottom:16px;">' + esc(message) + '</div>' +
+    '<div id="backgroundUpdateStatus" style="font-size:12px;color:var(--accent);background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:14px;">' + (canUseNativeUpdateFlow() ? 'Downloading securely in the background…' : 'The latest version is ready to download.') + '</div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
     '<button class="btn btn-ghost" onclick="closeActionModal()">Later</button>' +
-    '<button class="btn btn-accent" onclick="const url=state._pendingUpdateUrl; closeActionModal(); downloadAndInstallUpdate(url);">Update Now</button>' +
+    '<button class="btn btn-accent" onclick="const url=state._pendingUpdateUrl; closeActionModal(); downloadAndInstallUpdate(url);">' + (canUseNativeUpdateFlow() ? 'Install when ready' : 'Update Now') + '</button>' +
     '</div>'
   );
+}
+function startBackgroundUpdateDownload(){
+  if(!state.availableUpdate || !state.availableUpdate.url || state._updateDownloadStarted) return;
+  state._updateDownloadStarted = true;
+  downloadAvailableUpdate();
+  const status = document.getElementById('backgroundUpdateStatus');
+  if(status) status.innerText = 'Update download started. Install will be available when Android finishes downloading.';
 }
 function openPasswordModal(username){
   state._passwordEditUser = username;
@@ -9529,10 +9542,12 @@ async function checkForUpdates(isAuto){
         if(isAuto && !state._updateNotified){
           state._updateNotified = true;
           openUpdatePrompt(msg, latestUrl);
+          if(canUseNativeUpdateFlow()) window.setTimeout(startBackgroundUpdateDownload, 350);
 	        }
 	      } else {
-	        state.availableUpdate = null;
-	        state.updateInstallReady = false;
+        state.availableUpdate = null;
+        state.updateInstallReady = false;
+        state._updateDownloadStarted = false;
 	        if(state.tab === 'settings') render();
         if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
       }
@@ -13064,7 +13079,9 @@ function showStartupRecovery(error){
     initFirebase();
     render();
     await loadStorage();
-    // Website intentionally has no app-update UI; native Android retains its own update flow.
+    // Never block first paint on the release check. The update prompt/download
+    // starts in the background after the local-first screen is usable.
+    window.setTimeout(function(){ checkForUpdates(true).catch(function(){}); }, 900);
   }catch(error){
     showStartupRecovery(error);
   }
