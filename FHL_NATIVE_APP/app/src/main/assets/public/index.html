@@ -5615,6 +5615,9 @@ var brandsCloudState = (function(){
     return cached && cached.activeVersion ? { activeVersion:String(cached.activeVersion), updatedAt:Number(cached.updatedAt || 0), loaded:true } : { activeVersion:'', updatedAt:0, loaded:false };
   }catch(e){ return { activeVersion:'', updatedAt:0, loaded:false }; }
 })();
+// LocalStorage can contain an old activeVersion. It is useful for offline
+// rendering, but it must not qualify as cloud verification for this session.
+let brandsCloudVerifiedThisSession = false;
 // Monotonic token invalidates any asynchronous remote snapshot read that began
 // before a newer listener event or local publish. Without this, an old snapshot
 // can finish after an Excel import and restore pre-import stock/price values.
@@ -6492,6 +6495,7 @@ async function loadStorage(){
       clearBrandsCloudPending();
       applyBrandsState(remoteBrands);
       brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
+      brandsCloudVerifiedThisSession = true;
     } else if(!remoteBrands && !brandsRoot.activeVersion && hasBrandsPayload()){
       // Pre-Build 102 cached/legacy inventory stays visible while it is copied into
       // a durable chunked version. The old sharedData fields are not removed first.
@@ -6511,7 +6515,7 @@ async function loadStorage(){
     // Keep cached workbook rows when the dedicated report document returns metadata only.
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
-    syncStatus = startupCloudIncomplete ? (navigator.onLine ? 'connecting' : 'offline') : 'synced';
+    syncStatus = (startupCloudIncomplete || !brandsCloudVerifiedThisSession) ? (navigator.onLine ? 'connecting' : 'offline') : 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
@@ -6630,7 +6634,8 @@ async function loadStorage(){
       }
       */
       rebuildIndex();
-      syncStatus = 'synced';
+      if(brandsCloudVerifiedThisSession) syncStatus = 'synced';
+      else { syncStatus = navigator.onLine ? 'connecting' : 'offline'; if(navigator.onLine) scheduleCloudVerification(2500); }
       updateHeaderSub();
       render();
     }, (listenerError)=>{
@@ -6661,6 +6666,7 @@ async function loadStorage(){
         clearBrandsCloudPending();
         applyBrandsState(remoteBrands);
         brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
+        brandsCloudVerifiedThisSession = true;
         syncStatus = 'synced';
         updateHeaderSub();
         render();
@@ -7056,6 +7062,7 @@ async function refreshCanonicalBrandsState(){
     if(applyGeneration !== brandsRemoteApplyGeneration || hasBrandsCloudPending()) return false;
     applyBrandsState(remoteBrands);
     brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
+    brandsCloudVerifiedThisSession = true;
     syncStatus = 'synced';
     updateHeaderSub();
     render();
