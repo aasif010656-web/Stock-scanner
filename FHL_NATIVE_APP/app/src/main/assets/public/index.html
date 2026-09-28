@@ -6413,7 +6413,9 @@ async function loadStorage(){
     const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
     let remoteStockMovements = null;
-    let startupCloudIncomplete = false;
+    // If the authoritative Brands root itself timed out or is unavailable, the
+    // local cache may be stale. Never label that unverified cache as Synced.
+    let startupCloudIncomplete = !!(fbBrandsDocRef && (!brandsSnap || !brandsSnap.exists || !brandsRoot.activeVersion));
     // A stale local pending marker must not block a newer authoritative cloud
     // snapshot. The guarded server version is the source of truth after a
     // confirmed overwrite; load it first and clear the obsolete marker below.
