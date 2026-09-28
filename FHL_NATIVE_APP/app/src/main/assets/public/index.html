@@ -5217,8 +5217,8 @@ function parseData(raw){
 }
 function fmtMoney(v){ const n=parseFloat(v); if(isNaN(n)) return "0.00"; return n.toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtInt(v){ const n=parseFloat(v); if(isNaN(n)) return v; return Math.round(n).toLocaleString("en-IN"); }
-// Display-only business date adjustment: stored timestamps remain unchanged.
-function displayDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; d.setDate(d.getDate() - 1); return d.toLocaleString(undefined, options); }
+// Display timestamps in the user's local timezone without shifting the stored day.
+function displayDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined, options); }
 function displayDate(value, options){ return displayDateTime(value, options); }
 function originalDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined, options); }
 function getStockColorClass(qty){
@@ -7237,7 +7237,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '109';
+const APP_BUILD = '158';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -10308,7 +10308,10 @@ function getDashboardAnalytics(){
   // verified 23.09 value 108,416.761. Bind the metadata to the same snapshot
   // timestamp so an older cached Excel value cannot override a newer snapshot.
   const latestExcel = state.latestExcelUpdate || {};
-  const authoritativeStockValue = authoritativeAdminSnapshot && latestExcel.updatedValueTotal != null && String(latestExcel.ts || '') === String(brandsCloudState.updatedAt || '') ? Number(latestExcel.updatedValueTotal) : null;
+  // Prefer the positive value from the guarded active Excel snapshot over any
+  // embedded workbook/local-cache calculation. This prevents an older browser
+  // from displaying stale values such as 111,752.33 after a newer import.
+  const authoritativeStockValue = authoritativeAdminSnapshot && Number.isFinite(Number(latestExcel.updatedValueTotal)) && Number(latestExcel.updatedValueTotal) >= 0 && String(latestExcel.ts || '') === String(brandsCloudState.updatedAt || '') ? Number(latestExcel.updatedValueTotal) : null;
   const stockValue = authoritativeStockValue == null ? calculatedStockValue : authoritativeStockValue;
   const homeAppliancesValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'home').reduce((sum,item) => sum + valueFor(item), 0);
   const electronicsValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'electronics').reduce((sum,item) => sum + valueFor(item), 0);
