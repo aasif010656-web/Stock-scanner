@@ -5601,6 +5601,12 @@ let syncStatus = 'connecting'; // connecting | synced | offline | error (legacy 
 let cloudRetryTimer = null;
 let brandsCloudBackfillTimer = null;
 let stockMovementCloudBackfillTimer = null;
+// Android WebView can throw Firestore INTERNAL ASSERTION FAILED when several
+// reconnect/import/listener paths call enableNetwork and version writes at the
+// same time. Keep Firestore mutations serialized and reuse one network wake-up.
+let firestoreOperationTail = Promise.resolve();
+let firestoreNetworkReady = false;
+let firestoreNetworkPromise = null;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
@@ -5738,6 +5744,25 @@ function ensureFirebaseReady(){
   if(fbReady && fbDocRef && fbReportDocRef && fbReportRowsRef) return true;
   initFirebase();
   return !!(fbReady && fbDocRef && fbReportDocRef && fbReportRowsRef);
+}
+function runFirestoreSerialized(operation){
+  const run = firestoreOperationTail.then(operation, operation);
+  firestoreOperationTail = run.catch(function(){ return undefined; });
+  return run;
+}
+function ensureFirestoreNetwork(){
+  if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
+  if(firestoreNetworkReady) return Promise.resolve(true);
+  if(firestoreNetworkPromise) return firestoreNetworkPromise;
+  const db = firebase.firestore();
+  firestoreNetworkPromise = (typeof db.enableNetwork === 'function' ? db.enableNetwork() : Promise.resolve()).then(function(){
+    firestoreNetworkReady = true;
+    return true;
+  }).catch(function(error){
+    firestoreNetworkReady = false;
+    throw error;
+  }).finally(function(){ firestoreNetworkPromise = null; });
+  return firestoreNetworkPromise;
 }
 
 let lastClientErrorReportAt = 0;
@@ -6258,7 +6283,7 @@ async function syncUserManagementToCloud(){
   }
 }
 
-async function syncBrandsStateToCloud(){
+async function syncBrandsStateToCloudUnlocked(){
   // Cancel any in-flight listener/refresh read before publishing local edits.
   ++brandsRemoteApplyGeneration;
   persistBrandsLocalState();
@@ -6362,6 +6387,9 @@ async function syncBrandsStateToCloud(){
   cleanupPreviousBrandsVersion(previousRoot, versionId);
   return true;
 }
+function syncBrandsStateToCloud(){
+  return runFirestoreSerialized(function(){ return syncBrandsStateToCloudUnlocked(); });
+}
 function queueBrandsCloudBackfill(delay){
   if(brandsCloudBackfillTimer || !hasBrandsCloudPending() || !navigator.onLine || !storageReady || !state.user) return;
   brandsCloudBackfillTimer = window.setTimeout(function(){
@@ -6374,7 +6402,7 @@ function queueBrandsCloudBackfill(delay){
     (async function(){
       let saved = false;
       try{
-        if(firebase && firebase.firestore && typeof firebase.firestore().enableNetwork === 'function') await firebase.firestore().enableNetwork();
+        await ensureFirestoreNetwork();
         saved = await syncBrandsStateToCloud();
         if(saved) clearBrandsCloudSyncError();
       }catch(error){
@@ -7075,22 +7103,18 @@ async function retryCloudConnection(options){
   if(!wasCloudSynced) syncStatus = 'connecting';
   updateHeaderSub(); render();
   try{
-    const db = firebase.firestore();
-    if(typeof db.enableNetwork === 'function') await db.enableNetwork();
+    await ensureFirestoreNetwork();
     // Brands is the authoritative inventory source. Apply it before the broad
     // shared-data replay; the latter may contain legacy reports/movements and
     // must never keep the user on a stale local stock/price snapshot.
-    await Promise.race([
-      refreshCanonicalBrandsState(),
-      new Promise(function(resolve){ setTimeout(resolve, 2500); })
-    ]);
+    // Do not race these Firestore promises against a timeout: the losing
+    // promise would keep running and the next retry could overlap it, which
+    // wedges Firebase WebView clients in Connecting/INTERNAL ASSERTION state.
+    await refreshCanonicalBrandsState();
     // The remaining shared-data replay is best-effort. A slow legacy payload
     // must not hold the UI in Connecting forever; its pending markers and the
     // scheduled retry preserve the data safely.
-    const replayed = await Promise.race([
-      pushToCloud(true, true, { preserveStatus:true }),
-      new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 2500); })
-    ]);
+    const replayed = await pushToCloud(true, true, { preserveStatus:true });
     const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
     syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
     queueReportCloudBackfill();
@@ -7164,9 +7188,7 @@ async function saveBrandsState(reason){
   // root verification before reporting completion.
   for(let attempt = 0; attempt < 3 && !brandsSaved; attempt++){
     try{
-      if(firebase && firebase.firestore && typeof firebase.firestore().enableNetwork === 'function'){
-        await firebase.firestore().enableNetwork();
-      }
+      await ensureFirestoreNetwork();
       brandsSaved = await syncBrandsStateToCloud();
       if(!brandsSaved) throw new Error('Brands publisher is not ready');
     }catch(error){
@@ -7306,7 +7328,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '161';
+const APP_BUILD = '162';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
