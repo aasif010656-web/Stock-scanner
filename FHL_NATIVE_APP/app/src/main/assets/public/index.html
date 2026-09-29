@@ -6807,7 +6807,8 @@ async function deletePriceNotificationsFromCloud(ids){
   rememberDeletedPriceNotifications(uniqueIds, committedTombstones);
   state.priceChangeNotifications = committedAlerts;
   try{ localStorage.setItem('price-notifs-cache', JSON.stringify(state.priceChangeNotifications)); }catch(e){}
-  syncStatus = 'synced';
+  const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
+  syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
   updateHeaderSub();
   render();
   return true;
@@ -7025,7 +7026,11 @@ async function pushToCloud(force, suppressToast, options){
     await fbDocRef.set(sharedPayload, { merge: true });
     clearUserManagementCloudPending();
     clearBrandsCloudSyncError();
-    syncStatus = 'synced';
+    // A successful sharedData write alone is not proof that the authoritative
+    // Brands snapshot or an imported Excel report reached Firestore. Do not
+    // show a fake Synced state while any authoritative/payload queue remains.
+    const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
+    syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
     checkForceLogout();
     render();
     return true;
@@ -7058,7 +7063,7 @@ async function retryCloudConnection(options){
     if(!opts.silent) showToast('No internet connection yet. Your local data is safe.', true);
     return false;
   }
-  if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
+  if(!ensureFirebaseReady() || !fbDocRef || !firebase || !firebase.firestore){
     if(syncStatus !== 'synced') syncStatus = 'connecting';
     updateHeaderSub(); render();
     scheduleCloudVerification(1200);
@@ -7086,12 +7091,13 @@ async function retryCloudConnection(options){
       pushToCloud(true, true, { preserveStatus:true }),
       new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 2500); })
     ]);
-    syncStatus = 'synced';
+    const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
+    syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
     updateHeaderSub(); render();
-    if(!replayed){
+    if(!replayed || !cloudFullyVerified){
       scheduleCloudVerification(2500);
       if(!opts.silent) showToast('✓ Cloud connected. Pending data will retry automatically.');
       return true;
@@ -7300,7 +7306,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '160';
+const APP_BUILD = '161';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -9607,14 +9613,23 @@ async function checkForUpdates(isAuto){
   const currentVersion = APP_VERSION;
   if(status) status.innerText = "Checking for updates...";
   
-  if(!fbReady){
-    if(status) status.innerText = "Connect to internet to check for updates.";
+  if(!ensureFirebaseReady()){
+    if(status) status.innerText = "Firebase connection is not ready. Tap Retry Connection and try again.";
     return;
   }
 
   try {
-    // We'll store update info in a special collection or a fixed document in Firestore
-    const updateDoc = await firebase.firestore().collection('appSettings').doc('updateInfo').get();
+    if(!navigator.onLine){
+      if(status) status.innerText = "Device is offline. Connect to internet and try again.";
+      return;
+    }
+    // Update metadata must come from the server, never an offline Firestore
+    // cache. A bounded timeout also prevents the button from appearing broken
+    // when Android WebView has a stalled network handshake.
+    const updateDoc = await Promise.race([
+      firebase.firestore().collection('appSettings').doc('updateInfo').get({source:'server'}),
+      new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('Firestore update check timed out')); }, 8000); })
+    ]);
     if(updateDoc.exists){
       const data = updateDoc.data();
 	      const latestUrl = resolveLatestUpdateUrl(data);
@@ -9642,7 +9657,8 @@ async function checkForUpdates(isAuto){
       if(status) status.innerText = "No update information found.";
     }
   } catch(e) {
-    if(status) status.innerText = "Error checking for updates.";
+    const detail = String(e && (e.message || e.code) || 'unknown error').slice(0, 140);
+    if(status) status.innerText = "Update check failed: " + detail;
   }
 }
 
