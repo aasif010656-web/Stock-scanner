@@ -5831,6 +5831,14 @@ async function saveReportRowsToCloud(report){
   for(let index=0; index<chunkCount; index++) writes.push(reportDoc.collection('chunks').doc(String(index)).set({rows:rows.slice(index * chunkSize, (index + 1) * chunkSize)}));
   try{
     await Promise.all(writes);
+    // A resolved client write is not enough on mobile WebViews: verify the
+    // report metadata and every chunk from the server before advertising that
+    // the workbook is available to other devices.
+    const verifiedMeta = await reportDoc.get({source:'server'});
+    const verifiedChunkCount = Number(verifiedMeta.exists && verifiedMeta.data() && verifiedMeta.data().chunkCount) || 0;
+    if(!verifiedMeta.exists || verifiedChunkCount !== chunkCount) throw new Error('Excel report metadata verification failed');
+    const verifiedChunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return reportDoc.collection('chunks').doc(String(index)).get({source:'server'}); }));
+    if(verifiedChunks.some(function(chunk){ return !chunk.exists; })) throw new Error('Excel report chunk verification failed');
     report.payloadStored = true;
     report.cloudSyncPending = false;
     report.chunkCount = chunkCount;
@@ -5857,6 +5865,16 @@ async function loadReportRowsFromCloud(report){
   cacheReportRowsLocal(report);
   try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(e){}
   return true;
+}
+async function publishReportIndexToCloud(){
+  if(!fbReportDocRef) throw new Error('Excel report cloud index is unavailable');
+  const index = (state.reports || []).map(reportMetadata);
+  await fbReportDocRef.set({reports:index, updatedAt:Date.now()},{merge:true});
+  const verified = await fbReportDocRef.get({source:'server'});
+  const remoteReports = verified.exists && Array.isArray((verified.data() || {}).reports) ? (verified.data() || {}).reports : [];
+  const localIds = new Set(index.map(reportCloudId));
+  if(!index.every(function(item){ return remoteReports.some(function(remote){ return reportCloudId(remote) === reportCloudId(item) && !!remote.payloadStored; }); })) throw new Error('Excel report index verification failed');
+  return localIds.size;
 }
 async function ensureReportRowsAvailable(report){
   if(!report) return false;
@@ -5904,10 +5922,18 @@ async function syncReportPayloadsToCloud(options){
     try{ await saveReportRowsToCloud(report); }
     catch(error){ failed++; }
   }
+  if(!failed){ try{ await publishReportIndexToCloud(); }catch(error){ failed++; } }
   try{ await pushToCloud(true, true); }catch(error){ failed = Math.max(1, failed); }
   state.reportCloudMigrationRunning = false;
   cacheReportIndexLocal();
   render();
+  if(failed){
+    const attempts = Number(state._reportCloudRetryCount || 0) + 1;
+    state._reportCloudRetryCount = attempts;
+    window.setTimeout(function(){ queueReportCloudBackfill(); }, Math.min(60000, Math.max(2500, 1000 * Math.pow(2, Math.min(attempts, 6)))));
+  }else{
+    state._reportCloudRetryCount = 0;
+  }
   if(!opts.silent) showToast(failed ? 'Some Excel reports are waiting to retry cloud sync.' : '✓ Excel reports synced to cloud.');
   return failed === 0;
 }
@@ -6330,7 +6356,34 @@ function queueBrandsCloudBackfill(delay){
   if(brandsCloudBackfillTimer || !hasBrandsCloudPending() || !navigator.onLine || !storageReady || !state.user) return;
   brandsCloudBackfillTimer = window.setTimeout(function(){
     brandsCloudBackfillTimer = null;
-    pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
+    // Retry the authoritative Brands publish directly. The previous callback
+    // called pushToCloud(), whose internal catch converted a failed publish to
+    // false and swallowed the rejection, so no next retry was scheduled and an
+    // Excel import could remain local-only indefinitely after one transient
+    // WebView/Firestore failure.
+    (async function(){
+      let saved = false;
+      try{
+        if(firebase && firebase.firestore && typeof firebase.firestore().enableNetwork === 'function') await firebase.firestore().enableNetwork();
+        saved = await syncBrandsStateToCloud();
+        if(saved) clearBrandsCloudSyncError();
+      }catch(error){
+        rememberBrandsCloudSyncError(error, 'brands-backfill');
+      }
+      if(saved){
+        // Shared metadata is best effort; the chunked Brands snapshot is the
+        // success condition for inventory/price Excel synchronization.
+        pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
+      }else if(hasBrandsCloudPending() && navigator.onLine){
+        const attempts = Number((brandsCloudPending && brandsCloudPending.retryCount) || 0) + 1;
+        if(brandsCloudPending) brandsCloudPending.retryCount = attempts;
+        persistBrandsCloudPending();
+        queueBrandsCloudBackfill(Math.min(60000, Math.max(2500, 1000 * Math.pow(2, Math.min(attempts, 6)))));
+      }
+    })().catch(function(error){
+      rememberBrandsCloudSyncError(error, 'brands-backfill-unhandled');
+      if(hasBrandsCloudPending() && navigator.onLine) queueBrandsCloudBackfill(10000);
+    });
   }, Math.max(250, Number(delay) || 800));
 }
 
@@ -7237,7 +7290,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '158';
+const APP_BUILD = '159';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -12401,7 +12454,17 @@ async function handleImportData(fileInput){
         importedLocally = true;
         render();
         try{
-            const cloudSyncCompleted = await pushToCloud(true, true, { preserveStatus: true });
+            // Publish the report payload and its compact index independently
+            // first. This avoids losing a valid Excel upload merely because a
+            // separate sharedData/report/notification write is slow or large.
+            let reportCloudSyncCompleted = false;
+            if(fbReady && fbReportRowsRef && fbReportDocRef){
+                await saveReportRowsToCloud(reportObj);
+                await publishReportIndexToCloud();
+                reportCloudSyncCompleted = reportObj.payloadStored === true;
+            }
+            const broadCloudSyncCompleted = await pushToCloud(true, true, { preserveStatus: true });
+            const cloudSyncCompleted = reportCloudSyncCompleted || (broadCloudSyncCompleted === true && reportObj.payloadStored === true);
             if(cloudSyncCompleted === true && reportObj.payloadStored === true){
                 reportObj.cloudSyncPending = false;
                 cacheReportIndexLocal();
