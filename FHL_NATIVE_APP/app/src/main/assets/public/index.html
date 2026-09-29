@@ -5710,7 +5710,11 @@ function offlineStockLabel(){
 
 function initFirebase(){
   try{
-    firebase.initializeApp(firebaseConfig);
+    if(!firebase || !firebase.firestore) throw new Error('Firebase SDK is unavailable');
+    // Android WebView reloads can retain an initialized Firebase app. Calling
+    // initializeApp() again used to throw "already exists", leave fbReady=false,
+    // and make every Excel import local-only until the app was fully restarted.
+    if(!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
     fbDocRef = db.collection('stockScannerApp').doc('sharedData');
     fbExcelDocRef = db.collection('stockScannerApp').doc('excelData');
@@ -5727,7 +5731,13 @@ function initFirebase(){
   }catch(e){
     fbReady = false;
     syncStatus = 'error';
+    console.warn('Firebase initialization unavailable', e);
   }
+}
+function ensureFirebaseReady(){
+  if(fbReady && fbDocRef && fbReportDocRef && fbReportRowsRef) return true;
+  initFirebase();
+  return !!(fbReady && fbDocRef && fbReportDocRef && fbReportRowsRef);
 }
 
 let lastClientErrorReportAt = 0;
@@ -7290,7 +7300,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '159';
+const APP_BUILD = '160';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -9883,6 +9893,7 @@ function pick(row, keys){
 async function handleImportExcel(fileInput){
   if(state.user && state.user.role === 'promoter'){ showToast('Not available for this account', true); if(fileInput) fileInput.value=''; return; }
   if(state.importProgress && state.importProgress.active){ showToast('Brands Excel import is already running'); if(fileInput) fileInput.value=''; return; }
+  ensureFirebaseReady();
   const file = fileInput.files && fileInput.files[0];
   if(!file) return;
   try{
@@ -12395,6 +12406,7 @@ function renderReportExcelTable(idx) {
 function triggerImportData(){ document.getElementById('importDataInput').click(); }
 
 async function handleImportData(fileInput){
+    ensureFirebaseReady();
     const file = fileInput.files[0];
     if(!file) return;
     render();
@@ -12475,6 +12487,7 @@ async function handleImportData(fileInput){
                 reportObj.cloudSyncPending = true;
                 cacheReportRowsLocal(reportObj);
                 cacheReportIndexLocal();
+                queueReportCloudBackfill();
                 render();
                 showToast('✓ Excel saved locally. Cloud sync will retry when online.');
             }
@@ -12483,12 +12496,17 @@ async function handleImportData(fileInput){
             reportObj.cloudSyncPending = true;
             cacheReportRowsLocal(reportObj);
             cacheReportIndexLocal();
+            queueReportCloudBackfill();
             console.error('Excel cloud sync pending', cloudError);
-            showToast('✓ Excel saved locally. Cloud sync will retry when online.');
+            const cloudDetail = String(cloudError && (cloudError.message || cloudError.code) || 'connection unavailable').slice(0, 120);
+            showToast('✓ Excel saved locally. Cloud sync queued: ' + cloudDetail, true);
         }
     } catch(e) {
         console.error('Excel import sync error', e);
-        showToast(importedLocally ? '✓ Excel imported on this device. Cloud sync will retry when online.' : 'Import failed: ' + e.message, !importedLocally);
+        if(importedLocally){
+            queueReportCloudBackfill();
+            showToast('✓ Excel imported on this device. Cloud sync queued: ' + String(e && e.message || 'connection unavailable').slice(0, 120), true);
+        }else showToast('Import failed: ' + e.message, true);
     }
     fileInput.value = '';
 }
