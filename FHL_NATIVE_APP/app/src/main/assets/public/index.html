@@ -5607,6 +5607,7 @@ let stockMovementCloudBackfillTimer = null;
 let firestoreOperationTail = Promise.resolve();
 let firestoreNetworkReady = false;
 let firestoreNetworkPromise = null;
+let firestoreNetworkReadyAt = 0;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
@@ -5752,14 +5753,19 @@ function runFirestoreSerialized(operation){
 }
 function ensureFirestoreNetwork(){
   if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
-  if(firestoreNetworkReady) return Promise.resolve(true);
+  // A WebView can keep the SDK marked ready after its underlying socket has
+  // gone stale. Re-wake the network periodically instead of trusting a flag
+  // forever; this matters when the phone changes Wi-Fi/5G.
+  if(firestoreNetworkReady && Date.now() - firestoreNetworkReadyAt < 15000) return Promise.resolve(true);
   if(firestoreNetworkPromise) return firestoreNetworkPromise;
   const db = firebase.firestore();
   firestoreNetworkPromise = (typeof db.enableNetwork === 'function' ? db.enableNetwork() : Promise.resolve()).then(function(){
     firestoreNetworkReady = true;
+    firestoreNetworkReadyAt = Date.now();
     return true;
   }).catch(function(error){
     firestoreNetworkReady = false;
+    firestoreNetworkReadyAt = 0;
     throw error;
   }).finally(function(){ firestoreNetworkPromise = null; });
   return firestoreNetworkPromise;
@@ -7166,12 +7172,22 @@ async function refreshCanonicalBrandsState(){
   }
 }
 window.addEventListener('online', function(){
+  firestoreNetworkReady = false;
+  firestoreNetworkReadyAt = 0;
   if(storageReady && state.user) window.setTimeout(function(){
     retryCloudConnection({ silent:true }).then(function(){ return refreshCanonicalBrandsState(); });
   }, 300);
 });
+window.addEventListener('offline', function(){
+  firestoreNetworkReady = false;
+  firestoreNetworkReadyAt = 0;
+});
 document.addEventListener('visibilitychange', function(){
-  if(!document.hidden && storageReady && state.user) window.setTimeout(refreshCanonicalBrandsState, 300);
+  if(!document.hidden && storageReady && state.user){
+    firestoreNetworkReady = false;
+    firestoreNetworkReadyAt = 0;
+    window.setTimeout(function(){ retryCloudConnection({ silent:true }); }, 300);
+  }
 });
 
 async function saveBrandsState(reason){
@@ -7328,7 +7344,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '162';
+const APP_BUILD = '163';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
