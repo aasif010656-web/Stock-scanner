@@ -7344,7 +7344,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '163';
+const APP_BUILD = '164';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -10658,6 +10658,18 @@ function barcodeMatchesForScan(value){
     const matches = BARCODE_INDEX.get(key);
     if(matches && matches.length) return matches;
   }
+  // Offline cache recovery: the suggestion list searches the row collection,
+  // while an older cache can have a stale BARCODE_INDEX after Brands overrides
+  // are applied. Scan the same rows as a final exact-match fallback so a
+  // product shown as a suggestion can never be rejected as "not found".
+  const wanted = new Set(variants.filter(Boolean).map(function(key){ return cleanBC(key); }));
+  const fallback = getAllRows().filter(function(row){
+    return [row && row.Barcode].concat((row && row._extraBarcodes) || []).some(function(raw){
+      const normalized = normalizeBarcode13(raw);
+      return wanted.has(cleanBC(normalized)) || wanted.has(cleanBC(raw));
+    });
+  });
+  if(fallback.length) return fallback;
   return [];
 }
 
