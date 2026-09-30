@@ -25,11 +25,16 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android platform and build tools
-        run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Prepare isolated administrator-only source
         env:
