@@ -5823,6 +5823,25 @@ function sanitizeClientError(value){
     .replace(/(password|token|secret|apiKey)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
     .slice(0, 500);
 }
+function isFirestoreInternalAssertion(error){
+  const text = sanitizeClientError(error);
+  return /FIRESTORE\s*\(10\.12\.2\).*INTERNAL ASSERTION|Unexpected state/i.test(text);
+}
+function scheduleFirestoreHardRecovery(error){
+  if(!isFirestoreInternalAssertion(error)) return false;
+  try{
+    const key = 'firestore-internal-recovery-v1';
+    const previous = Number(sessionStorage.getItem(key) || 0);
+    // One reload is enough to discard the corrupted Firestore client. Do not
+    // create an infinite reload loop if the network/provider remains broken.
+    if(previous && Date.now() - previous < 120000) return true;
+    sessionStorage.setItem(key, String(Date.now()));
+  }catch(e){}
+  syncStatus = 'connecting';
+  try{ updateHeaderSub(); render(); }catch(e){}
+  window.setTimeout(function(){ window.location.reload(); }, 250);
+  return true;
+}
 function reportClientError(error, context){
   const now = Date.now();
   if(now - lastClientErrorReportAt < 15000 || !fbReady || !fbClientErrorsRef) return;
@@ -5842,8 +5861,14 @@ function reportClientError(error, context){
     fbClientErrorsRef.doc(String(now) + '-' + Math.random().toString(36).slice(2,8)).set(payload).catch(function(){});
   }catch(e){}
 }
-window.addEventListener('error', function(event){ reportClientError(event.error || event.message, 'window-error'); });
-window.addEventListener('unhandledrejection', function(event){ reportClientError(event.reason, 'unhandled-rejection'); });
+window.addEventListener('error', function(event){
+  if(scheduleFirestoreHardRecovery(event.error || event.message)) return;
+  reportClientError(event.error || event.message, 'window-error');
+});
+window.addEventListener('unhandledrejection', function(event){
+  if(scheduleFirestoreHardRecovery(event.reason)) return;
+  reportClientError(event.reason, 'unhandled-rejection');
+});
 
 function reportCloudId(report){
   return String((report && (report.id || report.name)) || '').trim().replace(/[^a-z0-9_-]+/gi, '_').slice(0,120);
@@ -7268,6 +7293,7 @@ async function saveBrandsState(reason){
       lastBrandsError = error;
       rememberBrandsCloudSyncError(error, 'brands-version-attempt-' + (attempt + 1));
       brandsSaved = false;
+      if(scheduleFirestoreHardRecovery(error)) break;
       if(attempt < 2) await new Promise(function(resolve){ setTimeout(resolve, 500 * (attempt + 1)); });
     }
   }
@@ -7401,7 +7427,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '167';
+const APP_BUILD = '168';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
