@@ -7427,7 +7427,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '168';
+const APP_BUILD = '169';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -10047,6 +10047,15 @@ async function handleLocalUpdate(fileInput){
 function pick(row, keys){
   for(const k of keys){
     if(row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') return String(row[k]).trim();
+  }
+  // Excel producers commonly change header casing/spacing (for example
+  // `STOCK QTY`, `Stock Qty`, or `stock qty`). Resolve the same logical field
+  // case-insensitively so uppercase workbooks cannot silently become price-only
+  // imports with zero stock updates.
+  const normalizeHeader = value => String(value || '').toLowerCase().replace(/[\s_]+/g, ' ').trim();
+  const wanted = new Set(keys.map(normalizeHeader));
+  for(const actual of Object.keys(row || {})){
+    if(wanted.has(normalizeHeader(actual)) && row[actual] !== undefined && row[actual] !== null && String(row[actual]).trim() !== '') return String(row[actual]).trim();
   }
   return '';
 }
