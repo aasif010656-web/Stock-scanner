@@ -5615,6 +5615,8 @@ let firestoreSettingsApplied = false;
 let firestorePendingReads = 0;
 let firestoreReadDrainPromise = Promise.resolve();
 let firestoreReadDrainResolve = null;
+let firestorePendingReadsSince = 0;
+let firestoreTransportResetPromise = null;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
@@ -5769,10 +5771,18 @@ function runFirestoreSerialized(operation){
 function ensureFirestoreNetwork(){
   if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
   if(firestorePendingReads > 0){
-    // Do not disable/enable the transport underneath an in-flight startup RPC.
-    // The drain promise resolves when the real Firestore request settles, even
-    // if the UI timeout has already returned local data to the user.
-    return firestoreReadDrainPromise.then(function(){ return ensureFirestoreNetwork(); });
+    // A mobile RPC can remain pending forever after its socket dies. Waiting
+    // for the drain in that case deadlocks reconnect permanently. Give healthy
+    // reads a short chance to finish; otherwise reset the Firestore transport
+    // so the SDK rejects the orphaned RPCs and opens a fresh connection.
+    const age = firestorePendingReadsSince ? Date.now() - firestorePendingReadsSince : 0;
+    if(age < 4500){
+      return Promise.race([
+        firestoreReadDrainPromise,
+        new Promise(function(resolve){ window.setTimeout(resolve, 1500); })
+      ]).then(function(){ return firestorePendingReads > 0 ? resetFirestoreTransport() : true; });
+    }
+    return resetFirestoreTransport();
   }
   // A WebView can keep the SDK marked ready after its underlying socket has
   // gone stale. Re-wake the network periodically instead of trusting a flag
@@ -5790,6 +5800,18 @@ function ensureFirestoreNetwork(){
     throw error;
   }).finally(function(){ firestoreNetworkPromise = null; });
   return firestoreNetworkPromise;
+}
+function resetFirestoreTransport(){
+  if(firestoreTransportResetPromise) return firestoreTransportResetPromise;
+  if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
+  const db = firebase.firestore();
+  firestoreTransportResetPromise = Promise.resolve()
+    .then(function(){ return typeof db.disableNetwork === 'function' ? db.disableNetwork() : true; })
+    .catch(function(){ return true; })
+    .then(function(){ firestoreNetworkReady = false; firestoreNetworkReadyAt = 0; return typeof db.enableNetwork === 'function' ? db.enableNetwork() : true; })
+    .then(function(){ firestoreNetworkReady = true; firestoreNetworkReadyAt = Date.now(); return true; })
+    .finally(function(){ firestoreTransportResetPromise = null; });
+  return firestoreTransportResetPromise;
 }
 
 let lastClientErrorReportAt = 0;
@@ -6459,11 +6481,13 @@ function cloudReadWithTimeout(read, timeout){
   const limit = Math.max(800, Number(timeout) || 2200);
   firestorePendingReads += 1;
   if(firestorePendingReads === 1){
+    firestorePendingReadsSince = Date.now();
     firestoreReadDrainPromise = new Promise(function(resolve){ firestoreReadDrainResolve = resolve; });
   }
   const request = Promise.resolve().then(read).catch(function(){ return null; }).finally(function(){
     firestorePendingReads = Math.max(0, firestorePendingReads - 1);
     if(firestorePendingReads === 0 && firestoreReadDrainResolve){
+      firestorePendingReadsSince = 0;
       const resolve = firestoreReadDrainResolve;
       firestoreReadDrainResolve = null;
       resolve(true);
@@ -7377,7 +7401,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '166';
+const APP_BUILD = '167';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
