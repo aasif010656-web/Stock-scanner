@@ -5608,6 +5608,13 @@ let firestoreOperationTail = Promise.resolve();
 let firestoreNetworkReady = false;
 let firestoreNetworkPromise = null;
 let firestoreNetworkReadyAt = 0;
+let firestoreSettingsApplied = false;
+// Firestore get() cannot be cancelled. A Promise.race timeout only releases
+// the caller; the underlying RPC continues. Track those RPCs so reconnect does
+// not call enableNetwork() while startup reads are still using the transport.
+let firestorePendingReads = 0;
+let firestoreReadDrainPromise = Promise.resolve();
+let firestoreReadDrainResolve = null;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
@@ -5723,6 +5730,14 @@ function initFirebase(){
     // and make every Excel import local-only until the app was fully restarted.
     if(!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
+    // Android WebView/older Chromium can fail Firestore's streaming transport
+    // and leave every later request in Connecting. Long polling is supported by
+    // both the Web app and WebView and must be configured before any Firestore
+    // operation starts.
+    if(!firestoreSettingsApplied && typeof db.settings === 'function'){
+      db.settings({ experimentalForceLongPolling:true, useFetchStreams:false });
+      firestoreSettingsApplied = true;
+    }
     fbDocRef = db.collection('stockScannerApp').doc('sharedData');
     fbExcelDocRef = db.collection('stockScannerApp').doc('excelData');
     fbPdfDocRef = db.collection('stockScannerApp').doc('pdfData');
@@ -5753,6 +5768,12 @@ function runFirestoreSerialized(operation){
 }
 function ensureFirestoreNetwork(){
   if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
+  if(firestorePendingReads > 0){
+    // Do not disable/enable the transport underneath an in-flight startup RPC.
+    // The drain promise resolves when the real Firestore request settles, even
+    // if the UI timeout has already returned local data to the user.
+    return firestoreReadDrainPromise.then(function(){ return ensureFirestoreNetwork(); });
+  }
   // A WebView can keep the SDK marked ready after its underlying socket has
   // gone stale. Re-wake the network periodically instead of trusting a flag
   // forever; this matters when the phone changes Wi-Fi/5G.
@@ -6436,8 +6457,20 @@ function queueBrandsCloudBackfill(delay){
 // read instead of holding the whole website in Connecting forever.
 function cloudReadWithTimeout(read, timeout){
   const limit = Math.max(800, Number(timeout) || 2200);
+  firestorePendingReads += 1;
+  if(firestorePendingReads === 1){
+    firestoreReadDrainPromise = new Promise(function(resolve){ firestoreReadDrainResolve = resolve; });
+  }
+  const request = Promise.resolve().then(read).catch(function(){ return null; }).finally(function(){
+    firestorePendingReads = Math.max(0, firestorePendingReads - 1);
+    if(firestorePendingReads === 0 && firestoreReadDrainResolve){
+      const resolve = firestoreReadDrainResolve;
+      firestoreReadDrainResolve = null;
+      resolve(true);
+    }
+  });
   return Promise.race([
-    Promise.resolve().then(read).catch(function(){ return null; }),
+    request,
     new Promise(function(resolve){ window.setTimeout(function(){ resolve(null); }, limit); })
   ]);
 }
@@ -7344,7 +7377,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '165';
+const APP_BUILD = '166';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
