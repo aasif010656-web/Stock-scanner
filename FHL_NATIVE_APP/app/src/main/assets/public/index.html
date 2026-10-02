@@ -7218,7 +7218,9 @@ async function retryCloudConnection(options){
     return true;
   }catch(error){
     console.warn('Verified cloud reconnect failed', error);
-    if(!wasCloudSynced) syncStatus = navigator.onLine ? 'connecting' : 'offline';
+    // Keep retrying in the background, but do not leave Settings stuck on
+    // CONNECTING forever when a WebView RPC never resolves.
+    if(!wasCloudSynced) syncStatus = navigator.onLine ? 'error' : 'offline';
     if(navigator.onLine) scheduleCloudVerification(2500);
     updateHeaderSub(); render();
     if(!opts.silent) showToast(navigator.onLine ? 'Cloud is checking again. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', !navigator.onLine);
@@ -7232,14 +7234,17 @@ async function refreshCanonicalBrandsState(){
   if(!storageReady || !state.user || !fbReady || !fbBrandsDocRef || hasBrandsCloudPending()) return false;
   const applyGeneration = ++brandsRemoteApplyGeneration;
   try{
-    const rootSnap = await fbBrandsDocRef.get({ source:'server' });
-    if(!rootSnap.exists) return false;
+    // Bound both reads. A dead WebView socket otherwise leaves the reconnect
+    // promise pending indefinitely and permanently pins the UI to CONNECTING.
+    const rootSnap = await cloudReadWithTimeout(()=>fbBrandsDocRef.get({ source:'server' }), 2600);
+    if(!rootSnap || !rootSnap.exists) return false;
     const root = rootSnap.data() || {};
     if(!root.activeVersion || hasBrandsCloudPending()) return false;
     // Always apply the verified server snapshot on resume/reconnect. Relying only
     // on activeVersion can leave a client showing a stale local summary while the
     // global header still says Synced.
-    const remoteBrands = await readBrandsStateFromCloud(root);
+    const remoteBrands = await cloudReadWithTimeout(()=>readBrandsStateFromCloud(root), 5200);
+    if(!remoteBrands) return false;
     if(applyGeneration !== brandsRemoteApplyGeneration || hasBrandsCloudPending()) return false;
     applyBrandsState(remoteBrands);
     brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
@@ -7274,6 +7279,12 @@ document.addEventListener('visibilitychange', function(){
 
 async function saveBrandsState(reason){
   markBrandsCloudPending(reason || 'brands-update');
+  // Excel is an authoritative inventory snapshot. Never merge a stale retry's
+  // products, overrides, or prices back into the imported workbook snapshot.
+  if(String(reason || '') === 'brands-excel-import'){
+    brandsCloudPending.replaceAll = true;
+    persistBrandsCloudPending();
+  }
   // Publish the authoritative Brands version first. Previously this was buried
   // inside pushToCloud(), so an unrelated large report/PDF/stock-movement write
   // could abort the broad sync before the Excel snapshot was activated.
@@ -7427,7 +7438,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '169';
+const APP_BUILD = '170';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
