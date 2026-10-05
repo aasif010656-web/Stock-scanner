@@ -5669,8 +5669,11 @@ function clearUserManagementCloudPending(){
   try{ localStorage.removeItem(USER_MANAGEMENT_PENDING_STORAGE_KEY); }catch(e){}
 }
 const PRICE_DELETE_TOMBSTONE_STORAGE_KEY = 'price-notifs-deletion-tombstones-v1';
-const PRICE_DELETE_TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-const PRICE_DELETE_TOMBSTONE_LIMIT = 800;
+// Price-log deletions are explicit user actions, never automatic expiry.
+// Durable tombstones prevent an old device from resurrecting an individually
+// deleted record, while the price history itself remains permanent.
+const PRICE_DELETE_TOMBSTONE_TTL_MS = Number.MAX_SAFE_INTEGER;
+const PRICE_DELETE_TOMBSTONE_LIMIT = 5000;
 function normalizePriceDeleteTombstones(source){
   const cutoff = Date.now() - PRICE_DELETE_TOMBSTONE_TTL_MS;
   const entries = Object.entries(source && typeof source === 'object' ? source : {})
@@ -5692,6 +5695,7 @@ let priceDeleteTombstones = (function(){
   try{ return normalizePriceDeleteTombstones(JSON.parse(localStorage.getItem(PRICE_DELETE_TOMBSTONE_STORAGE_KEY) || '{}')); }
   catch(e){ return {}; }
 })();
+let priceNotificationsExplicitlyChanged = false;
 function persistPriceDeleteTombstones(){
   try{ localStorage.setItem(PRICE_DELETE_TOMBSTONE_STORAGE_KEY, JSON.stringify(priceDeleteTombstones)); }catch(e){}
 }
@@ -6921,6 +6925,7 @@ async function deletePriceNotificationsFromCloud(ids){
   }
   // The transaction has committed remotely. Only now replace local state and cache.
   rememberDeletedPriceNotifications(uniqueIds, committedTombstones);
+  priceNotificationsExplicitlyChanged = true;
   state.priceChangeNotifications = committedAlerts;
   try{ localStorage.setItem('price-notifs-cache', JSON.stringify(state.priceChangeNotifications)); }catch(e){}
   const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
@@ -7078,7 +7083,14 @@ async function pushToCloud(force, suppressToast, options){
     priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, cloudData.priceChangeNotificationTombstones);
     persistPriceDeleteTombstones();
     const priceDeleteIds = new Set(Object.keys(priceDeleteTombstones));
-    const mergedPriceNotifs = mergeArrayByKey(cloudData.priceChangeNotifications, state.priceChangeNotifications, x=>x.id, priceDeleteIds);
+    // A generic save must never let an empty/stale device erase the shared
+    // price history. Only an explicit price import or individual deletion may
+    // change this array; normal scan/settings sync preserves the remote list.
+    const remotePriceNotifs = filterPriceNotificationsByTombstones(cloudData.priceChangeNotifications || [], priceDeleteTombstones);
+    const localPriceNotifs = Array.isArray(state.priceChangeNotifications) ? state.priceChangeNotifications : [];
+    const mergedPriceNotifs = priceNotificationsExplicitlyChanged
+      ? mergeArrayByKey(remotePriceNotifs, localPriceNotifs, x=>x.id, priceDeleteIds)
+      : mergeArrayByKey(remotePriceNotifs, localPriceNotifs, x=>x.id, new Set());
     const mergedAppNotifications = mergeArrayByKey(cloudData.appNotifications, state.appNotifications, x=>x.id, deletedKeys.appNotifications);
     const mergedPdfImports = mergeArrayByKey(cloudPdfData.pdfImports || cloudData.pdfImports, state.pdfImports, x=>x.id, deletedKeys.pdfImports);
     for(const pdfRecord of mergedPdfImports){
@@ -7093,6 +7105,7 @@ async function pushToCloud(force, suppressToast, options){
     state.a7Excels = mergedA7Excels;
     state.a4Excels = mergedA4Excels;
     state.priceChangeNotifications = mergedPriceNotifs;
+    priceNotificationsExplicitlyChanged = false;
     state.appNotifications = mergedAppNotifications;
     state.pdfImports = mergePdfMetadata(mergedPdfImports);
     cachePdfImports();
@@ -7438,7 +7451,7 @@ function getStoredDeviceName(){
 // in-app update checker, so they can never drift out of sync with each other again.
 const APP_VERSION = '6.1.1';
 const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '170';
+const APP_BUILD = '171';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -10132,6 +10145,7 @@ async function handleImportExcel(fileInput){
                       ts: Date.now(),
                       targetTab: 'log'
                   });
+                  priceNotificationsExplicitlyChanged = true;
                   queuePartyPriceNotification(notifParty, notifDesc);
               }
           }
@@ -12718,7 +12732,6 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
   let html = '';
   html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
   html += '<span>Party-wise Price Update History (' + notifications.length + ')</span>';
-  if(notifications.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
   html += '</div>';
   if(partyOptions.length){
     html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
