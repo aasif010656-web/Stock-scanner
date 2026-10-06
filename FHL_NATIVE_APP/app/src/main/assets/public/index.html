@@ -8643,7 +8643,8 @@ function saveScan(){
       party: row.Party||'', partyName: row["Party Name"]||'',
       refQty, scannedQty: addQty, lastAddQty: addQty,
       history: [{ts: new Date().toISOString(), qty: addQty}],
-      deviceId: state.deviceId, deviceName: state.deviceName||''
+      deviceId: state.deviceId, deviceName: state.deviceName||'',
+      scannedBy: (state.user && state.user.username) || state.operatorName || state.deviceName || state.deviceId
     });
     state.lastAction = { type:'new', id: newId };
     // Optimistic: update UI immediately, sync in background
@@ -9360,12 +9361,23 @@ function fallbackCopy(text){
 }
 
 async function clearLog(){
-  if(!(await appConfirm('Clear the entire scan log? This cannot be undone.', 'Clear Scan Log'))) return;
-  scanLog.forEach(function(item){ if(item && item.id) markScanLogDeleted(item.id); });
-  scanLog = [];
+  showToast('Use the individual User delete button below.', true);
+}
+function scanLogUserKey(item){
+  return String(item && (item.scannedBy || item.operatorName || item.userName || item.deviceName || item.deviceId) || 'Unknown User').trim() || 'Unknown User';
+}
+async function deleteScanLogsForUser(userKey){
+  const target = String(userKey || 'Unknown User');
+  const matches = scanLog.filter(function(item){ return scanLogUserKey(item) === target; });
+  if(!matches.length) return;
+  if(!(await appConfirm('Delete all ' + matches.length + ' scan log entr' + (matches.length === 1 ? 'y' : 'ies') + ' for ' + target + '?', 'Delete User Log'))) return;
+  matches.forEach(function(item){ if(item && item.id) markScanLogDeleted(item.id); });
+  scanLog = scanLog.filter(function(item){ return scanLogUserKey(item) !== target; });
+  addAuditLog('User Log Deleted', 'Deleted scan log for ' + target);
   await saveLog();
   updateHeaderSub();
   render();
+  showToast('✓ Deleted logs for ' + target);
 }
 
 // ---------- Operator name ----------
@@ -12865,9 +12877,16 @@ function renderLog(){
   html += '<button class="btn" onclick="triggerRestore()">📂 Restore Backup</button>';
   html += '</div>';
   html += '<div class="backup-note">Backup saves everything on this device (stock corrections, scan log, added products) as one file.</div>';
-  html += '<div class="btn-row" style="margin-bottom:14px;">';
-  html += '<button class="btn btn-ghost" onclick="clearLog()">Clear Log</button>';
-  html += '</div>';
+  const scanUsers = {};
+  scanLog.forEach(function(item){ const key = scanLogUserKey(item); scanUsers[key] = (scanUsers[key] || 0) + 1; });
+  if(Object.keys(scanUsers).length){
+    html += '<div class="divider-label">Delete by User</div><div class="btn-row" style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:8px;">';
+    Object.keys(scanUsers).sort().forEach(function(userKey){
+      const safeUser = esc(userKey).replace(/'/g, "\\'");
+      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteScanLogsForUser(\'' + safeUser + '\')">🗑 ' + esc(userKey) + ' (' + scanUsers[userKey] + ')</button>';
+    });
+    html += '</div>';
+  }
   if(scanLog.length===0){
     html += '<div class="empty">No scan log entries yet.<br/>Scan an item and save it to see history here.</div>';
   return html;
