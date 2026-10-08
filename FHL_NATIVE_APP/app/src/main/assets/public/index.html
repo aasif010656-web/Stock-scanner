@@ -11496,15 +11496,26 @@ async function deletePriceNotification(id){
   else showToast('Could not delete this alert. Please check your connection and try again.', true);
 }
 
-async function deleteAllPriceNotifications(){
-  const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
-  const visible = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
+async function deletePriceNotificationsForParty(party){
+  const key = normalizedPartyCode(party || '__unassigned__');
+  const visible = (state.priceChangeNotifications || []).filter(function(notification){
+    return (isStaffOrAdmin() || canViewParty(notification.party || notification.partyName)) && normalizedPartyCode(notification.party || notification.partyName || '__unassigned__') === key;
+  });
   if(!visible.length) return;
-  if(!(await appConfirm('Delete all ' + visible.length + ' price-change alert(s)?', 'Delete Price Alerts'))) return;
+  const label = party === '__unassigned__' ? 'Unassigned party' : String(party || 'party');
+  if(!(await appConfirm('Delete all ' + visible.length + ' price update(s) for ' + label + '?', 'Delete Party Price Updates'))) return;
+  const deleted = await deletePriceNotificationsFromCloud(visible.map(function(item){ return item.id; }));
+  if(deleted) showToast('Deleted ' + label + ' price updates from all devices');
+  else showToast('Could not delete party price updates. Please check your connection and try again.', true);
+}
+async function deleteAllPriceNotifications(){
+  const visible = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewParty(notification.party || notification.partyName); });
+  if(!visible.length) return;
+  if(!(await appConfirm('Delete all ' + visible.length + ' visible price update(s)?', 'Delete All Price Updates'))) return;
   const visibleIds = new Set(visible.map(n=>n.id));
   const deleted = await deletePriceNotificationsFromCloud(Array.from(visibleIds));
-  if(deleted) showToast('Deleted all alerts from all devices');
-  else showToast('Could not delete alerts. Please check your connection and try again.', true);
+  if(deleted) showToast('Deleted all visible price updates from all devices');
+  else showToast('Could not delete price updates. Please check your connection and try again.', true);
 }
 
 function renderA4(){
@@ -12784,6 +12795,7 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
   let html = '';
   html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
   html += '<span>Party-wise Price Update History (' + notifications.length + ')</span>';
+  if(notifications.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">🗑 Delete All</button>';
   html += '</div>';
   if(partyOptions.length){
     html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
@@ -12815,6 +12827,7 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
     html += '<div style="display:flex;align-items:center;gap:10px;">';
     html += '<span style="font-size:20px;">' + (expanded ? '📂' : '📁') + '</span>';
     html += '<div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">' + esc(displayParty) + '</div><div style="font-size:11px;color:var(--muted);">' + items.length + ' price update' + (items.length===1?'':'s') + (latest ? ' · Latest ' + latest : '') + '</div></div>';
+    html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotificationsForParty(\'' + safeParty + '\')" aria-label="Delete ' + esc(displayParty) + ' price updates">🗑</button>';
     html += '<span style="font-size:18px;color:var(--muted);">' + (expanded ? '⌃' : '⌄') + '</span>';
     html += '</div></div>';
     if(expanded){
