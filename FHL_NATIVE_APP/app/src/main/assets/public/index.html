@@ -6698,7 +6698,7 @@ async function loadStorage(){
     // Keep cached workbook rows when the dedicated report document returns metadata only.
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
-    syncStatus = (startupCloudIncomplete || !brandsCloudVerifiedThisSession) ? (navigator.onLine ? 'connecting' : 'offline') : 'synced';
+    syncStatus = (startupCloudIncomplete || !brandsCloudVerifiedThisSession) ? (navigator.onLine ? 'connecting' : 'offline') : cloudStatusFromState();
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
@@ -6817,7 +6817,7 @@ async function loadStorage(){
       }
       */
       rebuildIndex();
-      if(brandsCloudVerifiedThisSession) syncStatus = 'synced';
+      if(brandsCloudVerifiedThisSession) syncStatus = cloudStatusFromState();
       else { syncStatus = navigator.onLine ? 'connecting' : 'offline'; if(navigator.onLine) scheduleCloudVerification(2500); }
       updateHeaderSub();
       render();
@@ -6850,7 +6850,7 @@ async function loadStorage(){
         applyBrandsState(remoteBrands);
         brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
         brandsCloudVerifiedThisSession = true;
-        syncStatus = 'synced';
+        syncStatus = cloudStatusFromState();
         updateHeaderSub();
         render();
       }catch(e){
@@ -6929,7 +6929,7 @@ async function deletePriceNotificationsFromCloud(ids){
   state.priceChangeNotifications = committedAlerts;
   try{ localStorage.setItem('price-notifs-cache', JSON.stringify(state.priceChangeNotifications)); }catch(e){}
   const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
-  syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
+  syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
   updateHeaderSub();
   render();
   return true;
@@ -7014,6 +7014,14 @@ function rememberBrandsCloudSyncError(error, stage){
 function clearBrandsCloudSyncError(){
   brandsLastCloudSyncError = null;
   try{ localStorage.removeItem(BRANDS_LAST_SYNC_ERROR_STORAGE_KEY); }catch(e){}
+}
+
+
+function cloudStatusFromState(){
+  if(!navigator.onLine) return 'offline';
+  if(!brandsCloudVerifiedThisSession || !brandsCloudState || !brandsCloudState.loaded) return 'connecting';
+  if(hasBrandsCloudPending() || getReportsNeedingCloudBackfill().length || hasStockMovementCloudPending() || userManagementCloudPending) return 'queued';
+  return 'synced';
 }
 
 async function pushToCloud(force, suppressToast, options){
@@ -7159,7 +7167,7 @@ async function pushToCloud(force, suppressToast, options){
     // Brands snapshot or an imported Excel report reached Firestore. Do not
     // show a fake Synced state while any authoritative/payload queue remains.
     const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
-    syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
+    syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
     checkForceLogout();
     render();
     return true;
@@ -7167,7 +7175,8 @@ async function pushToCloud(force, suppressToast, options){
     // A single import/payload write can fail while Firestore is reachable.
     // Preserve local data and do not downgrade the verified connection state.
     if(!preserveStatus && !navigator.onLine) syncStatus = 'offline';
-    else if(!preserveStatus && syncStatus !== 'synced') syncStatus = 'connecting';
+    else if(!preserveStatus && syncStatus !== 'synced') syncStatus = cloudStatusFromState();
+    else if(preserveStatus && syncStatus === 'connecting' && brandsCloudVerifiedThisSession) syncStatus = 'queued';
     rememberBrandsCloudSyncError(e, hasBrandsCloudPending() ? 'brands-version' : (hasStockMovementCloudPending() ? 'stock-movement-version' : 'shared-data'));
     if(force && !suppressToast) showToast("Cloud save queued safely — Retry Connection will continue automatically.", true);
     updateHeaderSub();
@@ -7217,7 +7226,7 @@ async function retryCloudConnection(options){
     // scheduled retry preserve the data safely.
     const replayed = await pushToCloud(true, true, { preserveStatus:true });
     const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
-    syncStatus = cloudFullyVerified ? 'synced' : (navigator.onLine ? 'connecting' : 'offline');
+    syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
@@ -7271,6 +7280,35 @@ async function refreshCanonicalBrandsState(){
     return false;
   }
 }
+
+async function forceSyncCloud(){
+  if(state._cloudRetryRunning){
+    showToast('A cloud sync is already running. Please wait.', true);
+    return false;
+  }
+  if(!navigator.onLine){
+    syncStatus = 'offline';
+    updateHeaderSub(); render();
+    showToast('No internet connection. Local data is safe and will sync when online.', true);
+    return false;
+  }
+  showToast('Force Sync started — checking cloud and sending pending data…');
+  const completed = await retryCloudConnection({ silent:true, force:true });
+  const finalStatus = cloudStatusFromState();
+  syncStatus = finalStatus;
+  updateHeaderSub(); render();
+  if(!completed){
+    showToast('Force Sync could not complete. Local data is safe; retry will continue automatically.', true);
+    return false;
+  }
+  if(finalStatus === 'synced'){
+    showToast('✓ Force Sync completed — cloud data is up to date.');
+    return true;
+  }
+  showToast('Force Sync reached the cloud. Remaining data is queued safely for retry.');
+  return true;
+}
+
 window.addEventListener('online', function(){
   firestoreNetworkReady = false;
   firestoreNetworkReadyAt = 0;
@@ -8403,6 +8441,7 @@ function setTab(tab, fromBack, animateFromBottomNav){
 function syncBadge(){
   if(syncStatus==='synced') return ' · <span style="color:#3DDC84;">☁ Synced</span>';
   if(syncStatus==='connecting') return ' · <span style="color:var(--dim);">☁ Connecting…</span>';
+  if(syncStatus==='queued') return ' · <span style="color:var(--yellow);">☁ Cloud reachable · Sync queued</span>';
   if(syncStatus==='error') return ' · <span style="color:var(--dim);">☁ Reconnecting…</span>';
   return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>' + offlineStockLabel();
 }
@@ -12094,8 +12133,9 @@ function renderSettings(){
   html += '<div class="ios-section-title">Connection & Recovery</div>';
   html += '<div class="ios-group">';
   const retryLabel = syncStatus === 'synced' ? 'Verify Connection' : (syncStatus === 'connecting' ? 'Checking…' : 'Retry Connection');
-  const cloudDetail = syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Checking cloud connection');
+  const cloudDetail = syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'queued' ? 'Cloud reachable · pending sync will retry' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Checking cloud connection'));
   html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Connection', '<span style="font-size:11px;color:var(--muted);">' + esc(cloudDetail) + '</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="retryCloudConnection()">' + retryLabel + '</button>');
+  html += iosRow('⚡', 'linear-gradient(#FFB300,#F57C00)', 'Force Sync', '<span style="font-size:11px;color:var(--muted);">Send pending changes and refresh cloud data now</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="forceSyncCloud()">' + (state._cloudRetryRunning ? 'Syncing…' : 'Force Sync') + '</button>');
   html += '</div>';
 
   if(state.user.role === 'admin'){
