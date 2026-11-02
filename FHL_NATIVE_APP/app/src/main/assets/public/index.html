@@ -6528,6 +6528,27 @@ function cloudReadWithTimeout(read, timeout){
   ]);
 }
 
+// A bounded replay must also release a wedged Firestore transport. The timeout
+// is followed by a serialized disable/enable cycle so the next retry does not
+// overlap an orphaned WebView RPC. Local data remains cached before replay.
+async function runCloudSyncWithWatchdog(operation, timeout){
+  const limit = Math.max(4000, Number(timeout) || 12000);
+  let timer = null;
+  let timedOut = false;
+  const operationPromise = Promise.resolve().then(operation);
+  const timeoutPromise = new Promise(function(resolve){
+    timer = window.setTimeout(function(){ timedOut = true; resolve(null); }, limit);
+  });
+  try{
+    const result = await Promise.race([operationPromise, timeoutPromise]);
+    if(!timedOut) return result;
+    try{ await resetFirestoreTransport(); }catch(e){}
+    throw new Error('Cloud sync operation timed out; Firestore transport was reset');
+  }finally{
+    if(timer) window.clearTimeout(timer);
+  }
+}
+
 async function loadStorage(){
   try{ const op = localStorage.getItem('operator-name'); if(op) state.operatorName = op; }catch(e){}
   
@@ -6843,7 +6864,7 @@ async function loadStorage(){
       const localSnapshotMatchesRoot = !rootOverrideCount || localOverrideCount === rootOverrideCount;
       if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '') && localSnapshotMatchesRoot) return;
       try{
-        const remoteBrands = await readBrandsStateFromCloud(root);
+        const remoteBrands = await cloudReadWithTimeout(()=>readBrandsStateFromCloud(root), 5200);
         if(applyGeneration !== brandsRemoteApplyGeneration) return;
         if(hasBrandsCloudPending() && !pendingBrandsIsSupersededBy(remoteBrands.activeVersion)) return;
         clearBrandsCloudPending();
@@ -7055,10 +7076,10 @@ async function pushToCloud(force, suppressToast, options){
     // just-imported products/reports from vanishing when this device syncs.
     let cloudData = {}, cloudExcelData = {}, cloudPdfData = {}, cloudReportData = {};
     const cloudReads = await Promise.all([
-      fbDocRef.get({source:'server'}).catch(function(){ return null; }),
-      fbExcelDocRef ? fbExcelDocRef.get().catch(function(){ return null; }) : Promise.resolve(null),
-      fbPdfDocRef ? fbPdfDocRef.get().catch(function(){ return null; }) : Promise.resolve(null),
-      fbReportDocRef ? fbReportDocRef.get().catch(function(){ return null; }) : Promise.resolve(null)
+      cloudReadWithTimeout(()=>fbDocRef.get({source:'server'}), 2600),
+      fbExcelDocRef ? cloudReadWithTimeout(()=>fbExcelDocRef.get(), 2600) : Promise.resolve(null),
+      fbPdfDocRef ? cloudReadWithTimeout(()=>fbPdfDocRef.get(), 2600) : Promise.resolve(null),
+      fbReportDocRef ? cloudReadWithTimeout(()=>fbReportDocRef.get(), 2600) : Promise.resolve(null)
     ]);
     if(cloudReads[0] && cloudReads[0].exists) cloudData = cloudReads[0].data() || {};
     if(cloudReads[1] && cloudReads[1].exists) cloudExcelData = cloudReads[1].data() || {};
@@ -7220,11 +7241,19 @@ async function retryCloudConnection(options){
     // Do not race these Firestore promises against a timeout: the losing
     // promise would keep running and the next retry could overlap it, which
     // wedges Firebase WebView clients in Connecting/INTERNAL ASSERTION state.
-    await refreshCanonicalBrandsState();
-    // The remaining shared-data replay is best-effort. A slow legacy payload
-    // must not hold the UI in Connecting forever; its pending markers and the
-    // scheduled retry preserve the data safely.
-    const replayed = await pushToCloud(true, true, { preserveStatus:true });
+    const brandsRefreshed = await refreshCanonicalBrandsState();
+    // Never replay stale shared data before the authoritative Brands snapshot has
+    // been verified during an unverified startup. This avoids both stale writes
+    // and a retry that appears to hang while the canonical read is unresolved.
+    if(!brandsRefreshed && !brandsCloudVerifiedThisSession){
+      throw new Error('Authoritative Brands snapshot is not verified yet');
+    }
+    // The remaining shared-data replay is best-effort, but it must have a hard
+    // watchdog. A wedged Firestore get/set otherwise leaves _cloudRetryRunning
+    // true and pins the UI to Connecting indefinitely.
+    const replayed = await runCloudSyncWithWatchdog(function(){
+      return pushToCloud(true, true, { preserveStatus:true });
+    }, 12000);
     const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
     syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
     queueReportCloudBackfill();
