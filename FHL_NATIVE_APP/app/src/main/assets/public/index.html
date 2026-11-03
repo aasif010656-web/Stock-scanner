@@ -7256,7 +7256,7 @@ async function retryCloudConnection(options){
     // true and pins the UI to Connecting indefinitely.
     const replayed = await runCloudSyncWithWatchdog(function(){
       return pushToCloud(true, true, { preserveStatus:true });
-    }, 12000);
+    }, opts.force ? 45000 : 12000);
     const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
     syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
     queueReportCloudBackfill();
