@@ -7234,7 +7234,10 @@ async function retryCloudConnection(options){
   if(!wasCloudSynced) syncStatus = 'connecting';
   updateHeaderSub(); render();
   try{
-    await ensureFirestoreNetwork();
+    // The SDK network wake-up can itself reject or remain pending after a
+    // WebView transport failure. Bound it and let the normal retry scheduler
+    // continue without losing local data.
+    await runCloudSyncWithWatchdog(function(){ return ensureFirestoreNetwork(); }, 8000);
     // Brands is the authoritative inventory source. Apply it before the broad
     // shared-data replay; the latter may contain legacy reports/movements and
     // must never keep the user on a stale local stock/price snapshot.
@@ -7245,7 +7248,7 @@ async function retryCloudConnection(options){
     // Never replay stale shared data before the authoritative Brands snapshot has
     // been verified during an unverified startup. This avoids both stale writes
     // and a retry that appears to hang while the canonical read is unresolved.
-    if(!brandsRefreshed && !brandsCloudVerifiedThisSession){
+    if(!brandsRefreshed && !brandsCloudVerifiedThisSession && !hasBrandsCloudPending()){
       throw new Error('Authoritative Brands snapshot is not verified yet');
     }
     // The remaining shared-data replay is best-effort, but it must have a hard
@@ -7271,7 +7274,10 @@ async function retryCloudConnection(options){
     console.warn('Verified cloud reconnect failed', error);
     // Keep retrying in the background, but do not leave Settings stuck on
     // CONNECTING forever when a WebView RPC never resolves.
-    if(!wasCloudSynced) syncStatus = navigator.onLine ? 'error' : 'offline';
+    // A transient cloud failure must not become a permanent ERROR state.
+    // Pending Brands writes remain queued; otherwise keep the neutral
+    // connecting state until authoritative verification succeeds.
+    if(!wasCloudSynced) syncStatus = navigator.onLine ? (hasBrandsCloudPending() ? 'queued' : 'connecting') : 'offline';
     if(navigator.onLine) scheduleCloudVerification(2500);
     updateHeaderSub(); render();
     if(!opts.silent) showToast(navigator.onLine ? 'Cloud is checking again. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', !navigator.onLine);
