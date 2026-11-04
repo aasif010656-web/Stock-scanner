@@ -6382,37 +6382,27 @@ async function syncBrandsStateToCloudUnlocked(){
     persistBrandsCloudPending();
   }
   if(brandsCloudPending && Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion') && String(brandsCloudPending.baseVersion || '') !== previousActiveVersion){
-    if(brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import'){
-      // A user Excel import is a new local edit, not an old snapshot retry.
-      // Rebase it onto the latest server version and let the merge below retain
-      // remote products/prices while applying this workbook's local changes.
-      brandsCloudPending.conflict = 'import-rebased';
-      brandsCloudPending.conflictVersion = previousActiveVersion;
-      brandsCloudPending.baseVersion = previousActiveVersion;
-      brandsCloudPending.rebasedAt = Date.now();
-      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-      persistBrandsCloudPending();
-    }else{
-      brandsCloudPending.conflict = 'newer-active-version';
-      brandsCloudPending.conflictVersion = previousActiveVersion;
-      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-      persistBrandsCloudPending();
-      throw new Error('Brands cloud has a newer active version; stale pending retry was rejected');
-    }
+    // A pending marker represents a local edit that was already shown to the
+    // operator. Never leave it permanently rejected just because another device
+    // activated a newer snapshot. The publisher below merges remote records first
+    // and then applies this device's local values, preserving both sides without
+    // deleting products or prices. Excel imports retain replaceAll semantics.
+    brandsCloudPending.conflict = brandsCloudPending.reason === 'brands-excel-import' ? 'import-rebased' : 'local-edit-rebased';
+    brandsCloudPending.conflictVersion = previousActiveVersion;
+    brandsCloudPending.baseVersion = previousActiveVersion;
+    brandsCloudPending.rebasedAt = Date.now();
+    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+    persistBrandsCloudPending();
   }
   if(brandsCloudPending && !Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion')){
-    if(brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import'){
-      brandsCloudPending.baseVersion = previousActiveVersion;
-      brandsCloudPending.rebasedAt = Date.now();
-      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-      persistBrandsCloudPending();
-    }else{
-      brandsCloudPending.conflict = 'missing-base-version';
-      brandsCloudPending.conflictVersion = previousActiveVersion;
-      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-      persistBrandsCloudPending();
-      throw new Error('Brands pending state has no base version; stale retry was rejected');
-    }
+    // Legacy builds did not persist baseVersion. Treat that marker as a local
+    // edit and establish the current server version before the remote/local merge.
+    brandsCloudPending.conflict = brandsCloudPending.reason === 'brands-excel-import' ? 'import-rebased' : 'legacy-pending-rebased';
+    brandsCloudPending.conflictVersion = previousActiveVersion;
+    brandsCloudPending.baseVersion = previousActiveVersion;
+    brandsCloudPending.rebasedAt = Date.now();
+    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+    persistBrandsCloudPending();
   }
   let remoteState = null;
   if(previousRoot.activeVersion) remoteState = await readBrandsStateFromCloud(previousRoot);
