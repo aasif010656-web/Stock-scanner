@@ -6625,7 +6625,9 @@ async function loadStorage(){
       stockMovementCloudState.activeVersion = String(stockMovementRoot.activeVersion);
       try{ remoteStockMovements = await cloudReadWithTimeout(()=>readStockMovementStateFromCloud(stockMovementRoot), 2200); }
       catch(e){ console.warn('Stock Movement cloud state could not be loaded yet; keeping the local cache', e); }
-      if(!remoteStockMovements) startupCloudIncomplete = true;
+      // Stock Movement history is auxiliary backfill data. It must never make
+      // the authoritative Brands inventory appear disconnected.
+      if(!remoteStockMovements) stockMovementCloudState.loaded = false;
     }
     clearTimeout(loadingTimeout);
     if(snap.exists){
