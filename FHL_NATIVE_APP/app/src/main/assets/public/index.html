@@ -6572,10 +6572,17 @@ async function loadStorage(){
     if(cachedReports){ state.reports = JSON.parse(cachedReports); (state.reports || []).forEach(restoreReportRowsLocal); }
     const cachedExcelUpdate = localStorage.getItem('latest-excel-update-cache');
     if(cachedExcelUpdate) state.latestExcelUpdate = JSON.parse(cachedExcelUpdate);
+    // Cache-backed Brands values are loaded after the initial index build.
+    // Rebuild now so offline search, scan, totals, and Brands rows use the
+    // restored stockOverrides/customProducts immediately.
+    rebuildIndex();
   } catch(e) { console.error("Cache load failed", e); }
 
-  if(!fbReady){
-    storageReady = true; syncStatus = 'offline';
+  if(!fbReady || navigator.onLine === false){
+    // Offline is a valid local-first mode. Never start Firestore reads here;
+    // the restored Brands cache is already indexed and ready for use.
+    storageReady = true;
+    syncStatus = 'offline';
     updateHeaderSub(); render();
     return;
   }
