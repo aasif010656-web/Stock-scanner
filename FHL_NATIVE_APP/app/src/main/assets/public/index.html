@@ -428,7 +428,7 @@ button{font-family:'Inter',sans-serif;cursor:pointer;border:none;}
 	  color: #0B0D14; align-items: center; justify-content: center;
 	  box-shadow: -2px -2px 5px rgba(255,255,255,0.15) inset, 0 8px 20px rgba(108,125,255,0.4); font-size: 20px; font-weight: 700;
 	}
-	
+
 /* Reference-matched login screen: stable layout, no overflow, no missing-logo flash. */
 .auth-screen{box-sizing:border-box!important;min-height:100dvh!important;width:100%!important;padding:22px 16px 28px!important;overflow:auto!important;background:radial-gradient(circle at 50% 22%,rgba(255,216,204,.98) 0 8%,transparent 30%),radial-gradient(circle at 50% 76%,rgba(255,42,36,.70),transparent 48%),linear-gradient(180deg,#f5d9d5 0%,#9b181b 44%,#270307 100%)!important;}
 .auth-screen *{box-sizing:border-box!important;}
@@ -5217,8 +5217,8 @@ function parseData(raw){
 }
 function fmtMoney(v){ const n=parseFloat(v); if(isNaN(n)) return "0.00"; return n.toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtInt(v){ const n=parseFloat(v); if(isNaN(n)) return v; return Math.round(n).toLocaleString("en-IN"); }
-// Display timestamps in the user's local timezone without shifting the stored day.
-function displayDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined, options); }
+// Display-only business date adjustment: stored timestamps remain unchanged.
+function displayDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; d.setDate(d.getDate() - 1); return d.toLocaleString(undefined, options); }
 function displayDate(value, options){ return displayDateTime(value, options); }
 function originalDateTime(value, options){ const d = new Date(value); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined, options); }
 function getStockColorClass(qty){
@@ -5601,22 +5601,6 @@ let syncStatus = 'connecting'; // connecting | synced | offline | error (legacy 
 let cloudRetryTimer = null;
 let brandsCloudBackfillTimer = null;
 let stockMovementCloudBackfillTimer = null;
-// Android WebView can throw Firestore INTERNAL ASSERTION FAILED when several
-// reconnect/import/listener paths call enableNetwork and version writes at the
-// same time. Keep Firestore mutations serialized and reuse one network wake-up.
-let firestoreOperationTail = Promise.resolve();
-let firestoreNetworkReady = false;
-let firestoreNetworkPromise = null;
-let firestoreNetworkReadyAt = 0;
-let firestoreSettingsApplied = false;
-// Firestore get() cannot be cancelled. A Promise.race timeout only releases
-// the caller; the underlying RPC continues. Track those RPCs so reconnect does
-// not call enableNetwork() while startup reads are still using the transport.
-let firestorePendingReads = 0;
-let firestoreReadDrainPromise = Promise.resolve();
-let firestoreReadDrainResolve = null;
-let firestorePendingReadsSince = 0;
-let firestoreTransportResetPromise = null;
 const BRANDS_STORAGE_VERSION = 1;
 const BRANDS_CHUNK_TARGET_BYTES = 180000;
 const BRANDS_PENDING_STORAGE_KEY = 'brands-cloud-pending-v1';
@@ -5631,9 +5615,6 @@ var brandsCloudState = (function(){
     return cached && cached.activeVersion ? { activeVersion:String(cached.activeVersion), updatedAt:Number(cached.updatedAt || 0), loaded:true } : { activeVersion:'', updatedAt:0, loaded:false };
   }catch(e){ return { activeVersion:'', updatedAt:0, loaded:false }; }
 })();
-// LocalStorage can contain an old activeVersion. It is useful for offline
-// rendering, but it must not qualify as cloud verification for this session.
-let brandsCloudVerifiedThisSession = false;
 // Monotonic token invalidates any asynchronous remote snapshot read that began
 // before a newer listener event or local publish. Without this, an old snapshot
 // can finish after an Excel import and restore pre-import stock/price values.
@@ -5669,11 +5650,8 @@ function clearUserManagementCloudPending(){
   try{ localStorage.removeItem(USER_MANAGEMENT_PENDING_STORAGE_KEY); }catch(e){}
 }
 const PRICE_DELETE_TOMBSTONE_STORAGE_KEY = 'price-notifs-deletion-tombstones-v1';
-// Price-log deletions are explicit user actions, never automatic expiry.
-// Durable tombstones prevent an old device from resurrecting an individually
-// deleted record, while the price history itself remains permanent.
-const PRICE_DELETE_TOMBSTONE_TTL_MS = Number.MAX_SAFE_INTEGER;
-const PRICE_DELETE_TOMBSTONE_LIMIT = 5000;
+const PRICE_DELETE_TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const PRICE_DELETE_TOMBSTONE_LIMIT = 800;
 function normalizePriceDeleteTombstones(source){
   const cutoff = Date.now() - PRICE_DELETE_TOMBSTONE_TTL_MS;
   const entries = Object.entries(source && typeof source === 'object' ? source : {})
@@ -5695,7 +5673,6 @@ let priceDeleteTombstones = (function(){
   try{ return normalizePriceDeleteTombstones(JSON.parse(localStorage.getItem(PRICE_DELETE_TOMBSTONE_STORAGE_KEY) || '{}')); }
   catch(e){ return {}; }
 })();
-let priceNotificationsExplicitlyChanged = false;
 function persistPriceDeleteTombstones(){
   try{ localStorage.setItem(PRICE_DELETE_TOMBSTONE_STORAGE_KEY, JSON.stringify(priceDeleteTombstones)); }catch(e){}
 }
@@ -5730,20 +5707,8 @@ function offlineStockLabel(){
 
 function initFirebase(){
   try{
-    if(!firebase || !firebase.firestore) throw new Error('Firebase SDK is unavailable');
-    // Android WebView reloads can retain an initialized Firebase app. Calling
-    // initializeApp() again used to throw "already exists", leave fbReady=false,
-    // and make every Excel import local-only until the app was fully restarted.
-    if(!firebase.apps || !firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
-    // Android WebView/older Chromium can fail Firestore's streaming transport
-    // and leave every later request in Connecting. Long polling is supported by
-    // both the Web app and WebView and must be configured before any Firestore
-    // operation starts.
-    if(!firestoreSettingsApplied && typeof db.settings === 'function'){
-      db.settings({ experimentalForceLongPolling:true, useFetchStreams:false });
-      firestoreSettingsApplied = true;
-    }
     fbDocRef = db.collection('stockScannerApp').doc('sharedData');
     fbExcelDocRef = db.collection('stockScannerApp').doc('excelData');
     fbPdfDocRef = db.collection('stockScannerApp').doc('pdfData');
@@ -5759,63 +5724,7 @@ function initFirebase(){
   }catch(e){
     fbReady = false;
     syncStatus = 'error';
-    console.warn('Firebase initialization unavailable', e);
   }
-}
-function ensureFirebaseReady(){
-  if(fbReady && fbDocRef && fbReportDocRef && fbReportRowsRef) return true;
-  initFirebase();
-  return !!(fbReady && fbDocRef && fbReportDocRef && fbReportRowsRef);
-}
-function runFirestoreSerialized(operation){
-  const run = firestoreOperationTail.then(operation, operation);
-  firestoreOperationTail = run.catch(function(){ return undefined; });
-  return run;
-}
-function ensureFirestoreNetwork(){
-  if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
-  if(firestorePendingReads > 0){
-    // A mobile RPC can remain pending forever after its socket dies. Waiting
-    // for the drain in that case deadlocks reconnect permanently. Give healthy
-    // reads a short chance to finish; otherwise reset the Firestore transport
-    // so the SDK rejects the orphaned RPCs and opens a fresh connection.
-    const age = firestorePendingReadsSince ? Date.now() - firestorePendingReadsSince : 0;
-    if(age < 4500){
-      return Promise.race([
-        firestoreReadDrainPromise,
-        new Promise(function(resolve){ window.setTimeout(resolve, 1500); })
-      ]).then(function(){ return firestorePendingReads > 0 ? resetFirestoreTransport() : true; });
-    }
-    return resetFirestoreTransport();
-  }
-  // A WebView can keep the SDK marked ready after its underlying socket has
-  // gone stale. Re-wake the network periodically instead of trusting a flag
-  // forever; this matters when the phone changes Wi-Fi/5G.
-  if(firestoreNetworkReady && Date.now() - firestoreNetworkReadyAt < 15000) return Promise.resolve(true);
-  if(firestoreNetworkPromise) return firestoreNetworkPromise;
-  const db = firebase.firestore();
-  firestoreNetworkPromise = (typeof db.enableNetwork === 'function' ? db.enableNetwork() : Promise.resolve()).then(function(){
-    firestoreNetworkReady = true;
-    firestoreNetworkReadyAt = Date.now();
-    return true;
-  }).catch(function(error){
-    firestoreNetworkReady = false;
-    firestoreNetworkReadyAt = 0;
-    throw error;
-  }).finally(function(){ firestoreNetworkPromise = null; });
-  return firestoreNetworkPromise;
-}
-function resetFirestoreTransport(){
-  if(firestoreTransportResetPromise) return firestoreTransportResetPromise;
-  if(!ensureFirebaseReady()) return Promise.reject(new Error('Firebase is not ready'));
-  const db = firebase.firestore();
-  firestoreTransportResetPromise = Promise.resolve()
-    .then(function(){ return typeof db.disableNetwork === 'function' ? db.disableNetwork() : true; })
-    .catch(function(){ return true; })
-    .then(function(){ firestoreNetworkReady = false; firestoreNetworkReadyAt = 0; return typeof db.enableNetwork === 'function' ? db.enableNetwork() : true; })
-    .then(function(){ firestoreNetworkReady = true; firestoreNetworkReadyAt = Date.now(); return true; })
-    .finally(function(){ firestoreTransportResetPromise = null; });
-  return firestoreTransportResetPromise;
 }
 
 let lastClientErrorReportAt = 0;
@@ -5826,25 +5735,6 @@ function sanitizeClientError(value){
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
     .replace(/(password|token|secret|apiKey)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
     .slice(0, 500);
-}
-function isFirestoreInternalAssertion(error){
-  const text = sanitizeClientError(error);
-  return /FIRESTORE\s*\(10\.12\.2\).*INTERNAL ASSERTION|Unexpected state/i.test(text);
-}
-function scheduleFirestoreHardRecovery(error){
-  if(!isFirestoreInternalAssertion(error)) return false;
-  try{
-    const key = 'firestore-internal-recovery-v1';
-    const previous = Number(sessionStorage.getItem(key) || 0);
-    // One reload is enough to discard the corrupted Firestore client. Do not
-    // create an infinite reload loop if the network/provider remains broken.
-    if(previous && Date.now() - previous < 120000) return true;
-    sessionStorage.setItem(key, String(Date.now()));
-  }catch(e){}
-  syncStatus = 'connecting';
-  try{ updateHeaderSub(); render(); }catch(e){}
-  window.setTimeout(function(){ window.location.reload(); }, 250);
-  return true;
 }
 function reportClientError(error, context){
   const now = Date.now();
@@ -5865,14 +5755,8 @@ function reportClientError(error, context){
     fbClientErrorsRef.doc(String(now) + '-' + Math.random().toString(36).slice(2,8)).set(payload).catch(function(){});
   }catch(e){}
 }
-window.addEventListener('error', function(event){
-  if(scheduleFirestoreHardRecovery(event.error || event.message)) return;
-  reportClientError(event.error || event.message, 'window-error');
-});
-window.addEventListener('unhandledrejection', function(event){
-  if(scheduleFirestoreHardRecovery(event.reason)) return;
-  reportClientError(event.reason, 'unhandled-rejection');
-});
+window.addEventListener('error', function(event){ reportClientError(event.error || event.message, 'window-error'); });
+window.addEventListener('unhandledrejection', function(event){ reportClientError(event.reason, 'unhandled-rejection'); });
 
 function reportCloudId(report){
   return String((report && (report.id || report.name)) || '').trim().replace(/[^a-z0-9_-]+/gi, '_').slice(0,120);
@@ -5944,14 +5828,6 @@ async function saveReportRowsToCloud(report){
   for(let index=0; index<chunkCount; index++) writes.push(reportDoc.collection('chunks').doc(String(index)).set({rows:rows.slice(index * chunkSize, (index + 1) * chunkSize)}));
   try{
     await Promise.all(writes);
-    // A resolved client write is not enough on mobile WebViews: verify the
-    // report metadata and every chunk from the server before advertising that
-    // the workbook is available to other devices.
-    const verifiedMeta = await reportDoc.get({source:'server'});
-    const verifiedChunkCount = Number(verifiedMeta.exists && verifiedMeta.data() && verifiedMeta.data().chunkCount) || 0;
-    if(!verifiedMeta.exists || verifiedChunkCount !== chunkCount) throw new Error('Excel report metadata verification failed');
-    const verifiedChunks = await Promise.all(Array.from({length:chunkCount}, function(_, index){ return reportDoc.collection('chunks').doc(String(index)).get({source:'server'}); }));
-    if(verifiedChunks.some(function(chunk){ return !chunk.exists; })) throw new Error('Excel report chunk verification failed');
     report.payloadStored = true;
     report.cloudSyncPending = false;
     report.chunkCount = chunkCount;
@@ -5978,16 +5854,6 @@ async function loadReportRowsFromCloud(report){
   cacheReportRowsLocal(report);
   try{ localStorage.setItem('app-reports', JSON.stringify(state.reports || [])); }catch(e){}
   return true;
-}
-async function publishReportIndexToCloud(){
-  if(!fbReportDocRef) throw new Error('Excel report cloud index is unavailable');
-  const index = (state.reports || []).map(reportMetadata);
-  await fbReportDocRef.set({reports:index, updatedAt:Date.now()},{merge:true});
-  const verified = await fbReportDocRef.get({source:'server'});
-  const remoteReports = verified.exists && Array.isArray((verified.data() || {}).reports) ? (verified.data() || {}).reports : [];
-  const localIds = new Set(index.map(reportCloudId));
-  if(!index.every(function(item){ return remoteReports.some(function(remote){ return reportCloudId(remote) === reportCloudId(item) && !!remote.payloadStored; }); })) throw new Error('Excel report index verification failed');
-  return localIds.size;
 }
 async function ensureReportRowsAvailable(report){
   if(!report) return false;
@@ -6035,18 +5901,10 @@ async function syncReportPayloadsToCloud(options){
     try{ await saveReportRowsToCloud(report); }
     catch(error){ failed++; }
   }
-  if(!failed){ try{ await publishReportIndexToCloud(); }catch(error){ failed++; } }
   try{ await pushToCloud(true, true); }catch(error){ failed = Math.max(1, failed); }
   state.reportCloudMigrationRunning = false;
   cacheReportIndexLocal();
   render();
-  if(failed){
-    const attempts = Number(state._reportCloudRetryCount || 0) + 1;
-    state._reportCloudRetryCount = attempts;
-    window.setTimeout(function(){ queueReportCloudBackfill(); }, Math.min(60000, Math.max(2500, 1000 * Math.pow(2, Math.min(attempts, 6)))));
-  }else{
-    state._reportCloudRetryCount = 0;
-  }
   if(!opts.silent) showToast(failed ? 'Some Excel reports are waiting to retry cloud sync.' : '✓ Excel reports synced to cloud.');
   return failed === 0;
 }
@@ -6361,7 +6219,7 @@ async function syncUserManagementToCloud(){
   }
 }
 
-async function syncBrandsStateToCloudUnlocked(){
+async function syncBrandsStateToCloud(){
   // Cancel any in-flight listener/refresh read before publishing local edits.
   ++brandsRemoteApplyGeneration;
   persistBrandsLocalState();
@@ -6382,27 +6240,37 @@ async function syncBrandsStateToCloudUnlocked(){
     persistBrandsCloudPending();
   }
   if(brandsCloudPending && Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion') && String(brandsCloudPending.baseVersion || '') !== previousActiveVersion){
-    // A pending marker represents a local edit that was already shown to the
-    // operator. Never leave it permanently rejected just because another device
-    // activated a newer snapshot. The publisher below merges remote records first
-    // and then applies this device's local values, preserving both sides without
-    // deleting products or prices. Excel imports retain replaceAll semantics.
-    brandsCloudPending.conflict = brandsCloudPending.reason === 'brands-excel-import' ? 'import-rebased' : 'local-edit-rebased';
-    brandsCloudPending.conflictVersion = previousActiveVersion;
-    brandsCloudPending.baseVersion = previousActiveVersion;
-    brandsCloudPending.rebasedAt = Date.now();
-    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-    persistBrandsCloudPending();
+    if(brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import'){
+      // A user Excel import is a new local edit, not an old snapshot retry.
+      // Rebase it onto the latest server version and let the merge below retain
+      // remote products/prices while applying this workbook's local changes.
+      brandsCloudPending.conflict = 'import-rebased';
+      brandsCloudPending.conflictVersion = previousActiveVersion;
+      brandsCloudPending.baseVersion = previousActiveVersion;
+      brandsCloudPending.rebasedAt = Date.now();
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+    }else{
+      brandsCloudPending.conflict = 'newer-active-version';
+      brandsCloudPending.conflictVersion = previousActiveVersion;
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+      throw new Error('Brands cloud has a newer active version; stale pending retry was rejected');
+    }
   }
   if(brandsCloudPending && !Object.prototype.hasOwnProperty.call(brandsCloudPending, 'baseVersion')){
-    // Legacy builds did not persist baseVersion. Treat that marker as a local
-    // edit and establish the current server version before the remote/local merge.
-    brandsCloudPending.conflict = brandsCloudPending.reason === 'brands-excel-import' ? 'import-rebased' : 'legacy-pending-rebased';
-    brandsCloudPending.conflictVersion = previousActiveVersion;
-    brandsCloudPending.baseVersion = previousActiveVersion;
-    brandsCloudPending.rebasedAt = Date.now();
-    brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
-    persistBrandsCloudPending();
+    if(brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import'){
+      brandsCloudPending.baseVersion = previousActiveVersion;
+      brandsCloudPending.rebasedAt = Date.now();
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+    }else{
+      brandsCloudPending.conflict = 'missing-base-version';
+      brandsCloudPending.conflictVersion = previousActiveVersion;
+      brandsCloudPending.retryCount = Number(brandsCloudPending.retryCount || 0) + 1;
+      persistBrandsCloudPending();
+      throw new Error('Brands pending state has no base version; stale retry was rejected');
+    }
   }
   let remoteState = null;
   if(previousRoot.activeVersion) remoteState = await readBrandsStateFromCloud(previousRoot);
@@ -6455,93 +6323,17 @@ async function syncBrandsStateToCloudUnlocked(){
   cleanupPreviousBrandsVersion(previousRoot, versionId);
   return true;
 }
-function syncBrandsStateToCloud(){
-  return runFirestoreSerialized(function(){ return syncBrandsStateToCloudUnlocked(); });
-}
 function queueBrandsCloudBackfill(delay){
   if(brandsCloudBackfillTimer || !hasBrandsCloudPending() || !navigator.onLine || !storageReady || !state.user) return;
   brandsCloudBackfillTimer = window.setTimeout(function(){
     brandsCloudBackfillTimer = null;
-    // Retry the authoritative Brands publish directly. The previous callback
-    // called pushToCloud(), whose internal catch converted a failed publish to
-    // false and swallowed the rejection, so no next retry was scheduled and an
-    // Excel import could remain local-only indefinitely after one transient
-    // WebView/Firestore failure.
-    (async function(){
-      let saved = false;
-      try{
-        await ensureFirestoreNetwork();
-        saved = await syncBrandsStateToCloud();
-        if(saved) clearBrandsCloudSyncError();
-      }catch(error){
-        rememberBrandsCloudSyncError(error, 'brands-backfill');
-      }
-      if(saved){
-        // Shared metadata is best effort; the chunked Brands snapshot is the
-        // success condition for inventory/price Excel synchronization.
-        pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
-      }else if(hasBrandsCloudPending() && navigator.onLine){
-        const attempts = Number((brandsCloudPending && brandsCloudPending.retryCount) || 0) + 1;
-        if(brandsCloudPending) brandsCloudPending.retryCount = attempts;
-        persistBrandsCloudPending();
-        queueBrandsCloudBackfill(Math.min(60000, Math.max(2500, 1000 * Math.pow(2, Math.min(attempts, 6)))));
-      }
-    })().catch(function(error){
-      rememberBrandsCloudSyncError(error, 'brands-backfill-unhandled');
-      if(hasBrandsCloudPending() && navigator.onLine) queueBrandsCloudBackfill(10000);
-    });
+    pushToCloud(true, true, {preserveStatus:true}).catch(function(){});
   }, Math.max(250, Number(delay) || 800));
-}
-
-// A Firestore request can remain pending indefinitely on some mobile networks.
-// Keep startup local-first and let the existing reconnect path retry the missed
-// read instead of holding the whole website in Connecting forever.
-function cloudReadWithTimeout(read, timeout){
-  const limit = Math.max(800, Number(timeout) || 2200);
-  firestorePendingReads += 1;
-  if(firestorePendingReads === 1){
-    firestorePendingReadsSince = Date.now();
-    firestoreReadDrainPromise = new Promise(function(resolve){ firestoreReadDrainResolve = resolve; });
-  }
-  const request = Promise.resolve().then(read).catch(function(){ return null; }).finally(function(){
-    firestorePendingReads = Math.max(0, firestorePendingReads - 1);
-    if(firestorePendingReads === 0 && firestoreReadDrainResolve){
-      firestorePendingReadsSince = 0;
-      const resolve = firestoreReadDrainResolve;
-      firestoreReadDrainResolve = null;
-      resolve(true);
-    }
-  });
-  return Promise.race([
-    request,
-    new Promise(function(resolve){ window.setTimeout(function(){ resolve(null); }, limit); })
-  ]);
-}
-
-// A bounded replay must also release a wedged Firestore transport. The timeout
-// is followed by a serialized disable/enable cycle so the next retry does not
-// overlap an orphaned WebView RPC. Local data remains cached before replay.
-async function runCloudSyncWithWatchdog(operation, timeout){
-  const limit = Math.max(4000, Number(timeout) || 12000);
-  let timer = null;
-  let timedOut = false;
-  const operationPromise = Promise.resolve().then(operation);
-  const timeoutPromise = new Promise(function(resolve){
-    timer = window.setTimeout(function(){ timedOut = true; resolve(null); }, limit);
-  });
-  try{
-    const result = await Promise.race([operationPromise, timeoutPromise]);
-    if(!timedOut) return result;
-    try{ await resetFirestoreTransport(); }catch(e){}
-    throw new Error('Cloud sync operation timed out; Firestore transport was reset');
-  }finally{
-    if(timer) window.clearTimeout(timer);
-  }
 }
 
 async function loadStorage(){
   try{ const op = localStorage.getItem('operator-name'); if(op) state.operatorName = op; }catch(e){}
-  
+
   // Load from local cache first for instant offline access
   try {
     const cachedOverrides = localStorage.getItem('stock-overrides-cache');
@@ -6572,26 +6364,18 @@ async function loadStorage(){
     if(cachedReports){ state.reports = JSON.parse(cachedReports); (state.reports || []).forEach(restoreReportRowsLocal); }
     const cachedExcelUpdate = localStorage.getItem('latest-excel-update-cache');
     if(cachedExcelUpdate) state.latestExcelUpdate = JSON.parse(cachedExcelUpdate);
-    // Cache-backed Brands values are loaded after the initial index build.
-    // Rebuild now so offline search, scan, totals, and Brands rows use the
-    // restored stockOverrides/customProducts immediately.
-    rebuildIndex();
   } catch(e) { console.error("Cache load failed", e); }
 
-  if(!fbReady || navigator.onLine === false){
-    // Offline is a valid local-first mode. Never start Firestore reads here;
-    // the restored Brands cache is already indexed and ready for use.
-    storageReady = true;
-    syncStatus = 'offline';
+  if(!fbReady){
+    storageReady = true; syncStatus = 'offline';
     updateHeaderSub(); render();
     return;
   }
 
-  // Local-first startup must not wait on a slow cloud read. The listener and
-  // reconnect path continue in the background after this short fast-start window.
+  // Force storageReady after 5 seconds no matter what to prevent stuck loading screen
   const loadingTimeout = setTimeout(() => {
     if(!storageReady){
-      
+
   // v5.0 reset retired: never clear inventory during an APK update.
 
   storageReady = true;
@@ -6600,41 +6384,30 @@ async function loadStorage(){
       render();
       console.log("Firebase load timed out - keeping local data and marking cloud unavailable");
     }
-  }, 2500);
+  }, 5000);
 
   try{
-    const startupReads = await Promise.all([
-      cloudReadWithTimeout(()=>fbDocRef.get(), 2200),
-      fbExcelDocRef ? cloudReadWithTimeout(()=>fbExcelDocRef.get(), 2200) : Promise.resolve(null),
-      fbPdfDocRef ? cloudReadWithTimeout(()=>fbPdfDocRef.get(), 2200) : Promise.resolve(null),
-      fbReportDocRef ? cloudReadWithTimeout(()=>fbReportDocRef.get(), 2200) : Promise.resolve(null),
-      fbBrandsDocRef ? cloudReadWithTimeout(()=>fbBrandsDocRef.get(), 2200) : Promise.resolve(null),
-      fbStockMovementDocRef ? cloudReadWithTimeout(()=>fbStockMovementDocRef.get(), 2200) : Promise.resolve(null)
-    ]);
-    const snap = startupReads[0], excelSnap = startupReads[1], pdfSnap = startupReads[2],
-      reportSnap = startupReads[3], brandsSnap = startupReads[4], stockMovementSnap = startupReads[5];
+    const snap = await fbDocRef.get();
+    const excelSnap = fbExcelDocRef ? await fbExcelDocRef.get().catch(()=>null) : null;
+    const pdfSnap = fbPdfDocRef ? await fbPdfDocRef.get().catch(()=>null) : null;
+    const reportSnap = fbReportDocRef ? await fbReportDocRef.get().catch(()=>null) : null;
+    const brandsSnap = fbBrandsDocRef ? await fbBrandsDocRef.get().catch(()=>null) : null;
+    const stockMovementSnap = fbStockMovementDocRef ? await fbStockMovementDocRef.get().catch(()=>null) : null;
     const brandsRoot = brandsSnap && brandsSnap.exists ? (brandsSnap.data() || {}) : {};
     const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
     let remoteStockMovements = null;
-    // If the authoritative Brands root itself timed out or is unavailable, the
-    // local cache may be stale. Never label that unverified cache as Synced.
-    let startupCloudIncomplete = !!(fbBrandsDocRef && (!brandsSnap || !brandsSnap.exists || !brandsRoot.activeVersion));
     // A stale local pending marker must not block a newer authoritative cloud
     // snapshot. The guarded server version is the source of truth after a
     // confirmed overwrite; load it first and clear the obsolete marker below.
     if(brandsRoot.activeVersion && (!hasBrandsCloudPending() || pendingBrandsIsSupersededBy(brandsRoot.activeVersion))){
-      try{ remoteBrands = await cloudReadWithTimeout(()=>readBrandsStateFromCloud(brandsRoot), 2200); }
+      try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
       catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
-      if(!remoteBrands) startupCloudIncomplete = true;
     }
     if(stockMovementRoot.activeVersion && !hasStockMovementCloudPending()){
       stockMovementCloudState.activeVersion = String(stockMovementRoot.activeVersion);
-      try{ remoteStockMovements = await cloudReadWithTimeout(()=>readStockMovementStateFromCloud(stockMovementRoot), 2200); }
+      try{ remoteStockMovements = await readStockMovementStateFromCloud(stockMovementRoot); }
       catch(e){ console.warn('Stock Movement cloud state could not be loaded yet; keeping the local cache', e); }
-      // Stock Movement history is auxiliary backfill data. It must never make
-      // the authoritative Brands inventory appear disconnected.
-      if(!remoteStockMovements) stockMovementCloudState.loaded = false;
     }
     clearTimeout(loadingTimeout);
     if(snap.exists){
@@ -6698,7 +6471,6 @@ async function loadStorage(){
       clearBrandsCloudPending();
       applyBrandsState(remoteBrands);
       brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
-      brandsCloudVerifiedThisSession = true;
     } else if(!remoteBrands && !brandsRoot.activeVersion && hasBrandsPayload()){
       // Pre-Build 102 cached/legacy inventory stays visible while it is copied into
       // a durable chunked version. The old sharedData fields are not removed first.
@@ -6718,7 +6490,7 @@ async function loadStorage(){
     // Keep cached workbook rows when the dedicated report document returns metadata only.
     // Without this merge, a second startup refresh could replace report.data with [] and make OPEN fail.
     if(reportSnap && reportSnap.exists){ const reportData = reportSnap.data() || {}; state.reports = mergeReportMetadata(reportData.reports || state.reports || []); try{ localStorage.setItem('app-reports', JSON.stringify(state.reports)); }catch(e){} }
-    syncStatus = (startupCloudIncomplete || !brandsCloudVerifiedThisSession) ? (navigator.onLine ? 'connecting' : 'offline') : cloudStatusFromState();
+    syncStatus = 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
@@ -6732,7 +6504,7 @@ async function loadStorage(){
     // UI neutral and verify again once the local-first store is ready.
     syncStatus = navigator.onLine ? 'connecting' : 'offline';
   }
-  
+
   // v5.0 reset retired: never clear inventory during an APK update.
 
   storageReady = true;
@@ -6837,15 +6609,14 @@ async function loadStorage(){
       }
       */
       rebuildIndex();
-      if(brandsCloudVerifiedThisSession) syncStatus = cloudStatusFromState();
-      else { syncStatus = navigator.onLine ? 'connecting' : 'offline'; if(navigator.onLine) scheduleCloudVerification(2500); }
+      syncStatus = 'synced';
       updateHeaderSub();
       render();
     }, (listenerError)=>{
       console.warn('Shared Firestore listener unavailable', listenerError);
       // A listener interruption is recoverable and does not prove that the
       // device is offline. Recheck the server without alarming the user.
-      if(syncStatus !== 'synced') syncStatus = navigator.onLine ? 'connecting' : 'offline';
+      syncStatus = navigator.onLine ? 'connecting' : 'offline';
       if(navigator.onLine) scheduleCloudVerification(5000);
       updateHeaderSub(); render();
     });
@@ -6863,14 +6634,13 @@ async function loadStorage(){
       const localSnapshotMatchesRoot = !rootOverrideCount || localOverrideCount === rootOverrideCount;
       if(brandsCloudState.loaded && String(brandsCloudState.activeVersion || '') === String(root.activeVersion || '') && localSnapshotMatchesRoot) return;
       try{
-        const remoteBrands = await cloudReadWithTimeout(()=>readBrandsStateFromCloud(root), 5200);
+        const remoteBrands = await readBrandsStateFromCloud(root);
         if(applyGeneration !== brandsRemoteApplyGeneration) return;
         if(hasBrandsCloudPending() && !pendingBrandsIsSupersededBy(remoteBrands.activeVersion)) return;
         clearBrandsCloudPending();
         applyBrandsState(remoteBrands);
         brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
-        brandsCloudVerifiedThisSession = true;
-        syncStatus = cloudStatusFromState();
+        syncStatus = 'synced';
         updateHeaderSub();
         render();
       }catch(e){
@@ -6945,11 +6715,9 @@ async function deletePriceNotificationsFromCloud(ids){
   }
   // The transaction has committed remotely. Only now replace local state and cache.
   rememberDeletedPriceNotifications(uniqueIds, committedTombstones);
-  priceNotificationsExplicitlyChanged = true;
   state.priceChangeNotifications = committedAlerts;
   try{ localStorage.setItem('price-notifs-cache', JSON.stringify(state.priceChangeNotifications)); }catch(e){}
-  const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
-  syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
+  syncStatus = 'synced';
   updateHeaderSub();
   render();
   return true;
@@ -7036,14 +6804,6 @@ function clearBrandsCloudSyncError(){
   try{ localStorage.removeItem(BRANDS_LAST_SYNC_ERROR_STORAGE_KEY); }catch(e){}
 }
 
-
-function cloudStatusFromState(){
-  if(!navigator.onLine) return 'offline';
-  if(!brandsCloudVerifiedThisSession || !brandsCloudState || !brandsCloudState.loaded) return 'connecting';
-  if(hasBrandsCloudPending() || getReportsNeedingCloudBackfill().length || hasStockMovementCloudPending() || userManagementCloudPending) return 'queued';
-  return 'synced';
-}
-
 async function pushToCloud(force, suppressToast, options){
   const preserveStatus = !!(options && options.preserveStatus);
   // Save locally first to prevent data loss
@@ -7075,10 +6835,10 @@ async function pushToCloud(force, suppressToast, options){
     // just-imported products/reports from vanishing when this device syncs.
     let cloudData = {}, cloudExcelData = {}, cloudPdfData = {}, cloudReportData = {};
     const cloudReads = await Promise.all([
-      cloudReadWithTimeout(()=>fbDocRef.get({source:'server'}), 2600),
-      fbExcelDocRef ? cloudReadWithTimeout(()=>fbExcelDocRef.get(), 2600) : Promise.resolve(null),
-      fbPdfDocRef ? cloudReadWithTimeout(()=>fbPdfDocRef.get(), 2600) : Promise.resolve(null),
-      fbReportDocRef ? cloudReadWithTimeout(()=>fbReportDocRef.get(), 2600) : Promise.resolve(null)
+      fbDocRef.get({source:'server'}).catch(function(){ return null; }),
+      fbExcelDocRef ? fbExcelDocRef.get().catch(function(){ return null; }) : Promise.resolve(null),
+      fbPdfDocRef ? fbPdfDocRef.get().catch(function(){ return null; }) : Promise.resolve(null),
+      fbReportDocRef ? fbReportDocRef.get().catch(function(){ return null; }) : Promise.resolve(null)
     ]);
     if(cloudReads[0] && cloudReads[0].exists) cloudData = cloudReads[0].data() || {};
     if(cloudReads[1] && cloudReads[1].exists) cloudExcelData = cloudReads[1].data() || {};
@@ -7111,14 +6871,7 @@ async function pushToCloud(force, suppressToast, options){
     priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, cloudData.priceChangeNotificationTombstones);
     persistPriceDeleteTombstones();
     const priceDeleteIds = new Set(Object.keys(priceDeleteTombstones));
-    // A generic save must never let an empty/stale device erase the shared
-    // price history. Only an explicit price import or individual deletion may
-    // change this array; normal scan/settings sync preserves the remote list.
-    const remotePriceNotifs = filterPriceNotificationsByTombstones(cloudData.priceChangeNotifications || [], priceDeleteTombstones);
-    const localPriceNotifs = Array.isArray(state.priceChangeNotifications) ? state.priceChangeNotifications : [];
-    const mergedPriceNotifs = priceNotificationsExplicitlyChanged
-      ? mergeArrayByKey(remotePriceNotifs, localPriceNotifs, x=>x.id, priceDeleteIds)
-      : mergeArrayByKey(remotePriceNotifs, localPriceNotifs, x=>x.id, new Set());
+    const mergedPriceNotifs = mergeArrayByKey(cloudData.priceChangeNotifications, state.priceChangeNotifications, x=>x.id, priceDeleteIds);
     const mergedAppNotifications = mergeArrayByKey(cloudData.appNotifications, state.appNotifications, x=>x.id, deletedKeys.appNotifications);
     const mergedPdfImports = mergeArrayByKey(cloudPdfData.pdfImports || cloudData.pdfImports, state.pdfImports, x=>x.id, deletedKeys.pdfImports);
     for(const pdfRecord of mergedPdfImports){
@@ -7133,7 +6886,6 @@ async function pushToCloud(force, suppressToast, options){
     state.a7Excels = mergedA7Excels;
     state.a4Excels = mergedA4Excels;
     state.priceChangeNotifications = mergedPriceNotifs;
-    priceNotificationsExplicitlyChanged = false;
     state.appNotifications = mergedAppNotifications;
     state.pdfImports = mergePdfMetadata(mergedPdfImports);
     cachePdfImports();
@@ -7148,8 +6900,8 @@ async function pushToCloud(force, suppressToast, options){
       stockDataUpdatedAt: stockCacheUpdatedAt || Date.now(),
       scanLog: mergedScanLog,
       scanLogTombstones: scanLogTombstones,
-      auditLog: mergedAuditLog, 
-      appUsers: state.appUsers || {}, 
+      auditLog: mergedAuditLog,
+      appUsers: state.appUsers || {},
       userRoles: state.userRoles || {},
       a7Template: state.a7Template || null, a7TemplateVersion: A7_TEMPLATE_VERSION,
       appLocked: !!state.appLocked,
@@ -7183,11 +6935,7 @@ async function pushToCloud(force, suppressToast, options){
     await fbDocRef.set(sharedPayload, { merge: true });
     clearUserManagementCloudPending();
     clearBrandsCloudSyncError();
-    // A successful sharedData write alone is not proof that the authoritative
-    // Brands snapshot or an imported Excel report reached Firestore. Do not
-    // show a fake Synced state while any authoritative/payload queue remains.
-    const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
-    syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
+    syncStatus = 'synced';
     checkForceLogout();
     render();
     return true;
@@ -7195,8 +6943,7 @@ async function pushToCloud(force, suppressToast, options){
     // A single import/payload write can fail while Firestore is reachable.
     // Preserve local data and do not downgrade the verified connection state.
     if(!preserveStatus && !navigator.onLine) syncStatus = 'offline';
-    else if(!preserveStatus && syncStatus !== 'synced') syncStatus = cloudStatusFromState();
-    else if(preserveStatus && syncStatus === 'connecting' && brandsCloudVerifiedThisSession) syncStatus = 'queued';
+    else if(!preserveStatus && syncStatus !== 'synced') syncStatus = 'connecting';
     rememberBrandsCloudSyncError(e, hasBrandsCloudPending() ? 'brands-version' : (hasStockMovementCloudPending() ? 'stock-movement-version' : 'shared-data'));
     if(force && !suppressToast) showToast("Cloud save queued safely — Retry Connection will continue automatically.", true);
     updateHeaderSub();
@@ -7209,7 +6956,7 @@ function scheduleCloudVerification(delay){
   cloudRetryTimer = window.setTimeout(function(){
     cloudRetryTimer = null;
     retryCloudConnection({ silent:true });
-  }, Math.max(500, Number(delay) || 2500));
+  }, Math.max(1000, Number(delay) || 8000));
 }
 
 async function retryCloudConnection(options){
@@ -7221,49 +6968,40 @@ async function retryCloudConnection(options){
     if(!opts.silent) showToast('No internet connection yet. Your local data is safe.', true);
     return false;
   }
-  if(!ensureFirebaseReady() || !fbDocRef || !firebase || !firebase.firestore){
-    if(syncStatus !== 'synced') syncStatus = 'connecting';
+  if(!fbReady || !fbDocRef || !firebase || !firebase.firestore){
+    syncStatus = 'connecting';
     updateHeaderSub(); render();
-    scheduleCloudVerification(1200);
+    scheduleCloudVerification(2500);
     if(!opts.silent) showToast('Cloud connection is still starting. Your local data is safe.');
     return false;
   }
   state._cloudRetryRunning = true;
-  const wasCloudSynced = syncStatus === 'synced';
-  if(!wasCloudSynced) syncStatus = 'connecting';
+  syncStatus = 'connecting';
   updateHeaderSub(); render();
   try{
-    // The SDK network wake-up can itself reject or remain pending after a
-    // WebView transport failure. Bound it and let the normal retry scheduler
-    // continue without losing local data.
-    await runCloudSyncWithWatchdog(function(){ return ensureFirestoreNetwork(); }, 8000);
+    const db = firebase.firestore();
+    if(typeof db.enableNetwork === 'function') await db.enableNetwork();
     // Brands is the authoritative inventory source. Apply it before the broad
     // shared-data replay; the latter may contain legacy reports/movements and
     // must never keep the user on a stale local stock/price snapshot.
-    // Do not race these Firestore promises against a timeout: the losing
-    // promise would keep running and the next retry could overlap it, which
-    // wedges Firebase WebView clients in Connecting/INTERNAL ASSERTION state.
-    const brandsRefreshed = await refreshCanonicalBrandsState();
-    // Never replay stale shared data before the authoritative Brands snapshot has
-    // been verified during an unverified startup. This avoids both stale writes
-    // and a retry that appears to hang while the canonical read is unresolved.
-    if(!brandsRefreshed && !brandsCloudVerifiedThisSession && !hasBrandsCloudPending()){
-      throw new Error('Authoritative Brands snapshot is not verified yet');
-    }
-    // The remaining shared-data replay is best-effort, but it must have a hard
-    // watchdog. A wedged Firestore get/set otherwise leaves _cloudRetryRunning
-    // true and pins the UI to Connecting indefinitely.
-    const replayed = await runCloudSyncWithWatchdog(function(){
-      return pushToCloud(true, true, { preserveStatus:true });
-    }, opts.force ? 45000 : 12000);
-    const cloudFullyVerified = !!(brandsCloudVerifiedThisSession && brandsCloudState && brandsCloudState.loaded && !hasBrandsCloudPending() && !getReportsNeedingCloudBackfill().length);
-    syncStatus = cloudFullyVerified ? 'synced' : cloudStatusFromState();
+    await Promise.race([
+      refreshCanonicalBrandsState(),
+      new Promise(function(resolve){ setTimeout(resolve, 10000); })
+    ]);
+    // The remaining shared-data replay is best-effort. A slow legacy payload
+    // must not hold the UI in Connecting forever; its pending markers and the
+    // scheduled retry preserve the data safely.
+    const replayed = await Promise.race([
+      pushToCloud(true, true, { preserveStatus:true }),
+      new Promise(function(resolve){ setTimeout(function(){ resolve(false); }, 10000); })
+    ]);
+    syncStatus = 'synced';
     queueReportCloudBackfill();
     queueBrandsCloudBackfill();
     queueStockMovementCloudBackfill();
     updateHeaderSub(); render();
-    if(!replayed || !cloudFullyVerified){
-      scheduleCloudVerification(2500);
+    if(!replayed){
+      scheduleCloudVerification(10000);
       if(!opts.silent) showToast('✓ Cloud connected. Pending data will retry automatically.');
       return true;
     }
@@ -7271,13 +7009,8 @@ async function retryCloudConnection(options){
     return true;
   }catch(error){
     console.warn('Verified cloud reconnect failed', error);
-    // Keep retrying in the background, but do not leave Settings stuck on
-    // CONNECTING forever when a WebView RPC never resolves.
-    // A transient cloud failure must not become a permanent ERROR state.
-    // Pending Brands writes remain queued; otherwise keep the neutral
-    // connecting state until authoritative verification succeeds.
-    if(!wasCloudSynced) syncStatus = navigator.onLine ? (hasBrandsCloudPending() ? 'queued' : 'connecting') : 'offline';
-    if(navigator.onLine) scheduleCloudVerification(2500);
+    syncStatus = navigator.onLine ? 'connecting' : 'offline';
+    if(navigator.onLine) scheduleCloudVerification(8000);
     updateHeaderSub(); render();
     if(!opts.silent) showToast(navigator.onLine ? 'Cloud is checking again. Your local data is safe.' : 'No internet connection yet. Your local data is safe.', !navigator.onLine);
     return false;
@@ -7290,21 +7023,17 @@ async function refreshCanonicalBrandsState(){
   if(!storageReady || !state.user || !fbReady || !fbBrandsDocRef || hasBrandsCloudPending()) return false;
   const applyGeneration = ++brandsRemoteApplyGeneration;
   try{
-    // Bound both reads. A dead WebView socket otherwise leaves the reconnect
-    // promise pending indefinitely and permanently pins the UI to CONNECTING.
-    const rootSnap = await cloudReadWithTimeout(()=>fbBrandsDocRef.get({ source:'server' }), 2600);
-    if(!rootSnap || !rootSnap.exists) return false;
+    const rootSnap = await fbBrandsDocRef.get({ source:'server' });
+    if(!rootSnap.exists) return false;
     const root = rootSnap.data() || {};
     if(!root.activeVersion || hasBrandsCloudPending()) return false;
     // Always apply the verified server snapshot on resume/reconnect. Relying only
     // on activeVersion can leave a client showing a stale local summary while the
     // global header still says Synced.
-    const remoteBrands = await cloudReadWithTimeout(()=>readBrandsStateFromCloud(root), 5200);
-    if(!remoteBrands) return false;
+    const remoteBrands = await readBrandsStateFromCloud(root);
     if(applyGeneration !== brandsRemoteApplyGeneration || hasBrandsCloudPending()) return false;
     applyBrandsState(remoteBrands);
     brandsCloudState = { activeVersion:remoteBrands.activeVersion, updatedAt:remoteBrands.updatedAt, loaded:true };
-    brandsCloudVerifiedThisSession = true;
     syncStatus = 'synced';
     updateHeaderSub();
     render();
@@ -7314,62 +7043,17 @@ async function refreshCanonicalBrandsState(){
     return false;
   }
 }
-
-async function forceSyncCloud(){
-  if(state._cloudRetryRunning){
-    showToast('A cloud sync is already running. Please wait.', true);
-    return false;
-  }
-  if(!navigator.onLine){
-    syncStatus = 'offline';
-    updateHeaderSub(); render();
-    showToast('No internet connection. Local data is safe and will sync when online.', true);
-    return false;
-  }
-  showToast('Force Sync started — checking cloud and sending pending data…');
-  const completed = await retryCloudConnection({ silent:true, force:true });
-  const finalStatus = cloudStatusFromState();
-  syncStatus = finalStatus;
-  updateHeaderSub(); render();
-  if(!completed){
-    showToast('Force Sync could not complete. Local data is safe; retry will continue automatically.', true);
-    return false;
-  }
-  if(finalStatus === 'synced'){
-    showToast('✓ Force Sync completed — cloud data is up to date.');
-    return true;
-  }
-  showToast('Force Sync reached the cloud. Remaining data is queued safely for retry.');
-  return true;
-}
-
 window.addEventListener('online', function(){
-  firestoreNetworkReady = false;
-  firestoreNetworkReadyAt = 0;
   if(storageReady && state.user) window.setTimeout(function(){
     retryCloudConnection({ silent:true }).then(function(){ return refreshCanonicalBrandsState(); });
   }, 300);
 });
-window.addEventListener('offline', function(){
-  firestoreNetworkReady = false;
-  firestoreNetworkReadyAt = 0;
-});
 document.addEventListener('visibilitychange', function(){
-  if(!document.hidden && storageReady && state.user){
-    firestoreNetworkReady = false;
-    firestoreNetworkReadyAt = 0;
-    window.setTimeout(function(){ retryCloudConnection({ silent:true }); }, 300);
-  }
+  if(!document.hidden && storageReady && state.user) window.setTimeout(refreshCanonicalBrandsState, 300);
 });
 
 async function saveBrandsState(reason){
   markBrandsCloudPending(reason || 'brands-update');
-  // Excel is an authoritative inventory snapshot. Never merge a stale retry's
-  // products, overrides, or prices back into the imported workbook snapshot.
-  if(String(reason || '') === 'brands-excel-import'){
-    brandsCloudPending.replaceAll = true;
-    persistBrandsCloudPending();
-  }
   // Publish the authoritative Brands version first. Previously this was buried
   // inside pushToCloud(), so an unrelated large report/PDF/stock-movement write
   // could abort the broad sync before the Excel snapshot was activated.
@@ -7382,14 +7066,15 @@ async function saveBrandsState(reason){
   // root verification before reporting completion.
   for(let attempt = 0; attempt < 3 && !brandsSaved; attempt++){
     try{
-      await ensureFirestoreNetwork();
+      if(firebase && firebase.firestore && typeof firebase.firestore().enableNetwork === 'function'){
+        await firebase.firestore().enableNetwork();
+      }
       brandsSaved = await syncBrandsStateToCloud();
       if(!brandsSaved) throw new Error('Brands publisher is not ready');
     }catch(error){
       lastBrandsError = error;
       rememberBrandsCloudSyncError(error, 'brands-version-attempt-' + (attempt + 1));
       brandsSaved = false;
-      if(scheduleFirestoreHardRecovery(error)) break;
       if(attempt < 2) await new Promise(function(resolve){ setTimeout(resolve, 500 * (attempt + 1)); });
     }
   }
@@ -7521,9 +7206,9 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.1';
-const UPDATE_CHECK_VERSION = '6.1.1';
-const APP_BUILD = '171';
+const APP_VERSION = '6.1.2';
+const UPDATE_CHECK_VERSION = '6.1.2';
+const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
 const TAB_TITLES = { scan:'Scan', brands:'Brands', aging:'Ageing', data:'Data', log:'Log', settings:'Settings', a7:'A7', a4:'A4', createExcel:'EXCEL' };
 function updateActiveTabTitle(tab){
@@ -8047,21 +7732,13 @@ function confirmClearLocalOverrides(){
 function openUpdatePrompt(message, url){
   state._pendingUpdateUrl = url || '';
   openActionModal(
-    '<div style="font-weight:800;font-size:18px;color:var(--text);margin-bottom:10px;">App Update Available</div>' +
-    '<div style="font-size:14px;line-height:1.5;color:var(--muted);margin-bottom:16px;">' + esc(message) + '</div>' +
-    '<div id="backgroundUpdateStatus" style="font-size:12px;color:var(--accent);background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:14px;">' + (canUseNativeUpdateFlow() ? 'Downloading securely in the background…' : 'The latest version is ready to download.') + '</div>' +
+    '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">App Update Available</div>' +
+    '<div style="font-size:14px;line-height:1.5;margin-bottom:16px;">' + esc(message) + '</div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
     '<button class="btn btn-ghost" onclick="closeActionModal()">Later</button>' +
-    '<button class="btn btn-accent" onclick="const url=state._pendingUpdateUrl; closeActionModal(); downloadAndInstallUpdate(url);">' + (canUseNativeUpdateFlow() ? 'Install when ready' : 'Update Now') + '</button>' +
+    '<button class="btn btn-accent" onclick="const url=state._pendingUpdateUrl; closeActionModal(); downloadAndInstallUpdate(url);">Update Now</button>' +
     '</div>'
   );
-}
-function startBackgroundUpdateDownload(){
-  if(!state.availableUpdate || !state.availableUpdate.url || state._updateDownloadStarted) return;
-  state._updateDownloadStarted = true;
-  downloadAvailableUpdate();
-  const status = document.getElementById('backgroundUpdateStatus');
-  if(status) status.innerText = 'Update download started. Install will be available when Android finishes downloading.';
 }
 function openPasswordModal(username){
   state._passwordEditUser = username;
@@ -8187,11 +7864,11 @@ window.onscroll = function() {
   const btn = document.getElementById("backToTopBtn");
   if(!btn) return;
   let st = window.pageYOffset || document.documentElement.scrollTop;
-  
+
   // Only show when scrolling UP and scrolled down at least 300px
   if (st < lastScrollTop && st > 300) {
     btn.style.display = "flex";
-    
+
     // Clear existing timer and set a new one to hide after 5 seconds
     clearTimeout(backToTopTimer);
     backToTopTimer = setTimeout(() => {
@@ -8453,7 +8130,7 @@ function setTab(tab, fromBack, animateFromBottomNav){
   state.addProductOpen = false; state.editingStockBarcode = null; state.editingLogId = null;
   state.editingProductSL = null; state.editProductForm = null; state.editProductDirty = false;
   state.barcodeSuggestions = []; state.showSuggestions = false;
-  
+
   const navIds = ['navScan', 'navBrands', 'navAging', 'navData', 'navLog', 'navSettings'];
   navIds.forEach(id => {
       const el = document.getElementById(id);
@@ -8475,7 +8152,6 @@ function setTab(tab, fromBack, animateFromBottomNav){
 function syncBadge(){
   if(syncStatus==='synced') return ' · <span style="color:#3DDC84;">☁ Synced</span>';
   if(syncStatus==='connecting') return ' · <span style="color:var(--dim);">☁ Connecting…</span>';
-  if(syncStatus==='queued') return ' · <span style="color:var(--yellow);">☁ Cloud reachable · Sync queued</span>';
   if(syncStatus==='error') return ' · <span style="color:var(--dim);">☁ Reconnecting…</span>';
   return ' · <span style="color:#F2B705;">☁ Offline (saved on reconnect)</span>' + offlineStockLabel();
 }
@@ -8554,18 +8230,18 @@ function getBarcodeNumberSuggestions(partial){
 
   // Strip all zeros from the input to find the core sequence of numbers
   const core = partial.replace(/0/g, '');
-  
+
   const seen = new Set();
   const results = [];
   const allRows = getAllRows();
-  
+
   for(let i = 0; i < allRows.length && results.length < 15; i++){
     const r = allRows[i];
     if(!r.Barcode) continue;
     const bc = r.Barcode.trim();
     // Strip all zeros from the stored barcode to see if the core sequence matches
     const bcCore = bc.replace(/0/g, '');
-    
+
   // Match if:
   // 1. Barcode starts with the typed partial
   // 2. Barcode contains the typed partial
@@ -8716,8 +8392,7 @@ function saveScan(){
       party: row.Party||'', partyName: row["Party Name"]||'',
       refQty, scannedQty: addQty, lastAddQty: addQty,
       history: [{ts: new Date().toISOString(), qty: addQty}],
-      deviceId: state.deviceId, deviceName: state.deviceName||'',
-      scannedBy: (state.user && state.user.username) || state.operatorName || state.deviceName || state.deviceId
+      deviceId: state.deviceId, deviceName: state.deviceName||''
     });
     state.lastAction = { type:'new', id: newId };
     // Optimistic: update UI immediately, sync in background
@@ -8782,8 +8457,8 @@ function openAddProduct(prefillBarcode){
   render();
 }
 function closeAddProduct(){ state.addProductOpen = false; render(); }
-function setAddField(field, val){ 
-  state.addForm[field] = val; 
+function setAddField(field, val){
+  state.addForm[field] = val;
   if(field === 'barcode' && val.length >= 4) {
     // Suggest brand/party from existing data based on barcode prefix
     const q = val.trim();
@@ -8935,7 +8610,7 @@ function buildGroupedIndex(){
   const map = new Map();
   const pf = state.brandPartyFilter.trim().toLowerCase();
   const isPartyMode = state.brandSort === 'party';
-  
+
   visibleRowsForUser().forEach(r=>{
     // Apply party filter if present
     if(pf) {
@@ -8943,7 +8618,7 @@ function buildGroupedIndex(){
       const pName = (r["Party Name"]||'').toLowerCase();
       if(!partyCode.includes(pf) && !pName.includes(pf)) return;
     }
-    
+
     let key;
     if(isPartyMode){
       if(r["Party Name"] && r["Party Name"].trim()){
@@ -8953,8 +8628,8 @@ function buildGroupedIndex(){
         const brand = (r.Brand || '').trim();
         if(brand && brand !== 'OTHERS / UNBRANDED'){
           // Look for any product with same brand that has party info
-          const brandMatch = getAllRows().find(x => 
-            (x.Brand||'').trim() === brand && 
+          const brandMatch = getAllRows().find(x =>
+            (x.Brand||'').trim() === brand &&
             x["Party Name"] && x["Party Name"].trim() &&
             x.SL !== r.SL
           );
@@ -8975,7 +8650,7 @@ function buildGroupedIndex(){
     }
     // Skip 'Imported item' products in OTHERS/UNBRANDED section
     if(key === "OTHERS / UNBRANDED" && (r.Description||'').trim().toLowerCase() === 'imported item') return;
-    
+
     if(!map.has(key)) map.set(key, []);
     map.get(key).push(r);
   });
@@ -9005,13 +8680,13 @@ function mergeItemsByProductCode(items){
     const party = (r.Party||'').trim();
     const bc = r.Barcode || '';
     const cleanBc = cleanBC(bc);
-    
+
     // MERGE LOGIC:
     // 1. Same product code + same party + same cleaned barcode
     // 2. Same barcode + same description (as requested: "ORE BARCODE AND ORE DESCRIPTION AANENKIL ADH RANDUM MERGE CHEYYUKA")
     const key1 = code ? (code + '|' + party + '|' + cleanBc) : null;
     const key2 = (bc && r.Description) ? (bc + '|' + r.Description.trim()) : null;
-    
+
     let existingIdx = -1;
     if(key1 && seen.has(key1)) existingIdx = seen.get(key1);
     else if(key2 && seen.has(key2)) existingIdx = seen.get(key2);
@@ -9323,7 +8998,7 @@ function exportExcel(mode){
   XLSX.utils.book_append_sheet(wb, ws, "Scan Log");
   const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
   const fileName = filenamePrefix + stamp + ".xlsx";
-  
+
   if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){
     try {
       const b64 = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
@@ -9434,23 +9109,12 @@ function fallbackCopy(text){
 }
 
 async function clearLog(){
-  showToast('Use the individual User delete button below.', true);
-}
-function scanLogUserKey(item){
-  return String(item && (item.scannedBy || item.operatorName || item.userName || item.deviceName || item.deviceId) || 'Unknown User').trim() || 'Unknown User';
-}
-async function deleteScanLogsForUser(userKey){
-  const target = String(userKey || 'Unknown User');
-  const matches = scanLog.filter(function(item){ return scanLogUserKey(item) === target; });
-  if(!matches.length) return;
-  if(!(await appConfirm('Delete all ' + matches.length + ' scan log entr' + (matches.length === 1 ? 'y' : 'ies') + ' for ' + target + '?', 'Delete User Log'))) return;
-  matches.forEach(function(item){ if(item && item.id) markScanLogDeleted(item.id); });
-  scanLog = scanLog.filter(function(item){ return scanLogUserKey(item) !== target; });
-  addAuditLog('User Log Deleted', 'Deleted scan log for ' + target);
+  if(!(await appConfirm('Clear the entire scan log? This cannot be undone.', 'Clear Scan Log'))) return;
+  scanLog.forEach(function(item){ if(item && item.id) markScanLogDeleted(item.id); });
+  scanLog = [];
   await saveLog();
   updateHeaderSub();
   render();
-  showToast('✓ Deleted logs for ' + target);
 }
 
 // ---------- Operator name ----------
@@ -9838,81 +9502,45 @@ function isCurrentRelease(data){
   // does not provide a build tag.
   return compareReleaseVersions(latestVersion, legacyCheckVersion) <= 0;
 }
-async function fetchLatestGitHubRelease(){
-  const controller = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = controller ? setTimeout(function(){ controller.abort(); }, 8000) : null;
-  try{
-    const response = await fetch('https://api.github.com/repos/aasif010656-web/Stock-scanner/releases/latest', {
-      cache:'no-store',
-      headers:{'Accept':'application/vnd.github+json'},
-      signal: controller ? controller.signal : undefined
-    });
-    if(!response.ok) throw new Error('GitHub release check HTTP ' + response.status);
-    const release = await response.json();
-    const asset = (release.assets || []).find(function(item){ return /\.apk$/i.test(String(item.name || '')); });
-    const tag = String(release.tag_name || '').trim();
-    const match = tag.match(/^v?([0-9]+(?:\.[0-9]+)*)(?:[-_]build[-_](\d+))?/i);
-    return {
-      version: match ? match[1] : tag.replace(/^v/i, ''),
-      releaseTag: tag,
-      downloadUrl: asset ? String(asset.browser_download_url || '') : '',
-      updatedAt: release.published_at ? Date.parse(release.published_at) : Date.now(),
-      source: 'github'
-    };
-  }finally{
-    if(timer) clearTimeout(timer);
-  }
-}
 async function checkForUpdates(isAuto){
   const status = document.getElementById('updateStatus');
   const currentVersion = APP_VERSION;
   if(status) status.innerText = "Checking for updates...";
+
+  if(!fbReady){
+    if(status) status.innerText = "Connect to internet to check for updates.";
+    return;
+  }
+
   try {
-    // GitHub is the release source of truth and does not depend on the
-    // Firestore socket. This keeps Update Check usable even while inventory
-    // sync is reconnecting or Android reports a stale Firestore assertion.
-    let data = null;
-    try{
-      data = await fetchLatestGitHubRelease();
-    }catch(githubError){
-      // Legacy Firestore metadata remains a compatibility fallback only.
-      if(!ensureFirebaseReady()) throw githubError;
-      await ensureFirestoreNetwork();
-      const updateDoc = await Promise.race([
-        firebase.firestore().collection('appSettings').doc('updateInfo').get({source:'server'}),
-        new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('Release metadata request timed out')); }, 8000); })
-      ]);
-      data = updateDoc.exists ? Object.assign({}, updateDoc.data(), {source:'firestore'}) : null;
-    }
-    if(!data){
-      if(status) status.innerText = navigator.onLine ? "No update information found." : "Device is offline. Connect to internet and try again.";
-      return;
-    }
-    const latestUrl = resolveLatestUpdateUrl(data);
-    const releaseLabel = String(data.releaseTag || ('v' + data.version));
-    if(!isCurrentRelease(data) && data.version && latestUrl){
-      state.availableUpdate = { url: latestUrl, version: data.version, releaseTag: releaseLabel };
-      state.updateInstallReady = false;
-      if(state.tab === 'settings') render();
-      const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
-      addWebsiteNotification({ id:'update-' + releaseLabel, category:'update', tab:'settings', ts:Number(data.updatedAt || Date.now()), title:'App update available', body:msg, silent:true });
-      if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
-      if(isAuto && !state._updateNotified){
-        state._updateNotified = true;
-        openUpdatePrompt(msg, latestUrl);
-        if(canUseNativeUpdateFlow()) window.setTimeout(startBackgroundUpdateDownload, 350);
+    // We'll store update info in a special collection or a fixed document in Firestore
+    const updateDoc = await firebase.firestore().collection('appSettings').doc('updateInfo').get();
+    if(updateDoc.exists){
+      const data = updateDoc.data();
+	      const latestUrl = resolveLatestUpdateUrl(data);
+	      const releaseLabel = String(data.releaseTag || ('v' + data.version));
+	      if(!isCurrentRelease(data) && data.version && latestUrl){
+	        state.availableUpdate = { url: latestUrl, version: data.version, releaseTag: releaseLabel };
+	        state.updateInstallReady = false;
+	        if(state.tab === 'settings') render();
+	        const msg = "New version " + data.version + " (" + releaseLabel + ") is available!";
+        addWebsiteNotification({ id:'update-' + releaseLabel, category:'update', tab:'settings', ts:Number(data.updatedAt || Date.now()), title:'App update available', body:msg, silent:true });
+        if(status) status.innerHTML = msg + " <button class='btn btn-accent btn-sm' onclick='downloadAndInstallUpdate(\"" + latestUrl + "\")'>Install Now</button>";
+        if(isAuto && !state._updateNotified){
+          state._updateNotified = true;
+          openUpdatePrompt(msg, latestUrl);
+	        }
+	      } else {
+	        state.availableUpdate = null;
+	        state.updateInstallReady = false;
+	        if(state.tab === 'settings') render();
+        if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
       }
     } else {
-      state.availableUpdate = null;
-      state.updateInstallReady = false;
-      state._updateDownloadStarted = false;
-      if(state.tab === 'settings') render();
-      if(status) status.innerText = "You are on the latest version (v" + currentVersion + ").";
+      if(status) status.innerText = "No update information found.";
     }
   } catch(e) {
-    const detail = String(e && (e.message || e.code) || 'unknown error').slice(0, 140);
-    const safeDetail = /INTERNAL ASSERTION|Unexpected state/i.test(detail) ? 'Release check is temporarily unavailable. Inventory data is safe; retry in a moment.' : detail;
-    if(status) status.innerText = "Update check unavailable: " + safeDetail;
+    if(status) status.innerText = "Error checking for updates.";
   }
 }
 
@@ -10157,22 +9785,12 @@ function pick(row, keys){
   for(const k of keys){
     if(row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') return String(row[k]).trim();
   }
-  // Excel producers commonly change header casing/spacing (for example
-  // `STOCK QTY`, `Stock Qty`, or `stock qty`). Resolve the same logical field
-  // case-insensitively so uppercase workbooks cannot silently become price-only
-  // imports with zero stock updates.
-  const normalizeHeader = value => String(value || '').toLowerCase().replace(/[\s_]+/g, ' ').trim();
-  const wanted = new Set(keys.map(normalizeHeader));
-  for(const actual of Object.keys(row || {})){
-    if(wanted.has(normalizeHeader(actual)) && row[actual] !== undefined && row[actual] !== null && String(row[actual]).trim() !== '') return String(row[actual]).trim();
-  }
   return '';
 }
 
 async function handleImportExcel(fileInput){
   if(state.user && state.user.role === 'promoter'){ showToast('Not available for this account', true); if(fileInput) fileInput.value=''; return; }
   if(state.importProgress && state.importProgress.active){ showToast('Brands Excel import is already running'); if(fileInput) fileInput.value=''; return; }
-  ensureFirebaseReady();
   const file = fileInput.files && fileInput.files[0];
   if(!file) return;
   try{
@@ -10189,7 +9807,7 @@ async function handleImportExcel(fileInput){
 
     // Map to detect same product code + same party having multiple barcodes (for auto-merge)
     const importCodePartyMap = new Map();
-    
+
     // Detect Price column - handle more variations
     const priceCol = Object.keys(rows[0] || {}).find(k => {
         const lower = k.toLowerCase();
@@ -10204,7 +9822,7 @@ async function handleImportExcel(fileInput){
       const r = rows[rowIdx];
       const barcode = normalizeBarcode13(pick(r, ['Barcode','barcode','BARCODE']));
       if(!barcode){ skipped++; continue; }
-      
+
       // Import Price if column exists
       if(priceCol && r[priceCol] !== undefined && r[priceCol] !== '') {
           const p = String(r[priceCol]).trim();
@@ -10230,7 +9848,6 @@ async function handleImportExcel(fileInput){
                       ts: Date.now(),
                       targetTab: 'log'
                   });
-                  priceNotificationsExplicitlyChanged = true;
                   queuePartyPriceNotification(notifParty, notifDesc);
               }
           }
@@ -10642,18 +10259,7 @@ function getDashboardAnalytics(){
   // those pieces (the reported 17,709 vs 17,718 discrepancy). Promoters remain
   // party-filtered and therefore continue using their visible rows only.
   const authoritativeAdminSnapshot = !isPromoterUser() && brandsCloudState && brandsCloudState.loaded && Object.keys(stockOverrides || {}).length > 0;
-  // Firestore snapshots may contain both a raw 13-digit barcode and its
-  // leading-zero-insensitive alias. They represent one product, not two
-  // quantities. Canonicalize before totals/counts so stale snapshots cannot
-  // display inflated stock such as 23,397 pcs after a workbook import.
-  const canonicalStockOverrides = {};
-  if(authoritativeAdminSnapshot){
-    Object.keys(stockOverrides || {}).forEach(function(key){
-      const canonical = normalizedOverrideBarcode(key) || String(key);
-      if(!Object.prototype.hasOwnProperty.call(canonicalStockOverrides, canonical) || canonical === String(key)) canonicalStockOverrides[canonical] = stockOverrides[key];
-    });
-  }
-  const authoritativeTotalQty = authoritativeAdminSnapshot ? Object.keys(canonicalStockOverrides).reduce(function(sum, key){ return sum + (Number(canonicalStockOverrides[key]) || 0); }, 0) : null;
+  const authoritativeTotalQty = authoritativeAdminSnapshot ? Object.keys(stockOverrides).reduce(function(sum, key){ return sum + (Number(stockOverrides[key]) || 0); }, 0) : null;
   const totalQty = authoritativeTotalQty == null ? stockRows.reduce((sum,item) => sum + item.qty, 0) : authoritativeTotalQty;
   const valueFor = item => { const unit = Number(String(item.row.WAC || item.row.Price || item.row['Selling Price'] || 0).replace(/,/g,'')) || 0; return item.qty * unit; };
   const calculatedStockValue = stockRows.reduce((sum,item) => sum + valueFor(item), 0);
@@ -10663,10 +10269,7 @@ function getDashboardAnalytics(){
   // verified 23.09 value 108,416.761. Bind the metadata to the same snapshot
   // timestamp so an older cached Excel value cannot override a newer snapshot.
   const latestExcel = state.latestExcelUpdate || {};
-  // Prefer the positive value from the guarded active Excel snapshot over any
-  // embedded workbook/local-cache calculation. This prevents an older browser
-  // from displaying stale values such as 111,752.33 after a newer import.
-  const authoritativeStockValue = authoritativeAdminSnapshot && Number.isFinite(Number(latestExcel.updatedValueTotal)) && Number(latestExcel.updatedValueTotal) >= 0 && String(latestExcel.ts || '') === String(brandsCloudState.updatedAt || '') ? Number(latestExcel.updatedValueTotal) : null;
+  const authoritativeStockValue = authoritativeAdminSnapshot && latestExcel.updatedValueTotal != null && String(latestExcel.ts || '') === String(brandsCloudState.updatedAt || '') ? Number(latestExcel.updatedValueTotal) : null;
   const stockValue = authoritativeStockValue == null ? calculatedStockValue : authoritativeStockValue;
   const homeAppliancesValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'home').reduce((sum,item) => sum + valueFor(item), 0);
   const electronicsValue = stockRows.filter(item => stockSummaryCategory(item.row) === 'electronics').reduce((sum,item) => sum + valueFor(item), 0);
@@ -10677,7 +10280,7 @@ function getDashboardAnalytics(){
   const topRow = topSale ? rows.find(r => String(r.Barcode || r.Product || '') === String(topSale)) : null;
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const recentPriceChanges = (state.priceChangeNotifications || []).filter(n => Number(n.ts || 0) >= cutoff).length;
-  return {totalQty, stockValue, homeAppliancesValue, electronicsValue, productCount:authoritativeAdminSnapshot ? Object.keys(canonicalStockOverrides).length : stockRows.length, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
+  return {totalQty, stockValue, homeAppliancesValue, electronicsValue, productCount:authoritativeAdminSnapshot ? Object.keys(stockOverrides).length : stockRows.length, brandCount:brands.size, recentPriceChanges, topSale: topRow ? (topRow.Description || topSale) : '—'};
 }
 
 function renderScan(){
@@ -10782,7 +10385,7 @@ function renderScan(){
       html += '</div>';
       html += '</div>';
     } else {
-    
+
     // Check if item is in ELECTRONICS DAMAGE LIST
     let isDamaged = false;
     const damageReport = state.reports ? state.reports.find(rep => rep.name.includes('ELECTRONICS DAMAGE LIST')) : null;
@@ -10845,7 +10448,7 @@ function renderScan(){
   if(!state.matchedRow && !state.multiMatches && !state.notFoundCode && !state.addProductOpen){
     html += '<div class="empty">Scan a barcode or type it and press Enter.<br/>Using an external scanner gun? Just focus this input box and scan.</div>';
   }
-  
+
   // Last 5 scans preview
   const myScans = scanLog.filter(l=>l.deviceId===state.deviceId).slice(0,5);
   if(myScans.length > 0 && !state.matchedRow && !state.addProductOpen){
@@ -10895,18 +10498,6 @@ function barcodeMatchesForScan(value){
     const matches = BARCODE_INDEX.get(key);
     if(matches && matches.length) return matches;
   }
-  // Offline cache recovery: the suggestion list searches the row collection,
-  // while an older cache can have a stale BARCODE_INDEX after Brands overrides
-  // are applied. Scan the same rows as a final exact-match fallback so a
-  // product shown as a suggestion can never be rejected as "not found".
-  const wanted = new Set(variants.filter(Boolean).map(function(key){ return cleanBC(key); }));
-  const fallback = getAllRows().filter(function(row){
-    return [row && row.Barcode].concat((row && row._extraBarcodes) || []).some(function(raw){
-      const normalized = normalizeBarcode13(raw);
-      return wanted.has(cleanBC(normalized)) || wanted.has(cleanBC(raw));
-    });
-  });
-  if(fallback.length) return fallback;
   return [];
 }
 
@@ -11541,26 +11132,15 @@ async function deletePriceNotification(id){
   else showToast('Could not delete this alert. Please check your connection and try again.', true);
 }
 
-async function deletePriceNotificationsForParty(party){
-  const key = normalizedPartyCode(party || '__unassigned__');
-  const visible = (state.priceChangeNotifications || []).filter(function(notification){
-    return (isStaffOrAdmin() || canViewParty(notification.party || notification.partyName)) && normalizedPartyCode(notification.party || notification.partyName || '__unassigned__') === key;
-  });
-  if(!visible.length) return;
-  const label = party === '__unassigned__' ? 'Unassigned party' : String(party || 'party');
-  if(!(await appConfirm('Delete all ' + visible.length + ' price update(s) for ' + label + '?', 'Delete Party Price Updates'))) return;
-  const deleted = await deletePriceNotificationsFromCloud(visible.map(function(item){ return item.id; }));
-  if(deleted) showToast('Deleted ' + label + ' price updates from all devices');
-  else showToast('Could not delete party price updates. Please check your connection and try again.', true);
-}
 async function deleteAllPriceNotifications(){
-  const visible = (state.priceChangeNotifications || []).filter(function(notification){ return isStaffOrAdmin() || canViewParty(notification.party || notification.partyName); });
+  const myPartyCodes = (state.user && Array.isArray(state.user.partyCodes)) ? state.user.partyCodes : [];
+  const visible = (state.priceChangeNotifications || []).filter(n => isStaffOrAdmin() || myPartyCodes.includes(n.party));
   if(!visible.length) return;
-  if(!(await appConfirm('Delete all ' + visible.length + ' visible price update(s)?', 'Delete All Price Updates'))) return;
+  if(!(await appConfirm('Delete all ' + visible.length + ' price-change alert(s)?', 'Delete Price Alerts'))) return;
   const visibleIds = new Set(visible.map(n=>n.id));
   const deleted = await deletePriceNotificationsFromCloud(Array.from(visibleIds));
-  if(deleted) showToast('Deleted all visible price updates from all devices');
-  else showToast('Could not delete price updates. Please check your connection and try again.', true);
+  if(deleted) showToast('Deleted all alerts from all devices');
+  else showToast('Could not delete alerts. Please check your connection and try again.', true);
 }
 
 function renderA4(){
@@ -12189,9 +11769,8 @@ function renderSettings(){
   html += '<div class="ios-section-title">Connection & Recovery</div>';
   html += '<div class="ios-group">';
   const retryLabel = syncStatus === 'synced' ? 'Verify Connection' : (syncStatus === 'connecting' ? 'Checking…' : 'Retry Connection');
-  const cloudDetail = syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'queued' ? 'Cloud reachable · pending sync will retry' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Checking cloud connection'));
+  const cloudDetail = syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Checking cloud connection');
   html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Connection', '<span style="font-size:11px;color:var(--muted);">' + esc(cloudDetail) + '</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="retryCloudConnection()">' + retryLabel + '</button>');
-  html += iosRow('⚡', 'linear-gradient(#FFB300,#F57C00)', 'Force Sync', '<span style="font-size:11px;color:var(--muted);">Send pending changes and refresh cloud data now</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="forceSyncCloud()">' + (state._cloudRetryRunning ? 'Syncing…' : 'Force Sync') + '</button>');
   html += '</div>';
 
   if(state.user.role === 'admin'){
@@ -12263,7 +11842,7 @@ function renderSettings(){
 function renderAging(){
   let html = '<div class="section">';
   html += '<h2>Aging Details</h2>';
-  
+
   html += '<div class="btn-row" style="margin-bottom:12px;">';
   html += '<button class="btn btn-accent" onclick="exportAgingExcel()">⬇ Export Full Aging Report</button>';
   html += '</div>';
@@ -12274,7 +11853,7 @@ function renderAging(){
     targetParties = targetParties.filter(p => codes.includes(p));
   }
   const allRows = getAllRows();
-  
+
   targetParties.forEach(party => {
       const partyItems = allRows.filter(r => {
           const age = parseInt(r['Age Days']) || 0;
@@ -12289,7 +11868,7 @@ function renderAging(){
           html += '<span style="font-weight:700;">' + esc(party) + ' (' + partyItems.length + ' items)</span>';
           html += '<span>' + (isOpen ? '▲' : '▼') + '</span>';
           html += '</div>';
-          
+
           if(isOpen) {
               html += '<div style="padding:14px;">';
 	              html += '<div class="btn-row" style="margin-bottom:12px;">';
@@ -12298,7 +11877,7 @@ function renderAging(){
               partyItems.forEach(item => {
                   const qty = effectiveQty(item);
                   const recentSaleQty = getRecentSaleQty(item.Barcode, 30);
-                  
+
                   html += '<div style="margin-bottom:12px; padding:10px; border:2px solid var(--border2); border-radius:10px;">';
                   html += '<div class="product-title">' + esc(item.Description) + '</div>';
                   html += '<div class="chip-row">';
@@ -12317,7 +11896,7 @@ function renderAging(){
           html += '</div>';
       }
   });
-  
+
   html += '</div>';
   return html;
 }
@@ -12332,9 +11911,9 @@ function shareAgingParty(party) {
         const qty = effectiveQty(r);
         return r.Party === party && age >= 90 && qty > 0;
     });
-    
+
     if(partyItems.length === 0) { showToast("No items to share", true); return; }
-    
+
     try {
         // 1. Create Excel (XLSX) using SheetJS
         const data = partyItems.map(item => ({
@@ -12346,14 +11925,14 @@ function shareAgingParty(party) {
             'WAC': item.WAC,
             'Brand': item.Brand
         }));
-        
+
         const ws = XLSX.utils.json_to_sheet(data);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Ageing Report");
         const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
         const blob = new Blob([wbout], {type:"application/octet-stream"});
         const fileName = `Ageing_${party}_${new Date().toLocaleDateString()}.xlsx`;
-        
+
         // 2. Share logic
         if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){
             window.AndroidNative.shareFile(arrayBufferToBase64(wbout), fileName);
@@ -12364,7 +11943,7 @@ function shareAgingParty(party) {
                 title: 'Ageing Report: ' + party,
                 text: 'Please find the ageing report for ' + party
             };
-            
+
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
                 navigator.share(shareData).catch(e => {
                     shareTextFallback(party, partyItems);
@@ -12414,7 +11993,7 @@ function exportAgingExcel(partyFilter){
     }
     const allRows = getAllRows();
     const data = [];
-    
+
     targetParties.forEach(party => {
         const partyItems = allRows.filter(r => {
             const age = parseInt(r['Age Days']) || 0;
@@ -12436,7 +12015,7 @@ function exportAgingExcel(partyFilter){
             });
         });
     });
-    
+
     if(data.length === 0) { showToast("No items to export", true); return; }
     data.sort((a,b) => (parseInt(b['Age Days'])||0) - (parseInt(a['Age Days'])||0));
 
@@ -12452,7 +12031,7 @@ function exportAgingExcel(partyFilter){
     }
     const buf = s2ab(wbout);
     const fileName = (partyFilter ? 'Aging_' + partyFilter : 'Aging_Full') + '_' + new Date().toISOString().slice(0,10) + '.xlsx';
-    
+
     if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){
         // Native share via base64
         window.AndroidNative.shareFile(arrayBufferToBase64(buf), fileName);
@@ -12721,7 +12300,6 @@ function renderReportExcelTable(idx) {
 function triggerImportData(){ document.getElementById('importDataInput').click(); }
 
 async function handleImportData(fileInput){
-    ensureFirebaseReady();
     const file = fileInput.files[0];
     if(!file) return;
     render();
@@ -12730,7 +12308,7 @@ async function handleImportData(fileInput){
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, {type:'array'});
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {defval:''}); render();
-        
+
         // Normalize Damage List
         if(file.name.includes('ELECTRONICS DAMAGE LIST')) {
             rows.forEach(r => {
@@ -12764,7 +12342,7 @@ async function handleImportData(fileInput){
             markBrandsCloudPending('data-excel-prices');
             showToast("✓ Prices updated: " + count + " entries");
         }
-        
+
         if(!state.reports) state.reports = [];
         const existingIdx = state.reports.findIndex(r => r.name === file.name);
         const reportObj = { id:'report_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), name:file.name, data:rows, rowCount:rows.length, date:displayDateTime(Date.now()), updatedAt:Date.now(), audience:'staff_admin', payloadStored:false, importedBy:String((state.user && state.user.username) || 'Staff/Admin') };
@@ -12781,17 +12359,7 @@ async function handleImportData(fileInput){
         importedLocally = true;
         render();
         try{
-            // Publish the report payload and its compact index independently
-            // first. This avoids losing a valid Excel upload merely because a
-            // separate sharedData/report/notification write is slow or large.
-            let reportCloudSyncCompleted = false;
-            if(fbReady && fbReportRowsRef && fbReportDocRef){
-                await saveReportRowsToCloud(reportObj);
-                await publishReportIndexToCloud();
-                reportCloudSyncCompleted = reportObj.payloadStored === true;
-            }
-            const broadCloudSyncCompleted = await pushToCloud(true, true, { preserveStatus: true });
-            const cloudSyncCompleted = reportCloudSyncCompleted || (broadCloudSyncCompleted === true && reportObj.payloadStored === true);
+            const cloudSyncCompleted = await pushToCloud(true, true, { preserveStatus: true });
             if(cloudSyncCompleted === true && reportObj.payloadStored === true){
                 reportObj.cloudSyncPending = false;
                 cacheReportIndexLocal();
@@ -12802,7 +12370,6 @@ async function handleImportData(fileInput){
                 reportObj.cloudSyncPending = true;
                 cacheReportRowsLocal(reportObj);
                 cacheReportIndexLocal();
-                queueReportCloudBackfill();
                 render();
                 showToast('✓ Excel saved locally. Cloud sync will retry when online.');
             }
@@ -12811,17 +12378,12 @@ async function handleImportData(fileInput){
             reportObj.cloudSyncPending = true;
             cacheReportRowsLocal(reportObj);
             cacheReportIndexLocal();
-            queueReportCloudBackfill();
             console.error('Excel cloud sync pending', cloudError);
-            const cloudDetail = String(cloudError && (cloudError.message || cloudError.code) || 'connection unavailable').slice(0, 120);
-            showToast('✓ Excel saved locally. Cloud sync queued: ' + cloudDetail, true);
+            showToast('✓ Excel saved locally. Cloud sync will retry when online.');
         }
     } catch(e) {
         console.error('Excel import sync error', e);
-        if(importedLocally){
-            queueReportCloudBackfill();
-            showToast('✓ Excel imported on this device. Cloud sync queued: ' + String(e && e.message || 'connection unavailable').slice(0, 120), true);
-        }else showToast('Import failed: ' + e.message, true);
+        showToast(importedLocally ? '✓ Excel imported on this device. Cloud sync will retry when online.' : 'Import failed: ' + e.message, !importedLocally);
     }
     fileInput.value = '';
 }
@@ -12840,7 +12402,7 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
   let html = '';
   html += '<div class="divider-label" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
   html += '<span>Party-wise Price Update History (' + notifications.length + ')</span>';
-  if(notifications.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">🗑 Delete All</button>';
+  if(notifications.length) html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteAllPriceNotifications()">Delete All</button>';
   html += '</div>';
   if(partyOptions.length){
     html += '<div class="sort-row" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;">';
@@ -12872,7 +12434,6 @@ function renderPartyPriceHistory(notifications, partyOptions, selectedParty){
     html += '<div style="display:flex;align-items:center;gap:10px;">';
     html += '<span style="font-size:20px;">' + (expanded ? '📂' : '📁') + '</span>';
     html += '<div style="min-width:0;flex:1;"><div style="font-weight:800;font-size:14px;">' + esc(displayParty) + '</div><div style="font-size:11px;color:var(--muted);">' + items.length + ' price update' + (items.length===1?'':'s') + (latest ? ' · Latest ' + latest : '') + '</div></div>';
-    html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);flex-shrink:0;" onclick="event.stopPropagation();deletePriceNotificationsForParty(\'' + safeParty + '\')" aria-label="Delete ' + esc(displayParty) + ' price updates">🗑</button>';
     html += '<span style="font-size:18px;color:var(--muted);">' + (expanded ? '⌃' : '⌄') + '</span>';
     html += '</div></div>';
     if(expanded){
@@ -12975,16 +12536,9 @@ function renderLog(){
   html += '<button class="btn" onclick="triggerRestore()">📂 Restore Backup</button>';
   html += '</div>';
   html += '<div class="backup-note">Backup saves everything on this device (stock corrections, scan log, added products) as one file.</div>';
-  const scanUsers = {};
-  scanLog.forEach(function(item){ const key = scanLogUserKey(item); scanUsers[key] = (scanUsers[key] || 0) + 1; });
-  if(Object.keys(scanUsers).length){
-    html += '<div class="divider-label">Delete by User</div><div class="btn-row" style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:8px;">';
-    Object.keys(scanUsers).sort().forEach(function(userKey){
-      const safeUser = esc(userKey).replace(/'/g, "\\'");
-      html += '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="deleteScanLogsForUser(\'' + safeUser + '\')">🗑 ' + esc(userKey) + ' (' + scanUsers[userKey] + ')</button>';
-    });
-    html += '</div>';
-  }
+  html += '<div class="btn-row" style="margin-bottom:14px;">';
+  html += '<button class="btn btn-ghost" onclick="clearLog()">Clear Log</button>';
+  html += '</div>';
   if(scanLog.length===0){
     html += '<div class="empty">No scan log entries yet.<br/>Scan an item and save it to see history here.</div>';
   return html;
@@ -13133,7 +12687,7 @@ try{
 (function passwordStrengthIndicator(){
   const passwordInput = document.getElementById('password');
   if(!passwordInput) return;
-  
+
   function calculateStrength(password){
     let score = 0;
     if(password.length >= 8) score++;
@@ -13142,20 +12696,20 @@ try{
     if(/[A-Z]/.test(password)) score++;
     if(/[0-9]/.test(password)) score++;
     if(/[!@#$%^&*]/.test(password)) score++;
-    
+
     if(score <= 2) return 'weak';
     if(score <= 4) return 'medium';
     return 'strong';
   }
-  
+
   passwordInput.addEventListener('input', function(){
     const field = this.closest('.auth-field');
     if(!field) return;
-    
+
     const strength = this.value.length > 0 ? calculateStrength(this.value) : null;
-    
+
     field.classList.remove('has-password', 'strength-weak', 'strength-medium', 'strength-strong');
-    
+
     if(strength){
       field.classList.add('has-password', `strength-${strength}`);
     }
@@ -13165,10 +12719,10 @@ try{
 // ---------- Advanced Input Handling ----------
 (function advancedInputHandling(){
   const inputs = [document.getElementById('username'), document.getElementById('password')];
-  
+
   inputs.forEach(function(input){
     if(!input) return;
-    
+
     // Prevent paste of harmful content
     input.addEventListener('paste', function(e){
       const text = e.clipboardData.getData('text');
@@ -13178,7 +12732,7 @@ try{
         console.warn('Password too long');
       }
     });
-    
+
     // Auto-capitalize username first letter (optional)
     if(input.id === 'username'){
       input.addEventListener('input', function(){
@@ -13199,7 +12753,7 @@ try{
         user.focus();
       }
     }
-    
+
     // Alt + P: Focus password
     if(e.altKey && e.key === 'p'){
       const pass = document.getElementById('password');
@@ -13208,7 +12762,7 @@ try{
         pass.focus();
       }
     }
-    
+
     // Alt + E: Toggle password show/hide
     if(e.altKey && e.key === 'e'){
       const toggle = document.getElementById('togglePassword');
@@ -13217,7 +12771,7 @@ try{
         toggle.click();
       }
     }
-    
+
     // Alt + M: Toggle remember me
     if(e.altKey && e.key === 'm'){
       const remember = document.getElementById('rememberMe');
@@ -13237,12 +12791,12 @@ try{
   const password = document.getElementById('password');
   const loginBtn = document.getElementById('loginButton');
   const rememberMe = document.getElementById('rememberMe');
-  
+
   if(username) username.setAttribute('aria-label', 'Username input');
   if(password) password.setAttribute('aria-label', 'Password input');
   if(loginBtn) loginBtn.setAttribute('aria-label', 'Login button');
   if(rememberMe) rememberMe.setAttribute('aria-label', 'Remember me checkbox');
-  
+
   // Announce loading state
   const togglePassword = document.getElementById('togglePassword');
   if(togglePassword){
@@ -13254,12 +12808,12 @@ try{
 (function sessionManagement(){
   // Detect if already logged in
   const isLoggedIn = localStorage.getItem('app-isLoggedIn');
-  
+
   if(isLoggedIn === 'true'){
     // Optional: redirect to app
     console.log('User already logged in');
   }
-  
+
   // Detect idle time
   let idleTimeout;
   function resetIdleTimer(){
@@ -13268,11 +12822,11 @@ try{
       console.log('Session idle - consider logout');
     }, 15 * 60 * 1000); // 15 minutes
   }
-  
+
   document.addEventListener('mousemove', resetIdleTimer);
   document.addEventListener('keypress', resetIdleTimer);
   document.addEventListener('click', resetIdleTimer);
-  
+
   resetIdleTimer();
 })();
 
@@ -13280,12 +12834,12 @@ try{
 (function capsLockDetection(){
   const passwordInput = document.getElementById('password');
   const messageDiv = document.getElementById('message');
-  
+
   if(!passwordInput) return;
-  
+
   function checkCapsLock(e){
     const capsOn = e.getModifierState && e.getModifierState('CapsLock');
-    
+
     if(capsOn){
       messageDiv.textContent = '⚠️ Caps Lock is ON';
       messageDiv.style.color = '#ffcc99';
@@ -13296,7 +12850,7 @@ try{
       }
     }
   }
-  
+
   passwordInput.addEventListener('keyup', checkCapsLock);
   passwordInput.addEventListener('keydown', checkCapsLock);
 })();
@@ -13306,9 +12860,9 @@ try{
   const username = document.getElementById('username');
   const password = document.getElementById('password');
   const messageDiv = document.getElementById('message');
-  
+
   if(!username || !password) return;
-  
+
   // Validate username format
   username.addEventListener('blur', function(){
     const val = this.value.trim();
@@ -13317,7 +12871,7 @@ try{
       messageDiv.style.color = '#ff9999';
     }
   });
-  
+
   // Validate password length
   password.addEventListener('blur', function(){
     if(this.value.length > 0 && this.value.length < 6){
@@ -13331,7 +12885,7 @@ try{
 (function autofillSupport(){
   const username = document.getElementById('username');
   const password = document.getElementById('password');
-  
+
   // Detect autofill
   setInterval(function(){
     if(username && username.value){
@@ -13347,23 +12901,23 @@ try{
 (function networkStatus(){
   const loginBtn = document.getElementById('loginButton');
   const messageDiv = document.getElementById('message');
-  
+
   if(!loginBtn) return;
-  
+
   function disableOnline(){
     loginBtn.disabled = true;
     loginBtn.style.opacity = '0.5';
     if(messageDiv) messageDiv.textContent = 'No internet connection';
   }
-  
+
   function enableOnline(){
     loginBtn.disabled = false;
     loginBtn.style.opacity = '1';
   }
-  
+
   window.addEventListener('offline', disableOnline);
   window.addEventListener('online', enableOnline);
-  
+
   if(!navigator.onLine){
     disableOnline();
   }
@@ -13378,9 +12932,9 @@ try{
   const rememberCheckbox = document.getElementById('rememberMe');
   const loginBtn = document.getElementById('loginButton');
   const messageDiv = document.getElementById('message');
-  
+
   if(!passwordInput || !togglePasswordBtn) return; // Skip if not on login screen
-  
+
   // Password toggle functionality
   togglePasswordBtn.addEventListener('click', function(e){
     e.preventDefault();
@@ -13392,14 +12946,14 @@ try{
       eyeIcon.innerHTML = `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>`;
     }
   });
-  
+
   // Remember me functionality
   const savedUsername = localStorage.getItem('grandhyper_username');
   if(savedUsername){
     usernameInput.value = savedUsername;
     rememberCheckbox.checked = true;
   }
-  
+
   rememberCheckbox.addEventListener('change', function(){
     if(this.checked){
       localStorage.setItem('grandhyper_username', usernameInput.value);
@@ -13407,18 +12961,18 @@ try{
       localStorage.removeItem('grandhyper_username');
     }
   });
-  
+
   usernameInput.addEventListener('input', function(){
     messageDiv.textContent = '';
     if(rememberCheckbox.checked){
       localStorage.setItem('grandhyper_username', this.value);
     }
   });
-  
+
   passwordInput.addEventListener('input', function(){
     messageDiv.textContent = '';
   });
-  
+
   // Enter key handling
   passwordInput.addEventListener('keydown', function(e){
     if(e.key === 'Enter'){
@@ -13426,42 +12980,42 @@ try{
       loginBtn.click();
     }
   });
-  
+
   usernameInput.addEventListener('keydown', function(e){
     if(e.key === 'Enter'){
       e.preventDefault();
       passwordInput.focus();
     }
   });
-  
+
   // Login button handling
   loginBtn.addEventListener('click', function(){
     if(this.classList.contains('loading')) return;
-    
+
     const user = usernameInput.value.trim();
     const pass = passwordInput.value;
-    
+
     messageDiv.textContent = '';
-    
+
     if(!user){
       messageDiv.textContent = 'Please enter your username.';
       usernameInput.focus();
       return;
     }
-    
+
     if(!pass){
       messageDiv.textContent = 'Please enter your password.';
       passwordInput.focus();
       return;
     }
-    
+
     if(rememberCheckbox.checked){
       localStorage.setItem('grandhyper_username', user);
     }
-    
+
     messageDiv.textContent = 'Logging in...';
     loginBtn.classList.add('loading');
-    
+
     // Call existing submitLogin function if it exists
     if(typeof submitLogin === 'function'){
       submitLogin();
@@ -13473,7 +13027,7 @@ try{
       }, 1000);
     }
   });
-  
+
   // Clear message on focus
   [usernameInput, passwordInput].forEach(function(input){
     input.addEventListener('focus', function(){
@@ -13496,23 +13050,21 @@ function showStartupRecovery(error){
     state.reports = JSON.parse(localStorage.getItem('app-reports') || '[]');
     state.openReportIndex = null;
     state.openAgingParty = null;
-    
+
     // Monthly check for ageing list
     const currentMonth = new Date().getMonth();
     if(state.agingMonthly !== currentMonth) {
         state.agingMonthly = currentMonth;
         // You could trigger a sync or a specific cleanup here if needed
     }
-    
+
     const savedTheme = localStorage.getItem('app-theme');
     applyTheme(savedTheme || state.theme);
     if(state.user && state.user.username === 'Asif') state.operatorName = 'Asif';
     initFirebase();
     render();
     await loadStorage();
-    // Never block first paint on the release check. The update prompt/download
-    // starts in the background after the local-first screen is usable.
-    window.setTimeout(function(){ checkForUpdates(true).catch(function(){}); }, 900);
+    // Website intentionally has no app-update UI; native Android retains its own update flow.
   }catch(error){
     showStartupRecovery(error);
   }
