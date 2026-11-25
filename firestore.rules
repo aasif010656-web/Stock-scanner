@@ -2,14 +2,29 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Existing app access is intentionally preserved for shared state and all
-    // nested Brands version/chunk documents introduced for large Excel imports.
-    match /stockScannerApp/{docPath=**} {
-      allow read, write: if true;
+    // The app has its own login (no Firebase Auth), so these rules cannot tell users
+    // apart. They only limit WHICH paths a client may touch. Release metadata is
+    // written by CI with a service account, which bypasses these rules.
+
+    // Shared app documents (every one the client uses) and all of their sub-documents
+    // (Brands/stock-movement versions and chunks, report rows and payloads).
+    match /stockScannerApp/{docId} {
+      allow read, write: if docId in ['sharedData', 'excelData', 'pdfData', 'reportData', 'brandsData', 'stockMovementData'];
+    }
+    match /stockScannerApp/{docId}/{rest=**} {
+      allow read, write: if docId in ['sharedData', 'excelData', 'pdfData', 'reportData', 'brandsData', 'stockMovementData'];
     }
 
+    // Client error reports: write-only. Nobody can read, edit or delete them from a client.
+    match /stockScannerApp/clientErrors/events/{eventId} {
+      allow create: if true;
+    }
+
+    // Update/release info: clients may read it, never write it. Without this, anyone
+    // could point the in-app updater at a different APK.
     match /appSettings/{docId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false;
     }
   }
 }
