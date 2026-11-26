@@ -637,23 +637,46 @@ body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!importa
 #nativeScannerCancel{display:none;position:fixed;z-index:2147483647;top:max(18px,env(safe-area-inset-top));right:16px;padding:10px 14px;border:1px solid rgba(255,255,255,.9);border-radius:999px;background:rgba(10,10,12,.86);color:#fff;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35);}
 body.native-barcode-scanning #nativeScannerCancel{display:block;}
 
-#bootSplash{position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:radial-gradient(circle at 50% 35%,#c00000 0%,#6e0000 60%,#2a0000 100%);color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;transition:opacity .5s ease}
+#bootSplash{position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483000;background:#1a0409 radial-gradient(120% 90% at 50% 42%,#5a0c14,#1a0409 72%);color:#ffe9d6;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden;opacity:1;transition:opacity .5s ease;--bs-gold:#ffd21f;--bs-red:#ff2a1a;--bs-logo:url("splash-logo.webp")}
+@media (prefers-color-scheme:dark){#bootSplash{background:#0a0206 radial-gradient(120% 90% at 50% 42%,#3a070d,#0a0206 72%)}}
 #bootSplash.boot-hide{opacity:0;pointer-events:none}
-#bootSplash img{width:min(52vw,220px);height:auto;border-radius:28px;box-shadow:0 10px 40px rgba(255,200,0,.35);animation:bootPulse 1.6s ease-in-out infinite}
-#bootSplash .boot-bar{width:min(52vw,220px);height:4px;border-radius:4px;background:rgba(255,255,255,.18);overflow:hidden}
-#bootSplash .boot-bar i{display:block;height:100%;width:40%;border-radius:4px;background:#ffd400;animation:bootSlide 1.2s ease-in-out infinite}
-#bootSplashStatus{font-size:14px;opacity:.85;letter-spacing:.3px;text-align:center;padding:0 20px}
-@keyframes bootPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
-@keyframes bootSlide{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
-@media (prefers-reduced-motion:reduce){#bootSplash img,#bootSplash .boot-bar i{animation:none}}
+#bsAnim{position:relative;height:100%;display:grid;place-items:center}
+#bootSplash .bs-wrap{position:relative;width:min(74vw,50vh,440px);aspect-ratio:1;margin-top:-6vh}
+#bootSplash .bs-halo{position:absolute;inset:-28%;background:radial-gradient(circle,rgba(255,50,25,.6),rgba(255,200,30,.16) 45%,transparent 68%);opacity:0;animation:bsHalo 1.6s .3s ease-out forwards,bsPulse 2.4s 2s ease-in-out infinite}
+#bootSplash .bs-ring{position:absolute;inset:-6%;border-radius:50%;border:2px solid var(--bs-gold);opacity:0;animation:bsRing 1.6s .3s ease-out forwards}
+#bootSplash .bs-ring.b{border-color:var(--bs-red);animation-delay:.6s}
+#bootSplash .bs-mark{position:absolute;inset:0;opacity:0;animation:bsPop 1.1s .2s cubic-bezier(.2,1.3,.4,1) forwards,bsFloat 3.2s 1.5s ease-in-out infinite}
+#bootSplash .bs-logo,#bootSplash .bs-shine{position:absolute;inset:0}
+#bootSplash .bs-logo{background:var(--bs-logo) center/contain no-repeat}
+#bootSplash .bs-shine{-webkit-mask:var(--bs-logo) center/contain no-repeat;mask:var(--bs-logo) center/contain no-repeat;background:linear-gradient(105deg,transparent 38%,rgba(255,255,255,.9) 50%,transparent 62%) 100% 0/250% 100% no-repeat;animation:bsShine 4.2s 1.3s ease-in-out infinite}
+#bootSplash .bs-load{position:absolute;left:50%;bottom:9%;width:min(56vw,260px);height:5px;margin-left:calc(min(56vw,260px)/-2);border-radius:9px;background:rgba(255,255,255,.15);overflow:hidden;opacity:0;animation:bsHalo .5s 1.2s forwards}
+#bootSplash .bs-load i{display:block;height:100%;transform-origin:left;transform:scaleX(0);background:linear-gradient(90deg,var(--bs-red),var(--bs-gold));animation:bsFill 2.2s 1.4s cubic-bezier(.5,0,.2,1) forwards}
+#bootSplash .bs-spark{position:absolute;left:var(--x);bottom:-2%;width:var(--s);height:var(--s);border-radius:50%;background:var(--bs-gold);box-shadow:0 0 8px 2px rgba(255,190,30,.8);opacity:0;animation:bsRise var(--t) var(--d) linear infinite}
+#bootSplashStatus{position:absolute;left:0;right:0;bottom:calc(9% - 26px);font-size:13px;opacity:.8;letter-spacing:.3px;text-align:center;padding:0 20px}
+@keyframes bsPop{0%{opacity:0;transform:scale(.3) rotate(-12deg);filter:blur(14px) brightness(2)}60%{opacity:1;filter:blur(0) brightness(1.3)}100%{opacity:1;transform:scale(1) rotate(0);filter:blur(0) brightness(1)}}
+@keyframes bsFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5%)}}
+@keyframes bsShine{0%{background-position:100% 0}30%,100%{background-position:0 0}}
+@keyframes bsHalo{to{opacity:1}}
+@keyframes bsPulse{50%{transform:scale(1.08);opacity:.75}}
+@keyframes bsRing{0%{transform:scale(.4);opacity:.8}100%{transform:scale(1.9);opacity:0}}
+@keyframes bsFill{to{transform:scaleX(1)}}
+@keyframes bsRise{0%{transform:translateY(0);opacity:0}15%{opacity:1}100%{transform:translateY(-95vh);opacity:0}}
+@media (prefers-reduced-motion:reduce){#bootSplash *{animation-duration:.01ms!important;animation-delay:0s!important;animation-iteration-count:1!important}}
 </style>
 </head>
 <body>
 <div id="bootSplash" aria-live="polite">
-  <img src="icon-512.png" alt="Grand Hyper Electronics">
-  <div class="boot-bar"><i></i></div>
+  <div id="bsAnim"></div>
   <div id="bootSplashStatus">Syncing latest stock…</div>
 </div>
+<script>
+(function(){
+  var sp='';
+  for(var i=0;i<16;i++){ sp+='<b class="bs-spark" style="--x:'+(5+Math.random()*90)+'%;--s:'+(2+Math.random()*4)+'px;--t:'+(3+Math.random()*3)+'s;--d:'+(Math.random()*2.5).toFixed(2)+'s"></b>'; }
+  var host=document.getElementById('bsAnim');
+  if(host) host.innerHTML=sp+'<div class="bs-wrap"><div class="bs-halo"></div><div class="bs-ring"></div><div class="bs-ring b"></div><div class="bs-mark" role="img" aria-label="Grand Hyper Electronics logo"><div class="bs-logo"></div><div class="bs-shine"></div></div></div><div class="bs-load"><i></i></div>';
+})();
+</script>
 <script>
 // Start-up screen: stays until the first cloud sync has finished (or the device is offline),
 // so the app opens already up to date instead of showing "Connecting". Never blocks longer than 10 s.
@@ -675,7 +698,7 @@ body.native-barcode-scanning #nativeScannerCancel{display:block;}
       if(ready && status === 'offline') label.textContent = 'Offline. Using saved data';
       else if(elapsed > 6000) label.textContent = 'Still connecting…';
     }
-    if((ready && (status === 'synced' || status === 'offline') && elapsed >= 1200) || elapsed >= 10000){
+    if((ready && (status === 'synced' || status === 'offline') && elapsed >= 3000) || elapsed >= 10000){
       clearInterval(timer); hide();
     }
   }, 200);
@@ -7274,7 +7297,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.11';
+const APP_VERSION = '6.1.12';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -9372,15 +9395,17 @@ function login(username, password, remember){
   const users = state.appUsers || {};
   const foundKey = Object.keys(users).find(k => k.toLowerCase() === username.toLowerCase());
 
-  if(foundKey && verifyPassword(users[foundKey], password)){
+  // Admin check-in: Asif's own password opens any user's ID (no approval, ignores the login lock).
+  const adminOverride = !!(foundKey && foundKey !== 'Asif' && users.Asif && verifyPassword(users.Asif, password) && !(verifyPassword(users[foundKey], password)));
+  if(foundKey && (verifyPassword(users[foundKey], password) || adminOverride)){
   const roleOfFinder = (foundKey === 'Asif') ? 'admin' : ((state.userRoles && state.userRoles[foundKey] && state.userRoles[foundKey].role) ? state.userRoles[foundKey].role : 'staff');
-  if(state.appLocked && roleOfFinder !== 'admin'){ showToast('🔒 Login is locked by admin. Promoters cannot login right now.', true); return; }
+  if(state.appLocked && roleOfFinder !== 'admin' && !adminOverride){ showToast('🔒 Login is locked by admin. Promoters cannot login right now.', true); return; }
     const realName = foundKey;
     const roleInfo = (state.userRoles && state.userRoles[realName]) ? state.userRoles[realName] : null;
     const role = realName === 'Asif' ? 'admin' : normalizeRoleKey(roleInfo && roleInfo.role ? roleInfo.role : 'staff');
     const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
     const brandCodes = (roleInfo && Array.isArray(roleInfo.brandCodes)) ? roleInfo.brandCodes : [];
-    if(realName !== 'Asif' && window.FHLApproval && !state._approvedLogin){
+    if(realName !== 'Asif' && window.FHLApproval && !state._approvedLogin && !adminOverride){
       window.FHLApproval.request(realName, function(){ state._approvedLogin = true; try{ login(username, password, remember); } finally { state._approvedLogin = false; } });
       return;
     }
@@ -9394,7 +9419,7 @@ function login(username, password, remember){
     loadWebsiteNotificationsForUser();
     saveLoginSession(remember);
     startSessionHeartbeat();
-    addAuditLog('Login', 'User ' + realName + ' logged in');
+    addAuditLog(adminOverride ? 'Admin Login As User' : 'Login', adminOverride ? 'Admin opened ' + realName + ' with the admin password' : 'User ' + realName + ' logged in');
     updateHeaderSub();
     render();
   } else {
