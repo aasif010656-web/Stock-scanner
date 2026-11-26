@@ -7254,7 +7254,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.6';
+const APP_VERSION = '6.1.7';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -11938,6 +11938,11 @@ function renderSettings(){
   html += iosRow('🎨', 'linear-gradient(#FF2D55,#C7003D)', 'App Theme', '<button class="btn btn-accent btn-sm" onclick="openThemePicker()">' + esc(activeThemeObj.name) + '</button>');
   html += '</div>';
 
+  if(isStaffOrAdmin()){
+    html += '<div class="ios-section-title">Tools</div><div class="ios-group">';
+    html += iosRow('🧰', 'linear-gradient(#34C759,#248A3D)', 'Stock, price & share tools', '<button class="btn btn-accent btn-sm" onclick="FHLTools.open()">Open</button>');
+    html += '</div>';
+  }
   // ---- Scan preferences ----
   html += '<div class="ios-section-title">Scan Preferences</div>';
   html += '<div class="ios-group">';
@@ -13259,6 +13264,189 @@ function showStartupRecovery(error){
     showStartupRecovery(error);
   }
 })();
+</script>
+<script>
+/* ===== FHL Tools panel: low stock, price history, daily summary, WhatsApp share, recent scans, duplicates, backup ===== */
+(function(){
+  var view = 'home', ctx = {};
+  function g(n){ try{ return (0,eval)(n); }catch(e){ return undefined; } }
+  function H(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function rows(){ try{ return getAllRows(); }catch(e){ return []; } }
+  function qtyOf(r){ var q = parseFloat(effectiveQty(r)); return isNaN(q) ? 0 : q; }
+  function priceOf(r){ try{ var p = priceForRow(r); return (p===undefined||p===null||p==='') ? '' : p; }catch(e){ return ''; } }
+  function fmt(n){ var x = Number(n); return isNaN(x) ? String(n==null?'':n) : (Math.round(x*1000)/1000).toString(); }
+  function bc(v){ try{ return normalizedOverrideBarcode(v); }catch(e){ return String(v||''); } }
+  function party(r){ return String(r.Party||'').trim(); }
+  function partyLabel(r){ return (party(r) + (r['Party Name'] ? ' · ' + r['Party Name'] : '')).trim() || '—'; }
+  function dstr(ts){ var d = new Date(Number(ts)||ts); return isNaN(d) ? '' : d.toLocaleDateString('en-GB') + ' ' + d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}); }
+  function limit(){ var v = parseFloat(localStorage.getItem('fhl-low-stock-limit')); return isNaN(v) ? 3 : v; }
+  function partyList(){ var m = {}; rows().forEach(function(r){ var p = party(r); if(p && !m[p]) m[p] = r['Party Name'] || ''; }); return Object.keys(m).sort().map(function(p){ return {code:p, name:m[p]}; }); }
+  function partyOptions(sel){ return '<option value="">All parties</option>' + partyList().map(function(p){ return '<option value="'+H(p.code)+'"'+(sel===p.code?' selected':'')+'>'+H(p.code+(p.name?' · '+p.name:''))+'</option>'; }).join(''); }
+  function el(){ var o = document.getElementById('fhlToolsOverlay'); if(!o){ o = document.createElement('div'); o.id = 'fhlToolsOverlay'; o.style.cssText = 'position:fixed;inset:0;z-index:9000;background:var(--bg,#0B0D14);color:var(--text,#EEF0F6);overflow:auto;-webkit-overflow-scrolling:touch;padding:0 0 40px;'; document.body.appendChild(o); } return o; }
+  var card = 'background:var(--panel,#1B1F2C);border:1px solid var(--border,#262B3B);border-radius:14px;padding:12px;margin:0 0 8px;';
+  var inp = 'width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid var(--border2,#333A4F);background:var(--bg,#0B0D14);color:inherit;font-size:15px;margin:0 0 8px;';
+  var muted = 'color:var(--muted,#9aa3b8);font-size:12px;';
+  function top(title){ return '<div style="position:sticky;top:0;z-index:2;background:var(--bg,#0B0D14);padding:14px 16px 10px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border,#262B3B);"><button class="btn btn-ghost btn-sm" onclick="FHLTools.back()">‹ Back</button><div style="font-weight:700;font-size:17px;flex:1;">'+H(title)+'</div></div><div style="padding:12px 16px;">'; }
+  function btn(label, js, cls){ return '<button class="btn '+(cls||'btn-accent')+'" style="width:100%;margin:4px 0;" onclick="'+js+'">'+label+'</button>'; }
+  function rowItem(r, extra){ return '<div style="'+card+'cursor:pointer;" onclick="FHLTools.openRow(\''+H(String(r.Barcode).replace(/'/g,''))+'\')"><div style="font-weight:600;font-size:14px;">'+H(r.Description||r.Product||'')+'</div><div style="'+muted+'">'+H(r.Barcode||'')+' · '+H(partyLabel(r))+'</div>'+(extra||'')+'</div>'; }
+
+  function home(){
+    var low = rows().filter(function(r){ return qtyOf(r) <= limit(); }).length;
+    var t = top('🧰 Tools');
+    function tile(ic, name, sub, v){ return '<div style="'+card+'cursor:pointer;display:flex;gap:12px;align-items:center;" onclick="FHLTools.go(\''+v+'\')"><div style="font-size:26px;">'+ic+'</div><div style="flex:1;"><div style="font-weight:700;">'+name+'</div><div style="'+muted+'">'+sub+'</div></div><div style="'+muted+'">›</div></div>'; }
+    t += tile('⚠️','Low stock','Limit '+limit()+' · '+low+' item(s) at or below','low');
+    t += tile('📈','Price history','Search an item, see every price change','price');
+    t += tile('🧾','Daily summary','Today: price changes, sales, scans','summary');
+    t += tile('💬','Share price list','Party-wise list to WhatsApp / any app','share');
+    t += tile('🕘','Recent scans','Tap to open the item again','scans');
+    t += tile('🧬','Duplicate finder','Same item name under different barcodes','dups');
+    t += tile('🎨','Display','Theme, large text','display');
+    t += tile('💾','Backup export','Products, prices, movements, scans in one Excel','backup');
+    return t + '</div>';
+  }
+  function lowView(){
+    var sel = ctx.lowParty || '', L = limit();
+    var list = rows().filter(function(r){ return (!sel || party(r)===sel) && qtyOf(r) <= L; }).sort(function(a,b){ return qtyOf(a)-qtyOf(b); });
+    var t = top('⚠️ Low stock');
+    t += '<div style="display:flex;gap:8px;"><div style="flex:1;"><div style="'+muted+'">Alert at or below</div><input type="number" style="'+inp+'" value="'+L+'" onchange="FHLTools.setLimit(this.value)"></div><div style="flex:2;"><div style="'+muted+'">Party</div><select style="'+inp+'" onchange="FHLTools.set(\'lowParty\',this.value)">'+partyOptions(sel)+'</select></div></div>';
+    t += '<div style="'+muted+'margin-bottom:8px;">'+list.length+' item(s)'+(list.length>150?' · showing first 150':'')+'</div>';
+    list.slice(0,150).forEach(function(r){ var q = qtyOf(r); t += rowItem(r, '<div style="margin-top:4px;font-weight:700;color:'+(q<=0?'#ff5a5f':'#ffb020')+';">Stock '+fmt(q)+(priceOf(r)!==''?' <span style="color:var(--muted,#9aa3b8);font-weight:400;">· Price '+H(fmt(priceOf(r)))+'</span>':'')+'</div>'); });
+    return t + '</div>';
+  }
+  function priceView(){
+    var q = String(ctx.pq||'').trim().toLowerCase(), t = top('📈 Price history');
+    t += '<input style="'+inp+'" placeholder="Barcode or item name" value="'+H(ctx.pq||'')+'" oninput="FHLTools.set(\'pq\',this.value,true)">';
+    if(q.length < 3){ return t + '<div style="'+muted+'">Type at least 3 letters or digits.</div></div>'; }
+    var found = rows().filter(function(r){ return (String(r.Description||'')+' '+String(r.Barcode||'')+' '+String(r.Product||'')).toLowerCase().indexOf(q) >= 0; }).slice(0,8);
+    if(!found.length) return t + '<div style="'+muted+'">No item found.</div></div>';
+    var notifs = (state.priceChangeNotifications||[]);
+    found.forEach(function(r){
+      var k = bc(r.Barcode);
+      var h = notifs.filter(function(n){ return bc(n.barcode)===k; }).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });
+      t += '<div style="'+card+'"><div style="font-weight:600;font-size:14px;">'+H(r.Description||'')+'</div><div style="'+muted+'">'+H(r.Barcode||'')+' · '+H(partyLabel(r))+'</div><div style="margin:6px 0;font-weight:700;">Current price: '+H(fmt(priceOf(r)))+' · Stock '+fmt(qtyOf(r))+'</div>';
+      if(!h.length) t += '<div style="'+muted+'">No price change recorded yet.</div>';
+      h.slice(0,30).forEach(function(n){ var o = Number(n.oldPrice), w = Number(n.newPrice), pc = (o && !isNaN(o) && !isNaN(w)) ? ((w-o)/o*100) : null; t += '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--border,#262B3B);padding:6px 0;font-size:13px;"><span style="'+muted+'">'+H(dstr(n.ts))+'</span><span>'+H(fmt(n.oldPrice))+' → <b>'+H(fmt(n.newPrice))+'</b>'+(pc===null?'':' <span style="color:'+(pc>0?'#ff7a7a':'#4cd6a0')+';">'+(pc>0?'+':'')+pc.toFixed(1)+'%</span>')+'</span></div>'; });
+      t += '</div>';
+    });
+    return t + '</div>';
+  }
+  function summaryData(){
+    var d = new Date(); d.setHours(0,0,0,0); var s0 = d.getTime();
+    var pc = (state.priceChangeNotifications||[]).filter(function(n){ return (n.ts||0) >= s0; });
+    var mv = (state.stockMovements||[]).filter(function(m){ return (m.ts||0) >= s0; });
+    var sales = mv.filter(function(m){ return m.type==='sale'; }), rest = mv.filter(function(m){ return m.type==='restock'; });
+    var sc = (scanLog||[]).filter(function(l){ var x = new Date(l.ts).getTime(); return x >= s0; });
+    var parties = {}; pc.forEach(function(n){ var p = n.party||'—'; parties[p] = (parties[p]||0)+1; });
+    return { date:new Date().toLocaleDateString('en-GB'), pc:pc.length, parties:parties, salesCount:sales.length, salesUnits:sales.reduce(function(a,m){return a+Math.abs(m.delta||0);},0), restockCount:rest.length, restockUnits:rest.reduce(function(a,m){return a+(m.delta||0);},0), scans:sc.length, low:rows().filter(function(r){ return qtyOf(r) <= limit(); }).length };
+  }
+  function summaryText(s){
+    var l = ['FHL ELECTRONICS — Daily summary '+s.date, 'Price changes: '+s.pc];
+    Object.keys(s.parties).forEach(function(p){ l.push('  '+p+': '+s.parties[p]); });
+    l.push('Sales: '+s.salesCount+' entries · '+fmt(s.salesUnits)+' units', 'Restock: '+s.restockCount+' entries · '+fmt(s.restockUnits)+' units', 'Scans logged: '+s.scans, 'Low stock items: '+s.low);
+    return l.join('\n');
+  }
+  function summaryView(){
+    var s = summaryData(), t = top('🧾 Daily summary — '+s.date);
+    function kv(a,b){ return '<div style="'+card+'display:flex;justify-content:space-between;"><span>'+a+'</span><b>'+b+'</b></div>'; }
+    t += kv('Price changes', s.pc);
+    Object.keys(s.parties).forEach(function(p){ t += '<div style="'+muted+'padding:0 12px 6px;">'+H(p)+': '+s.parties[p]+'</div>'; });
+    t += kv('Sales (units)', s.salesCount+' ('+fmt(s.salesUnits)+')') + kv('Restock (units)', s.restockCount+' ('+fmt(s.restockUnits)+')') + kv('Scans logged', s.scans) + kv('Low stock items', s.low);
+    t += btn('💬 Share summary', 'FHLTools.shareText(FHLTools._sum())');
+    return t + '</div>';
+  }
+  function shareView(){
+    var sel = ctx.shareParty || '', t = top('💬 Share price list');
+    t += '<div style="'+muted+'">Party</div><select style="'+inp+'" onchange="FHLTools.set(\'shareParty\',this.value)">'+partyOptions(sel)+'</select>';
+    t += '<label style="display:flex;gap:8px;align-items:center;margin:0 0 8px;font-size:14px;"><input type="checkbox" '+(ctx.inStock?'checked':'')+' onchange="FHLTools.set(\'inStock\',this.checked)"> Only items in stock</label>';
+    if(!sel){ return t + '<div style="'+muted+'">Choose a party first.</div></div>'; }
+    var list = shareRows(); 
+    t += '<div style="'+muted+'margin-bottom:8px;">'+list.length+' item(s)</div>';
+    t += btn('💬 Share on WhatsApp / apps', 'FHLTools.shareText(FHLTools._priceText())');
+    t += btn('📋 Copy text', 'FHLTools.copyText(FHLTools._priceText())', 'btn-ghost');
+    t += '<pre style="'+card+'white-space:pre-wrap;font-size:12px;max-height:45vh;overflow:auto;">'+H(priceText().slice(0,3000))+'</pre>';
+    return t + '</div>';
+  }
+  function shareRows(){ var sel = ctx.shareParty||''; return rows().filter(function(r){ return party(r)===sel && (!ctx.inStock || qtyOf(r)>0) && priceOf(r)!==''; }).sort(function(a,b){ return String(a.Description||'').localeCompare(String(b.Description||'')); }); }
+  function priceText(){
+    var sel = ctx.shareParty||'', p = partyList().filter(function(x){return x.code===sel;})[0];
+    var l = ['FHL ELECTRONICS — Price list', (p?p.name+' ('+p.code+')':sel)+' · '+new Date().toLocaleDateString('en-GB'), ''];
+    shareRows().forEach(function(r){ l.push((r.Description||r.Product||'')+' — '+fmt(priceOf(r))); });
+    return l.join('\n');
+  }
+  function scansView(){
+    var t = top('🕘 Recent scans'), list = (scanLog||[]).slice().sort(function(a,b){ return new Date(b.ts)-new Date(a.ts); }).slice(0,100);
+    if(!list.length) return t + '<div style="'+muted+'">No scans on this device yet.</div></div>';
+    list.forEach(function(l){ t += '<div style="'+card+'cursor:pointer;" onclick="FHLTools.openRow(\''+H(String(l.barcode||'').replace(/'/g,''))+'\')"><div style="font-weight:600;font-size:14px;">'+H(l.desc||'')+'</div><div style="'+muted+'">'+H(l.barcode||'')+' · Qty '+H(l.scannedQty)+' · '+H(dstr(l.ts))+'</div></div>'; });
+    return t + '</div>';
+  }
+  function dupGroups(){
+    var m = {}; rows().forEach(function(r){ var k = String(r.Description||'').toLowerCase().replace(/[^a-z0-9]/g,''); if(k.length<6) return; (m[k] = m[k]||[]).push(r); });
+    return Object.keys(m).map(function(k){ return m[k]; }).filter(function(a){ var b = {}; a.forEach(function(r){ b[bc(r.Barcode)] = 1; }); return Object.keys(b).length > 1; });
+  }
+  function dupsView(){
+    var t = top('🧬 Duplicate finder'), gs = dupGroups();
+    t += '<div style="'+muted+'margin-bottom:8px;">'+gs.length+' group(s) with the same name but different barcodes. Tap an item to open it. Merging stays manual so no stock is lost.</div>';
+    gs.slice(0,60).forEach(function(a){ t += '<div style="'+card+'"><div style="font-weight:600;font-size:14px;margin-bottom:4px;">'+H(a[0].Description||'')+'</div>' + a.map(function(r){ return '<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid var(--border,#262B3B);font-size:13px;cursor:pointer;" onclick="FHLTools.openRow(\''+H(String(r.Barcode).replace(/'/g,''))+'\')"><span>'+H(r.Barcode)+' · '+H(party(r)||'—')+'</span><span>Stock '+fmt(qtyOf(r))+' · '+H(fmt(priceOf(r)))+'</span></div>'; }).join('') + '</div>'; });
+    return t + '</div>';
+  }
+  function displayView(){
+    var t = top('🎨 Display');
+    t += btn('🎨 Change theme', 'FHLTools.close();openThemePicker()');
+    t += btn('🔤 Large text: ' + (state.largeFont?'ON':'OFF'), 'state.largeFont=!state.largeFont;render();FHLTools.render()', 'btn-ghost');
+    return t + '</div>';
+  }
+  function backupView(){
+    var t = top('💾 Backup export');
+    t += '<div style="'+muted+'margin-bottom:8px;">One Excel file with: Products (stock + price), Price changes, Stock movements, Scan log. Saved through the normal Share menu.</div>';
+    t += btn('⬇ Export backup', 'FHLTools.backup()');
+    return t + '</div>';
+  }
+  var views = { home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
+  function render(){ var o = el(), sc = o.scrollTop; try{ o.innerHTML = (views[view]||home)(); }catch(e){ o.innerHTML = top('Tools') + '<div>Could not open: '+H(e.message)+'</div></div>'; } o.scrollTop = sc; }
+  function shareText(text){
+    if(navigator.share){ navigator.share({text:text}).catch(function(){}); return; }
+    if(window.AndroidNative && window.AndroidNative.shareText){ try{ window.AndroidNative.shareText(text); return; }catch(e){} }
+    if(text.length < 1800){ var a = document.createElement('a'); a.href = 'https://wa.me/?text=' + encodeURIComponent(text); a.target = '_blank'; document.body.appendChild(a); a.click(); a.remove(); return; }
+    copyText(text);
+  }
+  function copyText(text){
+    function done(){ showToast('✓ Copied — paste it in WhatsApp'); }
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done, fb); } else fb();
+    function fb(){ var ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0;'; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); done(); }catch(e){ showToast('Copy failed', true); } ta.remove(); }
+  }
+  function backup(){
+    try{
+      var wb = XLSX.utils.book_new();
+      var prod = [['Barcode','Code','Description','Brand','Party','Party Name','Stock','Price']];
+      rows().forEach(function(r){ prod.push([r.Barcode||'', r.Product||'', r.Description||'', r.Brand||'', party(r), r['Party Name']||'', qtyOf(r), priceOf(r)]); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(prod), 'Products');
+      var pc = [['Date','Party','Barcode','Description','Old price','New price']];
+      (state.priceChangeNotifications||[]).forEach(function(n){ pc.push([dstr(n.ts), n.party||'', n.barcode||'', n.description||'', n.oldPrice, n.newPrice]); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pc), 'Price changes');
+      var mv = [['Date','Barcode','Change','Type']];
+      (state.stockMovements||[]).forEach(function(m){ mv.push([dstr(m.ts), m.barcode||'', m.delta, m.type||'']); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mv), 'Stock movements');
+      var sl = [['Date','Barcode','Description','Party','Scanned qty','Device']];
+      (scanLog||[]).forEach(function(l){ sl.push([dstr(l.ts), l.barcode||'', l.desc||'', l.partyName||l.party||'', l.scannedQty, l.deviceName||l.deviceId||'']); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sl), 'Scan log');
+      var name = 'FHL_Backup_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.xlsx';
+      if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){ window.AndroidNative.shareFile(XLSX.write(wb,{bookType:'xlsx',type:'base64'}), name); showToast('✓ Backup ready — choose where to save'); }
+      else { XLSX.writeFile(wb, name); showToast('✓ Backup downloaded'); }
+    }catch(e){ showToast('Backup failed: ' + e.message, true); }
+  }
+  window.FHLTools = {
+    open: function(){ if(typeof isStaffOrAdmin==='function' && !isStaffOrAdmin()) return; view = 'home'; ctx = {}; el().style.display = 'block'; render(); },
+    close: function(){ var o = document.getElementById('fhlToolsOverlay'); if(o) o.style.display = 'none'; },
+    back: function(){ if(view==='home') this.close(); else { view = 'home'; render(); } },
+    go: function(v){ view = v; render(); el().scrollTop = 0; },
+    set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
+    setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
+    openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
+    render: render, shareText: shareText, copyText: copyText, backup: backup,
+    _sum: function(){ return summaryText(summaryData()); }, _priceText: priceText
+  };
+})();
+
 </script>
 </body>
 </html>
