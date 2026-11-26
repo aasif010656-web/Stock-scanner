@@ -7254,7 +7254,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.8';
+const APP_VERSION = '6.1.9';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -9360,6 +9360,10 @@ function login(username, password, remember){
     const role = realName === 'Asif' ? 'admin' : normalizeRoleKey(roleInfo && roleInfo.role ? roleInfo.role : 'staff');
     const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
     const brandCodes = (roleInfo && Array.isArray(roleInfo.brandCodes)) ? roleInfo.brandCodes : [];
+    if(realName !== 'Asif' && window.FHLApproval && !state._approvedLogin){
+      window.FHLApproval.request(realName, function(){ state._approvedLogin = true; try{ login(username, password, remember); } finally { state._approvedLogin = false; } });
+      return;
+    }
     state.user = { username: realName, role: role, partyCodes: partyCodes, brandCodes: brandCodes };
     state.sessionToken = makeSessionToken();
     state.sessionLoginTs = Date.now();
@@ -13302,7 +13306,7 @@ function showStartupRecovery(error){
     t += tile('🧬','Duplicate finder','Same item name under different barcodes','dups');
     t += tile('🎨','Display','Theme, large text','display');
     t += tile('💾','Backup export','Products, prices, movements, scans in one Excel','backup');
-    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); }
+    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
     return t + '</div>';
   }
   function lowView(){
@@ -13495,7 +13499,16 @@ function showStartupRecovery(error){
     for(var i=0;i<ids.length;i++){ await revokeActiveSession(ids[i]); }
     render();
   }
-  var views = { users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
+  function approvalView(){
+    var t = top('🔐 Login approval');
+    if(ctx.apprOn === undefined){ ctx.apprOn = null; window.FHLApproval.getEnabled().then(function(v){ ctx.apprOn = v; render(); }).catch(function(){ ctx.apprOn = 'err'; render(); }); }
+    if(ctx.apprOn === null) return t + '<div style="'+muted+'">Loading...</div></div>';
+    if(ctx.apprOn === 'err') return t + '<div style="'+muted+'">Could not read the setting. Check internet.</div></div>';
+    t += '<div style="'+card+'"><b>'+(ctx.apprOn?'ON':'OFF')+'</b><div style="'+muted+'margin-top:4px;">When ON, every staff/promoter login waits until you approve it on your phone (the app must be open on your device). Your own login and already logged-in sessions are not affected.</div></div>';
+    t += btn(ctx.apprOn?'Turn OFF':'Turn ON', 'FHLTools.toggleApproval()', ctx.apprOn?'btn-ghost':'btn-accent');
+    return t + '</div>';
+  }
+  var views = { approval:approvalView, users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
   function render(){ var o = el(), sc = o.scrollTop; try{ o.innerHTML = (views[view]||home)(); }catch(e){ o.innerHTML = top('Tools') + '<div>Could not open: '+H(e.message)+'</div></div>'; } o.scrollTop = sc; }
   function shareText(text){
     if(navigator.share){ navigator.share({text:text}).catch(function(){}); return; }
@@ -13532,13 +13545,81 @@ function showStartupRecovery(error){
     open: function(){ if(typeof isStaffOrAdmin==='function' && !isStaffOrAdmin()) return; view = 'home'; ctx = {}; el().style.display = 'block'; render(); },
     close: function(){ var o = document.getElementById('fhlToolsOverlay'); if(o) o.style.display = 'none'; },
     back: function(){ if(view==='home') this.close(); else { view = 'home'; render(); } },
-    go: function(v){ if(/^(users|audit|devices|sales)$/.test(v) && !isAdm()) return; view = v; render(); el().scrollTop = 0; },
+    go: function(v){ if(/^(users|audit|devices|sales|approval)$/.test(v) && !isAdm()) return; view = v; render(); el().scrollTop = 0; },
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
     openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
-    exportAudit: exportAudit, exportSales: exportSales, revokeOne: revokeOne, revokeMany: revokeMany, render: render, shareText: shareText, copyText: copyText, backup: backup,
+    toggleApproval: function(){ var n = !ctx.apprOn; window.FHLApproval.setEnabled(n).then(function(){ ctx.apprOn = n; try{ addAuditLog('Login Approval', n?'Turned ON':'Turned OFF'); }catch(e){} render(); }).catch(function(){ showToast('Could not save', true); }); }, exportAudit: exportAudit, exportSales: exportSales, revokeOne: revokeOne, revokeMany: revokeMany, render: render, shareText: shareText, copyText: copyText, backup: backup,
     _sum: function(){ return summaryText(summaryData()); }, _priceText: priceText
   };
+})();
+
+</script>
+<script>
+/* ===== FHL login approval: staff/promoter logins wait for Asif's approval ===== */
+(function(){
+  var TTL = 180000, ref0 = null, unsubAdmin = null, shown = {};
+  function ref(){ if(ref0) return ref0; try{ if(fbDocRef && fbDocRef.parent){ ref0 = fbDocRef.parent.doc('loginRequests'); } }catch(e){} return ref0; }
+  function del(){ return firebase.firestore.FieldValue.delete(); }
+  function rid(){ return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+  function H(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function overlay(id, html){ var o = document.getElementById(id); if(!o){ o = document.createElement('div'); o.id = id; o.style.cssText = 'position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px;'; document.body.appendChild(o); } o.innerHTML = '<div style="width:min(380px,100%);background:var(--panel,#1B1F2C);color:var(--text,#EEF0F6);border:1px solid var(--border2,#333A4F);border-radius:18px;padding:18px;">' + html + '</div>'; return o; }
+  function drop(id){ var o = document.getElementById(id); if(o) o.remove(); }
+  function getEnabled(){
+    var r = ref(); if(!r) return Promise.reject(new Error('offline'));
+    return r.get().then(function(s){ var d = s.exists ? (s.data()||{}) : {}; return d.enabled !== false; });
+  }
+  function setEnabled(v){ var r = ref(); if(!r) return Promise.reject(new Error('offline')); return r.set({enabled: !!v}, {merge:true}); }
+
+  function request(username, onApproved){
+    var r = ref();
+    if(!r || (typeof fbReady !== 'undefined' && !fbReady)){ showToast('Admin approval needs internet. Connect and try again.', true); return; }
+    getEnabled().then(function(on){
+      if(!on){ onApproved(); return; }
+      var id = rid(), unsub = null, timer = null, done = false;
+      function cleanup(){ done = true; if(unsub) try{ unsub(); }catch(e){} clearTimeout(timer); drop('fhlWaitApproval'); var u = {}; u['reqs.' + id] = del(); r.update(u).catch(function(){}); }
+      var rec = { username: username, deviceId: state.deviceId || '', deviceName: state.deviceName || '', ts: Date.now(), status: 'pending' };
+      var w = {}; w.reqs = {}; w.reqs[id] = rec;
+      r.set(w, {merge:true}).then(function(){
+        window.__fhlCancelApproval = function(){ cleanup(); showToast('Login cancelled'); };
+        overlay('fhlWaitApproval', '<div style="font-weight:800;font-size:18px;margin-bottom:8px;">Waiting for admin approval</div><div style="font-size:13px;line-height:1.5;color:var(--muted,#9aa3b8);margin-bottom:14px;">Asif has to approve this login (' + H(username) + '). Keep this screen open. It expires in 3 minutes.</div><button class="btn btn-ghost" style="width:100%;" onclick="window.__fhlCancelApproval()">Cancel</button>');
+        unsub = r.onSnapshot(function(doc){
+          if(done) return; var me = ((doc.data()||{}).reqs || {})[id]; if(!me) return;
+          if(me.status === 'approved'){ cleanup(); onApproved(); }
+          else if(me.status === 'denied'){ cleanup(); showToast('Admin denied this login', true); }
+        }, function(){ if(!done){ cleanup(); showToast('Could not reach approval service', true); } });
+        timer = setTimeout(function(){ if(!done){ cleanup(); showToast('Admin did not approve in time. Try again.', true); } }, TTL);
+      }).catch(function(){ showToast('Could not send approval request. Check internet.', true); });
+    }).catch(function(){ showToast('Admin approval needs internet. Connect and try again.', true); });
+  }
+
+  function decide(id, ok, username){
+    var r = ref(); if(!r) return; var u = {}; u['reqs.' + id + '.status'] = ok ? 'approved' : 'denied'; u['reqs.' + id + '.by'] = 'Asif'; u['reqs.' + id + '.decidedAt'] = Date.now();
+    r.update(u).then(function(){ try{ addAuditLog(ok ? 'Login Approved' : 'Login Denied', username); }catch(e){} }).catch(function(){ showToast('Could not save decision', true); });
+    delete shown[id]; drawPending(lastPending.filter(function(p){ return p.id !== id; }));
+  }
+  var lastPending = [];
+  function drawPending(list){
+    lastPending = list;
+    if(!list.length){ drop('fhlApproveLogin'); return; }
+    var html = '<div style="font-weight:800;font-size:18px;margin-bottom:10px;">Login approval</div>';
+    list.forEach(function(p){ html += '<div style="border:1px solid var(--border,#262B3B);border-radius:12px;padding:10px;margin-bottom:8px;"><div style="font-weight:700;">' + H(p.username) + '</div><div style="font-size:12px;color:var(--muted,#9aa3b8);margin-bottom:8px;">' + H(p.deviceName || p.deviceId || 'Unknown device') + ' · ' + new Date(p.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + '</div><div style="display:flex;gap:8px;"><button class="btn btn-ghost" style="flex:1;" onclick="FHLApproval.decide(\'' + H(p.id) + '\',false,\'' + H(p.username) + '\')">Deny</button><button class="btn btn-accent" style="flex:1;" onclick="FHLApproval.decide(\'' + H(p.id) + '\',true,\'' + H(p.username) + '\')">Approve</button></div></div>'; });
+    overlay('fhlApproveLogin', html);
+  }
+  function watch(){
+    var isAdmin = !!(state && state.user && state.user.username === 'Asif' && state.user.role === 'admin');
+    if(!isAdmin){ if(unsubAdmin){ try{ unsubAdmin(); }catch(e){} unsubAdmin = null; drop('fhlApproveLogin'); } return; }
+    var r = ref(); if(!r || unsubAdmin) return;
+    unsubAdmin = r.onSnapshot(function(doc){
+      var reqs = (doc.data()||{}).reqs || {}, now = Date.now(), list = [];
+      Object.keys(reqs).forEach(function(id){ var q = reqs[id]; if(q && q.status === 'pending' && now - Number(q.ts||0) < TTL) list.push({id:id, username:q.username, deviceName:q.deviceName, deviceId:q.deviceId, ts:q.ts}); });
+      var fresh = list.some(function(p){ return !shown[p.id]; }); list.forEach(function(p){ shown[p.id] = 1; });
+      if(fresh){ try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){} try{ if(typeof playErrorSound === 'function') {} }catch(e){} }
+      drawPending(list);
+    }, function(){});
+  }
+  setInterval(watch, 2500);
+  window.FHLApproval = { request: request, decide: decide, getEnabled: getEnabled, setEnabled: setEnabled };
 })();
 
 </script>

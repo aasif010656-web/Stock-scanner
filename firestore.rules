@@ -9,7 +9,7 @@ service cloud.firestore {
     // Shared app documents (every one the client uses) and all of their sub-documents
     // (Brands/stock-movement versions and chunks, report rows and payloads).
     match /stockScannerApp/{docId} {
-      allow read, write: if docId in ['sharedData', 'excelData', 'pdfData', 'reportData', 'brandsData', 'stockMovementData'];
+      allow read, write: if docId in ['sharedData', 'excelData', 'pdfData', 'reportData', 'brandsData', 'stockMovementData', 'loginRequests'];
     }
     match /stockScannerApp/{docId}/{rest=**} {
       allow read, write: if docId in ['sharedData', 'excelData', 'pdfData', 'reportData', 'brandsData', 'stockMovementData'];
