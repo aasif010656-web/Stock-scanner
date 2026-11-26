@@ -637,9 +637,50 @@ body.theme-darkluxury .auth-screen .auth-logo{border-color:var(--accent)!importa
 #nativeScannerCancel{display:none;position:fixed;z-index:2147483647;top:max(18px,env(safe-area-inset-top));right:16px;padding:10px 14px;border:1px solid rgba(255,255,255,.9);border-radius:999px;background:rgba(10,10,12,.86);color:#fff;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35);}
 body.native-barcode-scanning #nativeScannerCancel{display:block;}
 
+#bootSplash{position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:radial-gradient(circle at 50% 35%,#c00000 0%,#6e0000 60%,#2a0000 100%);color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;transition:opacity .5s ease}
+#bootSplash.boot-hide{opacity:0;pointer-events:none}
+#bootSplash img{width:min(52vw,220px);height:auto;border-radius:28px;box-shadow:0 10px 40px rgba(255,200,0,.35);animation:bootPulse 1.6s ease-in-out infinite}
+#bootSplash .boot-bar{width:min(52vw,220px);height:4px;border-radius:4px;background:rgba(255,255,255,.18);overflow:hidden}
+#bootSplash .boot-bar i{display:block;height:100%;width:40%;border-radius:4px;background:#ffd400;animation:bootSlide 1.2s ease-in-out infinite}
+#bootSplashStatus{font-size:14px;opacity:.85;letter-spacing:.3px;text-align:center;padding:0 20px}
+@keyframes bootPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+@keyframes bootSlide{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+@media (prefers-reduced-motion:reduce){#bootSplash img,#bootSplash .boot-bar i{animation:none}}
 </style>
 </head>
 <body>
+<div id="bootSplash" aria-live="polite">
+  <img src="icon-512.png" alt="Grand Hyper Electronics">
+  <div class="boot-bar"><i></i></div>
+  <div id="bootSplashStatus">Syncing latest stock…</div>
+</div>
+<script>
+// Start-up screen: stays until the first cloud sync has finished (or the device is offline),
+// so the app opens already up to date instead of showing "Connecting". Never blocks longer than 10 s.
+(function(){
+  var start = Date.now(), done = false;
+  function hide(){
+    if(done) return; done = true;
+    var el = document.getElementById('bootSplash');
+    if(!el) return;
+    el.classList.add('boot-hide');
+    setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 600);
+  }
+  window.hideBootSplash = hide;
+  var timer = setInterval(function(){
+    var elapsed = Date.now() - start, status = 'connecting', ready = false;
+    try{ ready = !!storageReady; status = syncStatus; }catch(e){}
+    var label = document.getElementById('bootSplashStatus');
+    if(label){
+      if(ready && status === 'offline') label.textContent = 'Offline. Using saved data';
+      else if(elapsed > 6000) label.textContent = 'Still connecting…';
+    }
+    if((ready && (status === 'synced' || status === 'offline') && elapsed >= 1200) || elapsed >= 10000){
+      clearInterval(timer); hide();
+    }
+  }, 200);
+})();
+</script>
 <script>if(window.AndroidNative||window.UpdateBridge){document.body.classList.add("native-performance-mode");}</script>
 <script>
   (function(){
@@ -7206,7 +7247,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.4';
+const APP_VERSION = '6.1.5';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13179,6 +13220,7 @@ try{
 
 // ---------- Init ----------
 function showStartupRecovery(error){
+  try{ if(window.hideBootSplash) window.hideBootSplash(); }catch(e){}
   console.error('FHL startup failed', error);
   try{ storageReady = true; syncStatus = navigator.onLine ? 'error' : 'offline'; }catch(e){}
   const message = error && error.message ? String(error.message) : 'Startup error';
