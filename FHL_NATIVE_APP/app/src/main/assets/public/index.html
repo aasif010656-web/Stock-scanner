@@ -7297,7 +7297,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.12';
+const APP_VERSION = '6.1.13';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13576,11 +13576,19 @@ function showStartupRecovery(error){
   }
   function approvalView(){
     var t = top('🔐 Login approval');
-    if(ctx.apprOn === undefined){ ctx.apprOn = null; window.FHLApproval.getEnabled().then(function(v){ ctx.apprOn = v; render(); }).catch(function(){ ctx.apprOn = 'err'; render(); }); }
+    if(ctx.apprOn === undefined){ ctx.apprOn = null; window.FHLApproval.getConfig().then(function(c){ ctx.apprOn = c.enabled; ctx.apprTopic = c.topic; render(); }).catch(function(){ ctx.apprOn = 'err'; render(); }); }
     if(ctx.apprOn === null) return t + '<div style="'+muted+'">Loading...</div></div>';
     if(ctx.apprOn === 'err') return t + '<div style="'+muted+'">Could not read the setting. Check internet.</div></div>';
-    t += '<div style="'+card+'"><b>'+(ctx.apprOn?'ON':'OFF')+'</b><div style="'+muted+'margin-top:4px;">When ON, every staff/promoter login waits until you approve it on your phone (the app must be open on your device). Your own login and already logged-in sessions are not affected.</div></div>';
+    t += '<div style="'+card+'"><b>'+(ctx.apprOn?'ON':'OFF')+'</b><div style="'+muted+'margin-top:4px;">When ON, every staff/promoter login waits until you approve it. Your own login and already logged-in sessions are not affected.</div></div>';
     t += btn(ctx.apprOn?'Turn OFF':'Turn ON', 'FHLTools.toggleApproval()', ctx.apprOn?'btn-ghost':'btn-accent');
+    t += '<div class="divider-label" style="margin:14px 0 8px;">Phone notification (app closed)</div>';
+    t += '<div style="'+muted+'margin-bottom:8px;">The popup shows when the FHL app is open. To also get a notification in your phone notification centre when the app is closed: install the free <b>ntfy</b> app, tap + and subscribe to the topic below (default server).</div>';
+    if(ctx.apprTopic){
+      t += '<div style="'+card+'word-break:break-all;font-weight:700;user-select:all;">'+H(ctx.apprTopic)+'</div>';
+      t += btn('📋 Copy topic','FHLTools.copyText(\''+H(ctx.apprTopic)+'\')','btn-ghost') + btn('🔔 Send test notification','FHLTools.testNtfy()','btn-ghost') + btn('♻️ Make a new topic','FHLTools.makeTopic()','btn-ghost');
+    } else {
+      t += btn('Create notification topic','FHLTools.makeTopic()');
+    }
     return t + '</div>';
   }
   var views = { approval:approvalView, users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
@@ -13624,7 +13632,7 @@ function showStartupRecovery(error){
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
     openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
-    toggleApproval: function(){ var n = !ctx.apprOn; window.FHLApproval.setEnabled(n).then(function(){ ctx.apprOn = n; try{ addAuditLog('Login Approval', n?'Turned ON':'Turned OFF'); }catch(e){} render(); }).catch(function(){ showToast('Could not save', true); }); }, exportAudit: exportAudit, exportSales: exportSales, revokeOne: revokeOne, revokeMany: revokeMany, render: render, shareText: shareText, copyText: copyText, backup: backup,
+    makeTopic: function(){ var n = window.FHLApproval.newTopic(); window.FHLApproval.setTopic(n).then(function(){ ctx.apprTopic = n; render(); }).catch(function(){ showToast('Could not save', true); }); }, testNtfy: function(){ if(!ctx.apprTopic) return; fetch('https://ntfy.sh/' + encodeURIComponent(ctx.apprTopic), {method:'POST', headers:{'Title':'FHL login approval','Tags':'key'}, body:'Test: notifications are working.'}).then(function(){ showToast('Test sent'); }).catch(function(){ showToast('Could not send', true); }); }, toggleApproval: function(){ var n = !ctx.apprOn; window.FHLApproval.setEnabled(n).then(function(){ ctx.apprOn = n; try{ addAuditLog('Login Approval', n?'Turned ON':'Turned OFF'); }catch(e){} render(); }).catch(function(){ showToast('Could not save', true); }); }, exportAudit: exportAudit, exportSales: exportSales, revokeOne: revokeOne, revokeMany: revokeMany, render: render, shareText: shareText, copyText: copyText, backup: backup,
     _sum: function(){ return summaryText(summaryData()); }, _priceText: priceText
   };
 })();
@@ -13641,11 +13649,22 @@ function showStartupRecovery(error){
   function H(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function overlay(id, html){ var o = document.getElementById(id); if(!o){ o = document.createElement('div'); o.id = id; o.style.cssText = 'position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px;'; document.body.appendChild(o); } o.innerHTML = '<div style="width:min(380px,100%);background:var(--panel,#1B1F2C);color:var(--text,#EEF0F6);border:1px solid var(--border2,#333A4F);border-radius:18px;padding:18px;">' + html + '</div>'; return o; }
   function drop(id){ var o = document.getElementById(id); if(o) o.remove(); }
-  function getEnabled(){
+  var cfgTopic = '';
+  function getConfig(){
     try{
       var r = ref(); if(!r) return Promise.reject(new Error('offline'));
-      return Promise.resolve(r.get()).then(function(s){ var d = s.exists ? (s.data()||{}) : {}; return d.loginApprovalEnabled !== false; });
+      return Promise.resolve(r.get()).then(function(s){ var d = s.exists ? (s.data()||{}) : {}; cfgTopic = String(d.loginApprovalNtfyTopic || ''); return { enabled: d.loginApprovalEnabled !== false, topic: cfgTopic }; });
     }catch(e){ return Promise.reject(e); }
+  }
+  function getEnabled(){ return getConfig().then(function(c){ return c.enabled; }); }
+  function setTopic(t){ try{ var r = ref(); if(!r) return Promise.reject(new Error('offline')); return Promise.resolve(r.set({loginApprovalNtfyTopic: String(t||'')}, {merge:true})); }catch(e){ return Promise.reject(e); } }
+  function newTopic(){ var a = 'abcdefghijklmnopqrstuvwxyz0123456789', t = 'fhl-login-'; for(var i=0;i<18;i++) t += a[Math.floor(Math.random()*a.length)]; return t; }
+  // Push to the admin's phone notification centre through ntfy.sh (free). Needs the ntfy app subscribed to the topic.
+  function pushAdmin(topic, username, deviceName){
+    if(!topic) return;
+    try{
+      fetch('https://ntfy.sh/' + encodeURIComponent(topic), { method:'POST', headers:{ 'Title':'FHL login approval', 'Priority':'high', 'Tags':'key' }, body: username + ' wants to log in' + (deviceName ? ' (' + deviceName + ')' : '') + '. Open the FHL app to approve.' }).catch(function(){});
+    }catch(e){}
   }
   function setEnabled(v){ try{ var r = ref(); if(!r) return Promise.reject(new Error('offline')); return Promise.resolve(r.set({loginApprovalEnabled: !!v}, {merge:true})); }catch(e){ return Promise.reject(e); } }
 
@@ -13659,13 +13678,14 @@ function showStartupRecovery(error){
       go();
     }
     if(!r || (typeof fbReady !== 'undefined' && !fbReady)){ failOpen('cloud not ready'); return; }
-    getEnabled().then(function(on){
-      if(!on){ go(); return; }
+    getConfig().then(function(cfg){
+      if(!cfg.enabled){ go(); return; }
       var id = rid(), unsub = null, timer = null, done = false;
       function cleanup(){ done = true; if(unsub) try{ unsub(); }catch(e){} clearTimeout(timer); drop('fhlWaitApproval'); var u = {}; u['loginRequests.' + id] = del(); r.update(u).catch(function(){}); }
       var rec = { username: username, deviceId: state.deviceId || '', deviceName: state.deviceName || '', ts: Date.now(), status: 'pending' };
       var w = {}; w.loginRequests = {}; w.loginRequests[id] = rec;
       r.set(w, {merge:true}).then(function(){
+        pushAdmin(cfg.topic, username, state.deviceName || '');
         window.__fhlCancelApproval = function(){ cleanup(); showToast('Login cancelled'); };
         overlay('fhlWaitApproval', '<div style="font-weight:800;font-size:18px;margin-bottom:8px;">Waiting for admin approval</div><div style="font-size:13px;line-height:1.5;color:var(--muted,#9aa3b8);margin-bottom:14px;">Asif has to approve this login (' + H(username) + '). Keep this screen open. It expires in 3 minutes.</div><button class="btn btn-ghost" style="width:100%;" onclick="window.__fhlCancelApproval()">Cancel</button>');
         unsub = r.onSnapshot(function(doc){
@@ -13699,12 +13719,18 @@ function showStartupRecovery(error){
       var reqs = (doc.data()||{}).loginRequests || {}, now = Date.now(), list = [];
       Object.keys(reqs).forEach(function(id){ var q = reqs[id]; if(q && q.status === 'pending' && now - Number(q.ts||0) < TTL) list.push({id:id, username:q.username, deviceName:q.deviceName, deviceId:q.deviceId, ts:q.ts}); });
       var fresh = list.some(function(p){ return !shown[p.id]; }); list.forEach(function(p){ shown[p.id] = 1; });
-      if(fresh){ try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){} try{ if(typeof playErrorSound === 'function') {} }catch(e){} }
+      if(fresh){
+        try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){}
+        if(document.hidden){
+          var who = list.map(function(p){ return p.username; }).join(', ');
+          try{ if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification) window.AndroidNative.postPriceUpdateNotification('Login approval', who + ' wants to log in. Open the app to approve.'); }catch(e){}
+        }
+      }
       drawPending(list);
     }, function(){});
   }
   setInterval(watch, 2500);
-  window.FHLApproval = { request: request, decide: decide, getEnabled: getEnabled, setEnabled: setEnabled };
+  window.FHLApproval = { request: request, decide: decide, getEnabled: getEnabled, getConfig: getConfig, setEnabled: setEnabled, setTopic: setTopic, newTopic: newTopic };
 })();
 
 </script>
