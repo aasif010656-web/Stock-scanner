@@ -7254,7 +7254,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.9';
+const APP_VERSION = '6.1.10';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -9971,6 +9971,28 @@ function showImportPreview(a, fileName){
   });
 }
 
+// Excel headers vary between exports ("STOCK QTY", "Product_Description", "BRAND ", "AgeDays"...).
+// Add the canonical column names the importer reads, without removing the original columns.
+function canonicalizeImportRows(rows){
+  const aliases = {
+    barcode:'Barcode', barcodes:'Barcode', ean:'Barcode',
+    stockqty:'Stock Qty', quantity:'Stock Qty', qty:'Stock Qty', stock:'Stock Qty', stockquantity:'Stock Qty', closingstock:'Stock Qty',
+    stockvalue:'Stock Value', productdescription:'Description', description:'Description', itemdescription:'Description', itemname:'Description',
+    brand:'Brand', brandname:'Brand', artcode:'Code', productcode:'Code', itemcode:'Code', code:'Code',
+    wac:'WAC', llc:'LLC', party:'Party', partycode:'Party', partyname:'Party Name', suppliername:'Party Name',
+    grnnumber:'GRN Number', grnno:'GRN Number', grndate:'GRN Date', saledate:'Sale Date', agedays:'Age Days', age:'Age Days'
+  };
+  return (rows || []).map(function(row){
+    const out = Object.assign({}, row);
+    Object.keys(row).forEach(function(k){
+      const canon = aliases[String(k).toLowerCase().replace(/[^a-z0-9]/g, '')];
+      if(!canon || canon === k) return;
+      const cur = out[canon];
+      if(cur === undefined || cur === null || String(cur).trim() === '') out[canon] = row[k];
+    });
+    return out;
+  });
+}
 async function handleImportExcel(fileInput){
   if(state.user && state.user.role === 'promoter'){ showToast('Not available for this account', true); if(fileInput) fileInput.value=''; return; }
   if(state.importProgress && state.importProgress.active){ showToast('Brands Excel import is already running'); if(fileInput) fileInput.value=''; return; }
@@ -9980,7 +10002,7 @@ async function handleImportExcel(fileInput){
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const rows = canonicalizeImportRows(XLSX.utils.sheet_to_json(sheet, { defval: '' }));
     if(!rows.length){ showToast("No rows found in that file", true); fileInput.value=''; return; }
 
     let updated = 0, added = 0, skipped = 0, merged = 0, priceCount = 0;
