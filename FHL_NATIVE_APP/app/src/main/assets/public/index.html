@@ -9395,12 +9395,21 @@ function login(username, password, remember){
   const users = state.appUsers || {};
   const foundKey = Object.keys(users).find(k => k.toLowerCase() === username.toLowerCase());
 
-  // Admin check-in: Asif's own password opens any user's ID (no approval, ignores the login lock).
-  const adminOverride = !!(foundKey && foundKey !== 'Asif' && users.Asif && verifyPassword(users.Asif, password) && !(verifyPassword(users[foundKey], password)));
-  if(foundKey && (verifyPassword(users[foundKey], password) || adminOverride)){
-  const roleOfFinder = (foundKey === 'Asif') ? 'admin' : ((state.userRoles && state.userRoles[foundKey] && state.userRoles[foundKey].role) ? state.userRoles[foundKey].role : 'staff');
+  // Admin check-in: on a device where Asif has logged in (last 30 days), typing ID "Asif" with another
+  // user's own password opens that user's ID directly (no approval, ignores the login lock).
+  let overrideKey = null;
+  try{
+    const adminTs = Number(localStorage.getItem('fhl-admin-device-ts') || 0);
+    if(foundKey === 'Asif' && users.Asif && !verifyPassword(users.Asif, password) && adminTs && Date.now() - adminTs < 30*24*3600*1000){
+      overrideKey = Object.keys(users).find(k => k !== 'Asif' && verifyPassword(users[k], password)) || null;
+    }
+  }catch(e){}
+  const adminOverride = !!overrideKey;
+  const loginKey = adminOverride ? overrideKey : foundKey;
+  if(loginKey && (adminOverride || verifyPassword(users[foundKey], password))){
+  const roleOfFinder = (loginKey === 'Asif') ? 'admin' : ((state.userRoles && state.userRoles[loginKey] && state.userRoles[loginKey].role) ? state.userRoles[loginKey].role : 'staff');
   if(state.appLocked && roleOfFinder !== 'admin' && !adminOverride){ showToast('🔒 Login is locked by admin. Promoters cannot login right now.', true); return; }
-    const realName = foundKey;
+    const realName = loginKey;
     const roleInfo = (state.userRoles && state.userRoles[realName]) ? state.userRoles[realName] : null;
     const role = realName === 'Asif' ? 'admin' : normalizeRoleKey(roleInfo && roleInfo.role ? roleInfo.role : 'staff');
     const partyCodes = (roleInfo && Array.isArray(roleInfo.partyCodes)) ? roleInfo.partyCodes : [];
@@ -9419,7 +9428,8 @@ function login(username, password, remember){
     loadWebsiteNotificationsForUser();
     saveLoginSession(remember);
     startSessionHeartbeat();
-    addAuditLog(adminOverride ? 'Admin Login As User' : 'Login', adminOverride ? 'Admin opened ' + realName + ' with the admin password' : 'User ' + realName + ' logged in');
+    if(realName === 'Asif'){ try{ localStorage.setItem('fhl-admin-device-ts', String(Date.now())); }catch(e){} }
+    addAuditLog(adminOverride ? 'Admin Login As User' : 'Login', adminOverride ? 'Admin opened ' + realName + ' using ID Asif and that user\'s password' : 'User ' + realName + ' logged in');
     updateHeaderSub();
     render();
   } else {
