@@ -6128,10 +6128,8 @@ async function readBrandsStateFromCloud(rootData){
     if(docs.some(function(doc){ return !doc || !doc.exists; })) throw new Error('Brands cloud chunk is unavailable');
     return docs.reduce(function(items, doc){ return items.concat(Array.isArray((doc.data() || {}).items) ? doc.data().items : []); }, []);
   }
-  const productItems = await readKind('products');
-  const overrideItems = await readKind('overrides');
-  const productFieldItems = await readKind('productFields');
-  const priceItems = await readKind('prices');
+  const kindItems = await Promise.all(['products', 'overrides', 'productFields', 'prices'].map(readKind));
+  const productItems = kindItems[0], overrideItems = kindItems[1], productFieldItems = kindItems[2], priceItems = kindItems[3];
   return {
     activeVersion:versionId,
     updatedAt:Number(meta.updatedAt || rootData.updatedAt || 0),
@@ -6428,12 +6426,17 @@ async function loadStorage(){
   }, 5000);
 
   try{
-    const snap = await fbDocRef.get();
-    const excelSnap = fbExcelDocRef ? await fbExcelDocRef.get().catch(()=>null) : null;
-    const pdfSnap = fbPdfDocRef ? await fbPdfDocRef.get().catch(()=>null) : null;
-    const reportSnap = fbReportDocRef ? await fbReportDocRef.get().catch(()=>null) : null;
-    const brandsSnap = fbBrandsDocRef ? await fbBrandsDocRef.get().catch(()=>null) : null;
-    const stockMovementSnap = fbStockMovementDocRef ? await fbStockMovementDocRef.get().catch(()=>null) : null;
+    // The six root documents are independent, so read them together (one round trip, not six).
+    const startupReads = await Promise.all([
+      fbDocRef.get(),
+      fbExcelDocRef ? fbExcelDocRef.get().catch(()=>null) : null,
+      fbPdfDocRef ? fbPdfDocRef.get().catch(()=>null) : null,
+      fbReportDocRef ? fbReportDocRef.get().catch(()=>null) : null,
+      fbBrandsDocRef ? fbBrandsDocRef.get().catch(()=>null) : null,
+      fbStockMovementDocRef ? fbStockMovementDocRef.get().catch(()=>null) : null
+    ]);
+    const snap = startupReads[0], excelSnap = startupReads[1], pdfSnap = startupReads[2];
+    const reportSnap = startupReads[3], brandsSnap = startupReads[4], stockMovementSnap = startupReads[5];
     const brandsRoot = brandsSnap && brandsSnap.exists ? (brandsSnap.data() || {}) : {};
     const stockMovementRoot = stockMovementSnap && stockMovementSnap.exists ? (stockMovementSnap.data() || {}) : {};
     let remoteBrands = null;
@@ -6441,15 +6444,19 @@ async function loadStorage(){
     // A stale local pending marker must not block a newer authoritative cloud
     // snapshot. The guarded server version is the source of truth after a
     // confirmed overwrite; load it first and clear the obsolete marker below.
+    let brandsLoad = null, movementLoad = null;
     if(brandsRoot.activeVersion && (!hasBrandsCloudPending() || pendingBrandsIsSupersededBy(brandsRoot.activeVersion))){
-      try{ remoteBrands = await readBrandsStateFromCloud(brandsRoot); }
-      catch(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); }
+      brandsLoad = readBrandsStateFromCloud(brandsRoot)
+        .then(function(result){ remoteBrands = result; })
+        .catch(function(e){ console.warn('Brands cloud state could not be loaded yet; keeping the local cache', e); });
     }
     if(stockMovementRoot.activeVersion && !hasStockMovementCloudPending()){
       stockMovementCloudState.activeVersion = String(stockMovementRoot.activeVersion);
-      try{ remoteStockMovements = await readStockMovementStateFromCloud(stockMovementRoot); }
-      catch(e){ console.warn('Stock Movement cloud state could not be loaded yet; keeping the local cache', e); }
+      movementLoad = readStockMovementStateFromCloud(stockMovementRoot)
+        .then(function(result){ remoteStockMovements = result; })
+        .catch(function(e){ console.warn('Stock Movement cloud state could not be loaded yet; keeping the local cache', e); });
     }
+    await Promise.all([brandsLoad, movementLoad]);
     clearTimeout(loadingTimeout);
     if(snap.exists){
       const data = snap.data();
@@ -7247,7 +7254,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.5';
+const APP_VERSION = '6.1.6';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
