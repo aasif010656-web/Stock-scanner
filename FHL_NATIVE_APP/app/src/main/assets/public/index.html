@@ -7254,7 +7254,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.7';
+const APP_VERSION = '6.1.8';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13302,6 +13302,7 @@ function showStartupRecovery(error){
     t += tile('🧬','Duplicate finder','Same item name under different barcodes','dups');
     t += tile('🎨','Display','Theme, large text','display');
     t += tile('💾','Backup export','Products, prices, movements, scans in one Excel','backup');
+    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); }
     return t + '</div>';
   }
   function lowView(){
@@ -13401,7 +13402,100 @@ function showStartupRecovery(error){
     t += btn('⬇ Export backup', 'FHLTools.backup()');
     return t + '</div>';
   }
-  var views = { home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
+
+  /* ---- Admin-only views (Asif) ---- */
+  function isAdm(){ try{ return !!isAdminUser(); }catch(e){ return false; } }
+  function ago(ts){ var d = Date.now() - Number(ts||0); if(!ts) return 'never'; if(d<120000) return 'online now'; if(d<3600000) return Math.round(d/60000)+' min ago'; if(d<86400000) return Math.round(d/3600000)+' h ago'; return Math.round(d/86400000)+' d ago'; }
+  function usersView(){
+    var t = top('👥 User activity'), sess = (state.activeSessions||[]).filter(function(x){return x;}), logs = (state.auditLog||[]);
+    var names = {}; Object.keys(state.appUsers||{}).forEach(function(u){ names[u]=1; }); sess.forEach(function(x){ names[x.username]=1; });
+    var list = Object.keys(names).map(function(u){
+      var ss = sess.filter(function(x){ return x.username===u; }), last = ss.reduce(function(a,x){ return Math.max(a, Number(x.lastSeen||0)); }, 0);
+      var devs = {}; ss.forEach(function(x){ devs[x.deviceId||x.deviceName||'?']=1; });
+      var role = ''; try{ role = getUserRole(u); }catch(e){}
+      return { u:u, role:role, last:last, devices:Object.keys(devs).length, actions:logs.filter(function(l){ return l.user===u; }).length, online: ss.some(function(x){ return !x.revokedAt && Date.now()-Number(x.lastSeen||0) < 120000; }) };
+    }).sort(function(a,b){ return b.last-a.last; });
+    t += '<div style="'+muted+'margin-bottom:8px;">'+list.length+' user(s). Last seen comes from logged-in device sessions.</div>';
+    list.forEach(function(x){ t += '<div style="'+card+'"><div style="display:flex;justify-content:space-between;"><b>'+(x.online?'<span style="color:#35d07f;">●</span> ':'')+H(x.u)+'</b><span style="'+muted+'">'+H(x.role)+'</span></div><div style="'+muted+'">'+H(ago(x.last))+' · '+x.devices+' device(s) · '+x.actions+' logged action(s)</div></div>'; });
+    return t + '</div>';
+  }
+  function auditFiltered(){
+    var u = ctx.auUser||'', q = String(ctx.auQ||'').toLowerCase(), d = ctx.auDays||'7', since = d==='all' ? 0 : Date.now()-Number(d)*86400000;
+    return (state.auditLog||[]).filter(function(l){ return (!u || l.user===u) && new Date(l.ts).getTime() >= since && (!q || (String(l.action||'')+' '+String(l.details||'')).toLowerCase().indexOf(q)>=0); });
+  }
+  function auditView(){
+    var t = top('📜 Audit log'), users = {}; (state.auditLog||[]).forEach(function(l){ users[l.user]=1; });
+    t += '<div style="display:flex;gap:8px;"><select style="'+inp+'" onchange="FHLTools.set(\'auUser\',this.value)"><option value="">All users</option>'+Object.keys(users).sort().map(function(u){ return '<option'+(ctx.auUser===u?' selected':'')+'>'+H(u)+'</option>'; }).join('')+'</select><select style="'+inp+'" onchange="FHLTools.set(\'auDays\',this.value)">'+[['1','Today'],['7','7 days'],['30','30 days'],['all','All']].map(function(o){ return '<option value="'+o[0]+'"'+((ctx.auDays||'7')===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></div>';
+    t += '<input style="'+inp+'" placeholder="Search action / details" value="'+H(ctx.auQ||'')+'" oninput="FHLTools.set(\'auQ\',this.value,true)">';
+    var list = auditFiltered();
+    t += '<div style="'+muted+'margin-bottom:8px;">'+list.length+' entr'+(list.length===1?'y':'ies')+' (the app keeps the latest 200)</div>' + btn('⬇ Export to Excel','FHLTools.exportAudit()','btn-ghost');
+    list.slice(0,120).forEach(function(l){ t += '<div style="'+card+'"><div style="display:flex;justify-content:space-between;gap:8px;"><b style="font-size:13px;">'+H(l.action)+'</b><span style="'+muted+'">'+H(dstr(l.ts))+'</span></div><div style="font-size:13px;">'+H(l.details||'')+'</div><div style="'+muted+'">'+H(l.user)+' · '+H(l.deviceName||l.deviceId||'')+'</div></div>'; });
+    return t + '</div>';
+  }
+  function devicesView(){
+    var t = top('📱 Devices & logout'), now = Date.now(), mine = state.sessionToken;
+    var sess = (state.activeSessions||[]).filter(function(x){ return x && !x.revokedAt; }).sort(function(a,b){ return Number(b.lastSeen||0)-Number(a.lastSeen||0); });
+    t += '<div style="'+muted+'margin-bottom:8px;">'+sess.length+' logged-in session(s). Logging out a device sends that phone back to the login screen.</div>';
+    var others = sess.filter(function(x){ return x.id!==mine; });
+    if(others.length) t += btn('⏻ Logout all other devices','FHLTools.revokeMany(\'\')','btn-ghost');
+    sess.forEach(function(x){
+      var on = now-Number(x.lastSeen||0) < 120000;
+      t += '<div style="'+card+'"><div style="display:flex;justify-content:space-between;gap:8px;"><b>'+(on?'<span style="color:#35d07f;">●</span> ':'')+H(x.username)+'</b><span style="'+muted+'">'+H(ago(x.lastSeen))+'</span></div><div style="'+muted+'">'+H(x.deviceName||x.deviceId||'Unknown device')+' · since '+H(dstr(x.loginTs))+'</div>' + (x.id===mine ? '<div style="'+muted+'margin-top:4px;">This device</div>' : '<div style="display:flex;gap:8px;margin-top:6px;"><button class="btn btn-ghost btn-sm" onclick="FHLTools.revokeOne(\''+H(x.id)+'\')">Logout this device</button><button class="btn btn-ghost btn-sm" onclick="FHLTools.revokeMany(\''+H(String(x.username).replace(/\'/g,''))+'\')">Logout '+H(x.username)+' everywhere</button></div>') + '</div>';
+    });
+    return t + '</div>';
+  }
+  function salesData(){
+    var days = Number(ctx.sdays||30), since = Date.now()-days*86400000, byBc = {};
+    rows().forEach(function(r){ byBc[bc(r.Barcode)] = r; });
+    var items = {}, parties = {};
+    (state.stockMovements||[]).forEach(function(m){ if(m.type!=='sale' || (m.ts||0)<since) return; var k = bc(m.barcode), r = byBc[k], u = Math.abs(m.delta||0); var it = items[k] = items[k] || {row:r, units:0, value:0}; it.units += u; var pr = r ? Number(priceOf(r)) : 0; if(!isNaN(pr)) it.value += u*pr; });
+    Object.keys(items).forEach(function(k){ var it = items[k], p = it.row ? (party(it.row)||'—') : '—'; var pp = parties[p] = parties[p] || {units:0, value:0, items:0}; pp.units += it.units; pp.value += it.value; pp.items++; });
+    var soldKeys = {}; Object.keys(items).forEach(function(k){ soldKeys[k]=1; });
+    var slow = rows().filter(function(r){ return qtyOf(r) > 0 && !soldKeys[bc(r.Barcode)]; }).sort(function(a,b){ return qtyOf(b)*(Number(priceOf(b))||0) - qtyOf(a)*(Number(priceOf(a))||0); });
+    return { days:days, items:Object.keys(items).map(function(k){ return items[k]; }).sort(function(a,b){ return b.units-a.units; }), parties:parties, slow:slow };
+  }
+  function salesView(){
+    var d = salesData(), t = top('📊 Sales report');
+    t += '<select style="'+inp+'" onchange="FHLTools.set(\'sdays\',this.value)">'+[['7','Last 7 days'],['30','Last 30 days'],['60','Last 60 days'],['90','Last 90 days']].map(function(o){ return '<option value="'+o[0]+'"'+(String(d.days)===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select>';
+    t += '<div style="'+muted+'margin-bottom:8px;">Sales come from recorded stock movements, so they are only as complete as the imports. Value uses the current price.</div>';
+    t += '<div class="divider-label">By party</div>';
+    var pk = Object.keys(d.parties).sort(function(a,b){ return d.parties[b].units-d.parties[a].units; });
+    if(!pk.length) t += '<div style="'+muted+'">No sales recorded in this period.</div>';
+    pk.slice(0,25).forEach(function(p){ var x = d.parties[p]; t += '<div style="'+card+'display:flex;justify-content:space-between;"><span><b>'+H(p)+'</b> <span style="'+muted+'">'+x.items+' item(s)</span></span><span>'+fmt(x.units)+' units · '+fmt(x.value)+'</span></div>'; });
+    t += '<div class="divider-label">Top selling items</div>';
+    d.items.slice(0,15).forEach(function(it){ if(it.row) t += rowItem(it.row, '<div style="margin-top:4px;font-weight:700;">Sold '+fmt(it.units)+' · Stock '+fmt(qtyOf(it.row))+'</div>'); });
+    t += '<div class="divider-label">Slow moving (in stock, no sale in '+d.days+' days)</div><div style="'+muted+'margin-bottom:6px;">'+d.slow.length+' item(s), highest stock value first</div>';
+    d.slow.slice(0,25).forEach(function(r){ t += rowItem(r, '<div style="margin-top:4px;font-weight:700;">Stock '+fmt(qtyOf(r))+' · Price '+H(fmt(priceOf(r)))+'</div>'); });
+    t += btn('⬇ Export report to Excel','FHLTools.exportSales()','btn-ghost');
+    return t + '</div>';
+  }
+  function saveXlsx(wb, name){
+    if(window.AndroidNative && typeof window.AndroidNative.shareFile === 'function'){ window.AndroidNative.shareFile(XLSX.write(wb,{bookType:'xlsx',type:'base64'}), name); showToast('✓ File ready — choose where to save'); }
+    else { XLSX.writeFile(wb, name); showToast('✓ Downloaded'); }
+  }
+  function stamp(){ return new Date().toISOString().slice(0,19).replace(/[:T]/g,'-'); }
+  function exportAudit(){ try{ var a = [['Date','User','Action','Details','Device']]; auditFiltered().forEach(function(l){ a.push([dstr(l.ts), l.user||'', l.action||'', l.details||'', l.deviceName||l.deviceId||'']); }); var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(a), 'Audit log'); saveXlsx(wb, 'FHL_Audit_'+stamp()+'.xlsx'); }catch(e){ showToast('Export failed: '+e.message, true); } }
+  function exportSales(){
+    try{ var d = salesData(), wb = XLSX.utils.book_new();
+      var p = [['Party','Items sold','Units','Value']]; Object.keys(d.parties).forEach(function(k){ var x = d.parties[k]; p.push([k, x.items, x.units, x.value]); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(p), 'By party');
+      var i = [['Barcode','Description','Party','Units sold','Stock','Price']]; d.items.forEach(function(it){ var r = it.row||{}; i.push([r.Barcode||'', r.Description||'', party(r), it.units, it.row?qtyOf(r):'', it.row?priceOf(r):'']); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(i), 'Items sold');
+      var s = [['Barcode','Description','Party','Stock','Price']]; d.slow.forEach(function(r){ s.push([r.Barcode||'', r.Description||'', party(r), qtyOf(r), priceOf(r)]); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s), 'Slow moving');
+      saveXlsx(wb, 'FHL_Sales_'+d.days+'d_'+stamp()+'.xlsx');
+    }catch(e){ showToast('Export failed: '+e.message, true); }
+  }
+  async function revokeOne(id){ if(!isAdm()) return; await revokeActiveSession(id); render(); }
+  async function revokeMany(username){
+    if(!isAdm()) return;
+    var ids = (state.activeSessions||[]).filter(function(x){ return x && !x.revokedAt && x.id!==state.sessionToken && (!username || x.username===username); }).map(function(x){ return x.id; });
+    if(!ids.length){ showToast('No other sessions'); return; }
+    if(!(await appConfirm('Logout '+ids.length+' device session(s)'+(username?' of '+username:'')+'?', 'Logout devices'))) return;
+    for(var i=0;i<ids.length;i++){ await revokeActiveSession(ids[i]); }
+    render();
+  }
+  var views = { users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
   function render(){ var o = el(), sc = o.scrollTop; try{ o.innerHTML = (views[view]||home)(); }catch(e){ o.innerHTML = top('Tools') + '<div>Could not open: '+H(e.message)+'</div></div>'; } o.scrollTop = sc; }
   function shareText(text){
     if(navigator.share){ navigator.share({text:text}).catch(function(){}); return; }
@@ -13438,11 +13532,11 @@ function showStartupRecovery(error){
     open: function(){ if(typeof isStaffOrAdmin==='function' && !isStaffOrAdmin()) return; view = 'home'; ctx = {}; el().style.display = 'block'; render(); },
     close: function(){ var o = document.getElementById('fhlToolsOverlay'); if(o) o.style.display = 'none'; },
     back: function(){ if(view==='home') this.close(); else { view = 'home'; render(); } },
-    go: function(v){ view = v; render(); el().scrollTop = 0; },
+    go: function(v){ if(/^(users|audit|devices|sales)$/.test(v) && !isAdm()) return; view = v; render(); el().scrollTop = 0; },
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
     openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
-    render: render, shareText: shareText, copyText: copyText, backup: backup,
+    exportAudit: exportAudit, exportSales: exportSales, revokeOne: revokeOne, revokeMany: revokeMany, render: render, shareText: shareText, copyText: copyText, backup: backup,
     _sum: function(){ return summaryText(summaryData()); }, _priceText: priceText
   };
 })();
