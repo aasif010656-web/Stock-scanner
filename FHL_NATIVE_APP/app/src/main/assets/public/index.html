@@ -13602,42 +13602,52 @@ function showStartupRecovery(error){
 /* ===== FHL login approval: staff/promoter logins wait for Asif's approval ===== */
 (function(){
   var TTL = 180000, ref0 = null, unsubAdmin = null, shown = {};
-  function ref(){ if(ref0) return ref0; try{ if(fbDocRef && fbDocRef.parent){ ref0 = fbDocRef.parent.doc('loginRequests'); } }catch(e){} return ref0; }
+  // Uses the same sharedData document the app already syncs (no extra Firestore listener target).
+  function ref(){ try{ return fbDocRef || null; }catch(e){ return null; } }
   function del(){ return firebase.firestore.FieldValue.delete(); }
   function rid(){ return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
   function H(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function overlay(id, html){ var o = document.getElementById(id); if(!o){ o = document.createElement('div'); o.id = id; o.style.cssText = 'position:fixed;inset:0;z-index:9600;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px;'; document.body.appendChild(o); } o.innerHTML = '<div style="width:min(380px,100%);background:var(--panel,#1B1F2C);color:var(--text,#EEF0F6);border:1px solid var(--border2,#333A4F);border-radius:18px;padding:18px;">' + html + '</div>'; return o; }
   function drop(id){ var o = document.getElementById(id); if(o) o.remove(); }
   function getEnabled(){
-    var r = ref(); if(!r) return Promise.reject(new Error('offline'));
-    return r.get().then(function(s){ var d = s.exists ? (s.data()||{}) : {}; return d.enabled !== false; });
+    try{
+      var r = ref(); if(!r) return Promise.reject(new Error('offline'));
+      return Promise.resolve(r.get()).then(function(s){ var d = s.exists ? (s.data()||{}) : {}; return d.loginApprovalEnabled !== false; });
+    }catch(e){ return Promise.reject(e); }
   }
-  function setEnabled(v){ var r = ref(); if(!r) return Promise.reject(new Error('offline')); return r.set({enabled: !!v}, {merge:true}); }
+  function setEnabled(v){ try{ var r = ref(); if(!r) return Promise.reject(new Error('offline')); return Promise.resolve(r.set({loginApprovalEnabled: !!v}, {merge:true})); }catch(e){ return Promise.reject(e); } }
 
   function request(username, onApproved){
-    var r = ref();
-    if(!r || (typeof fbReady !== 'undefined' && !fbReady)){ showToast('Admin approval needs internet. Connect and try again.', true); return; }
+    var r = ref(), finished = false;
+    function go(){ if(finished) return; finished = true; onApproved(); }
+    function failOpen(why){
+      if(finished) return;
+      if(navigator.onLine === false){ finished = true; showToast('Admin approval needs internet. Connect and try again.', true); return; }
+      try{ addAuditLog('Login approval unavailable', 'Allowed ' + username + ' (' + why + ')'); }catch(e){}
+      go();
+    }
+    if(!r || (typeof fbReady !== 'undefined' && !fbReady)){ failOpen('cloud not ready'); return; }
     getEnabled().then(function(on){
-      if(!on){ onApproved(); return; }
+      if(!on){ go(); return; }
       var id = rid(), unsub = null, timer = null, done = false;
-      function cleanup(){ done = true; if(unsub) try{ unsub(); }catch(e){} clearTimeout(timer); drop('fhlWaitApproval'); var u = {}; u['reqs.' + id] = del(); r.update(u).catch(function(){}); }
+      function cleanup(){ done = true; if(unsub) try{ unsub(); }catch(e){} clearTimeout(timer); drop('fhlWaitApproval'); var u = {}; u['loginRequests.' + id] = del(); r.update(u).catch(function(){}); }
       var rec = { username: username, deviceId: state.deviceId || '', deviceName: state.deviceName || '', ts: Date.now(), status: 'pending' };
-      var w = {}; w.reqs = {}; w.reqs[id] = rec;
+      var w = {}; w.loginRequests = {}; w.loginRequests[id] = rec;
       r.set(w, {merge:true}).then(function(){
         window.__fhlCancelApproval = function(){ cleanup(); showToast('Login cancelled'); };
         overlay('fhlWaitApproval', '<div style="font-weight:800;font-size:18px;margin-bottom:8px;">Waiting for admin approval</div><div style="font-size:13px;line-height:1.5;color:var(--muted,#9aa3b8);margin-bottom:14px;">Asif has to approve this login (' + H(username) + '). Keep this screen open. It expires in 3 minutes.</div><button class="btn btn-ghost" style="width:100%;" onclick="window.__fhlCancelApproval()">Cancel</button>');
         unsub = r.onSnapshot(function(doc){
-          if(done) return; var me = ((doc.data()||{}).reqs || {})[id]; if(!me) return;
-          if(me.status === 'approved'){ cleanup(); onApproved(); }
+          if(done) return; var me = ((doc.data()||{}).loginRequests || {})[id]; if(!me) return;
+          if(me.status === 'approved'){ cleanup(); go(); }
           else if(me.status === 'denied'){ cleanup(); showToast('Admin denied this login', true); }
-        }, function(){ if(!done){ cleanup(); showToast('Could not reach approval service', true); } });
+        }, function(){ if(!done){ cleanup(); failOpen('listener error'); } });
         timer = setTimeout(function(){ if(!done){ cleanup(); showToast('Admin did not approve in time. Try again.', true); } }, TTL);
-      }).catch(function(){ showToast('Could not send approval request. Check internet.', true); });
-    }).catch(function(){ showToast('Admin approval needs internet. Connect and try again.', true); });
+      }).catch(function(){ failOpen('request write failed'); });
+    }).catch(function(){ failOpen('settings read failed'); });
   }
 
   function decide(id, ok, username){
-    var r = ref(); if(!r) return; var u = {}; u['reqs.' + id + '.status'] = ok ? 'approved' : 'denied'; u['reqs.' + id + '.by'] = 'Asif'; u['reqs.' + id + '.decidedAt'] = Date.now();
+    var r = ref(); if(!r) return; var u = {}; u['loginRequests.' + id + '.status'] = ok ? 'approved' : 'denied'; u['loginRequests.' + id + '.by'] = 'Asif'; u['loginRequests.' + id + '.decidedAt'] = Date.now();
     r.update(u).then(function(){ try{ addAuditLog(ok ? 'Login Approved' : 'Login Denied', username); }catch(e){} }).catch(function(){ showToast('Could not save decision', true); });
     delete shown[id]; drawPending(lastPending.filter(function(p){ return p.id !== id; }));
   }
@@ -13654,7 +13664,7 @@ function showStartupRecovery(error){
     if(!isAdmin){ if(unsubAdmin){ try{ unsubAdmin(); }catch(e){} unsubAdmin = null; drop('fhlApproveLogin'); } return; }
     var r = ref(); if(!r || unsubAdmin) return;
     unsubAdmin = r.onSnapshot(function(doc){
-      var reqs = (doc.data()||{}).reqs || {}, now = Date.now(), list = [];
+      var reqs = (doc.data()||{}).loginRequests || {}, now = Date.now(), list = [];
       Object.keys(reqs).forEach(function(id){ var q = reqs[id]; if(q && q.status === 'pending' && now - Number(q.ts||0) < TTL) list.push({id:id, username:q.username, deviceName:q.deviceName, deviceId:q.deviceId, ts:q.ts}); });
       var fresh = list.some(function(p){ return !shown[p.id]; }); list.forEach(function(p){ shown[p.id] = 1; });
       if(fresh){ try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){} try{ if(typeof playErrorSound === 'function') {} }catch(e){} }
