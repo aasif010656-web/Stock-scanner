@@ -16,8 +16,17 @@ service cloud.firestore {
     }
 
     // Client error reports: write-only. Nobody can read, edit or delete them from a client.
+    // Only the fields the app really sends, as short strings (+ a number timestamp).
     match /stockScannerApp/clientErrors/events/{eventId} {
-      allow create: if true;
+      allow create: if request.resource.data.keys().hasOnly(['message', 'context', 'appVersion', 'tab', 'role', 'syncStatus', 'userAgent', 'createdAt'])
+        && request.resource.data.get('message', '') is string && request.resource.data.get('message', '').size() <= 1000
+        && request.resource.data.get('context', '') is string && request.resource.data.get('context', '').size() <= 100
+        && request.resource.data.get('appVersion', '') is string && request.resource.data.get('appVersion', '').size() <= 50
+        && request.resource.data.get('tab', '') is string && request.resource.data.get('tab', '').size() <= 50
+        && request.resource.data.get('role', '') is string && request.resource.data.get('role', '').size() <= 40
+        && request.resource.data.get('syncStatus', '') is string && request.resource.data.get('syncStatus', '').size() <= 40
+        && request.resource.data.get('userAgent', '') is string && request.resource.data.get('userAgent', '').size() <= 200
+        && request.resource.data.get('createdAt', 0) is number;
     }
 
     // Update/release info: clients may read it, never write it. Without this, anyone
