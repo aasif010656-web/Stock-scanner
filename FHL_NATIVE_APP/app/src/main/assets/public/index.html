@@ -7206,7 +7206,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.3';
+const APP_VERSION = '6.1.4';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -9829,6 +9829,96 @@ function pick(row, keys){
   return '';
 }
 
+
+// ---------- Import preview (dry run, nothing is changed until the admin taps Apply) ----------
+function importNum(value){
+  const n = parseFloat(String(value == null ? '' : value).replace(/[^0-9.\-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+function importPriceChanged(oldPrice, newPrice){
+  const a = importNum(oldPrice), b = importNum(newPrice);
+  if(a !== null && b !== null) return Math.abs(a - b) > 0.0005;
+  return String(oldPrice) !== String(newPrice);
+}
+function analyzeImportRows(rows, priceCol){
+  const out = { rows: rows.length, noBarcode: 0, dupBarcodes: 0, existing: 0, newProducts: 0, qtyChanges: 0, qtySame: 0, blankQty: 0, negativeQty: 0,
+                priceColumn: !!priceCol, blankPrice: 0, priceChanges: 0, parties: {} };
+  const seen = new Set();
+  rows.forEach(function(r){
+    const barcode = normalizeBarcode13(pick(r, ['Barcode','barcode','BARCODE']));
+    if(!barcode){ out.noBarcode++; return; }
+    if(seen.has(barcode)) out.dupBarcodes++;
+    seen.add(barcode);
+    const existing = BARCODE_INDEX.get(barcode);
+    const hasExisting = !!(existing && existing.length);
+    if(hasExisting) out.existing++; else out.newProducts++;
+
+    const qtyStr = pick(r, ['Stock Qty','Quantity','Qty','stock qty','quantity','qty']);
+    if(qtyStr === ''){ out.blankQty++; }
+    else {
+      const q = parseFloat(qtyStr) || 0;
+      if(q < 0) out.negativeQty++;
+      if(hasExisting){
+        const oldQ = stockOverrides.hasOwnProperty(barcode) ? stockOverrides[barcode] : effectiveQty(existing[0]);
+        if(Number(oldQ) !== q) out.qtyChanges++; else out.qtySame++;
+      }
+    }
+
+    if(!priceCol) return;
+    const raw = r[priceCol];
+    const p = raw === undefined || raw === null ? '' : String(raw).trim();
+    if(!p){ out.blankPrice++; return; }
+    const art = pick(r, ['Code','ART CODE','code','Product','product']);
+    const oldPrice = priceForRow({ Barcode: barcode, Product: art }, '');
+    if(oldPrice !== undefined && oldPrice !== '' && importPriceChanged(oldPrice, p)){
+      out.priceChanges++;
+      const party = pick(r, ['Party','party']) || (hasExisting && existing[0] && existing[0].Party) || 'No party';
+      const bucket = out.parties[party] || (out.parties[party] = { count: 0, sample: '' });
+      bucket.count++;
+      if(!bucket.sample) bucket.sample = String(pick(r, ['Description','Product','description','product']) || (hasExisting && existing[0] && existing[0].Description) || barcode).slice(0, 32) + ': ' + oldPrice + ' → ' + p;
+    }
+  });
+  return out;
+}
+function showImportPreview(a, fileName){
+  return new Promise(function(resolve){
+    if(state._confirmRequest){ state._confirmRequest(false); }
+    state._confirmRequest = function(result){ state._confirmRequest = null; closeActionModal(); resolve(!!result); };
+    const row = function(label, value, warn){
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid rgba(128,128,128,.25);"><span>' + esc(label) + '</span><b' + (warn && value ? ' style="color:#ff6b6b;"' : '') + '>' + esc(String(value)) + '</b></div>';
+    };
+    const warnings = [];
+    if(!a.priceColumn) warnings.push('No Price column found, so prices will NOT change.');
+    if(a.noBarcode === a.rows) warnings.push('No row has a valid barcode. Nothing will be imported.');
+    else if(a.noBarcode) warnings.push(a.noBarcode + ' row(s) have no valid barcode and will be skipped.');
+    if(a.dupBarcodes) warnings.push(a.dupBarcodes + ' barcode(s) appear more than once. The last row wins.');
+    if(a.negativeQty) warnings.push(a.negativeQty + ' row(s) have negative stock.');
+    if(a.priceColumn && a.blankPrice) warnings.push(a.blankPrice + ' row(s) have a blank price. Their current price is kept.');
+    if(a.blankQty) warnings.push(a.blankQty + ' row(s) have blank stock. Their current stock is kept.');
+    const partyNames = Object.keys(a.parties).sort(function(x, y){ return a.parties[y].count - a.parties[x].count; });
+    let partyHtml = '';
+    if(partyNames.length){
+      partyHtml += '<div style="font-weight:700;margin:12px 0 4px;">Price changes by party (their users get a Log message)</div>';
+      partyNames.slice(0, 8).forEach(function(p){
+        partyHtml += '<div style="padding:4px 0;"><b>' + esc(p) + '</b> · ' + a.parties[p].count + ' change(s)<div style="opacity:.7;font-size:12px;">' + esc(a.parties[p].sample) + '</div></div>';
+      });
+      if(partyNames.length > 8) partyHtml += '<div style="opacity:.7;">+ ' + (partyNames.length - 8) + ' more part' + (partyNames.length - 8 === 1 ? 'y' : 'ies') + '</div>';
+    }
+    const warnHtml = warnings.length ? '<div style="margin:12px 0 4px;padding:8px 10px;border-radius:10px;background:rgba(255,107,107,.12);font-size:13px;line-height:1.45;">' + warnings.map(function(w){ return '⚠ ' + esc(w); }).join('<br>') + '</div>' : '';
+    openActionModal(
+      '<div style="font-weight:800;font-size:18px;margin-bottom:4px;">Import preview</div>' +
+      '<div style="font-size:12px;opacity:.7;margin-bottom:10px;word-break:break-all;">' + esc(fileName || '') + ' · nothing is saved until you tap Apply</div>' +
+      '<div style="font-size:14px;max-height:55vh;overflow:auto;">' +
+      row('Rows in file', a.rows) + row('Existing products', a.existing) + row('New products', a.newProducts) +
+      row('Stock will change', a.qtyChanges) + row('Stock unchanged', a.qtySame) + row('Prices will change', a.priceChanges) +
+      partyHtml + warnHtml + '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">' +
+      '<button class="btn btn-ghost" onclick="resolveAppConfirm(false)">Cancel</button>' +
+      '<button class="btn btn-accent" onclick="resolveAppConfirm(true)">Apply import</button></div>'
+    );
+  });
+}
+
 async function handleImportExcel(fileInput){
   if(state.user && state.user.role === 'promoter'){ showToast('Not available for this account', true); if(fileInput) fileInput.value=''; return; }
   if(state.importProgress && state.importProgress.active){ showToast('Brands Excel import is already running'); if(fileInput) fileInput.value=''; return; }
@@ -9855,6 +9945,13 @@ async function handleImportExcel(fileInput){
         return lower.includes('price') || lower === 'rate' || lower === 'mrp' || lower.includes('selling');
     });
 
+    const importPreview = analyzeImportRows(rows, priceCol);
+    if(!(await showImportPreview(importPreview, file.name))){
+      showToast('Import cancelled. Nothing was changed.');
+      fileInput.value = '';
+      return;
+    }
+
     state.importProgress = { active: true, current: 0, total: rows.length, label: 'Processing workbook…' };
     updateBrandsImportFeedback();
     render();
@@ -9875,9 +9972,11 @@ async function handleImportExcel(fileInput){
               priceCount++;
               // Record a permanent price-change notification tagged to the party,
               // so whoever handles that party's line can see what changed and when.
-              if(oldPrice !== undefined && oldPrice !== '' && String(oldPrice) !== p){
-                  const notifParty = pick(r, ['Party','party']) || '';
-                  const notifDesc = pick(r, ['Description','Product','description','product']) || '';
+              if(oldPrice !== undefined && oldPrice !== '' && importPriceChanged(oldPrice, p)){
+                  const knownRows = BARCODE_INDEX.get(barcode);
+                  const knownRow = knownRows && knownRows[0] ? knownRows[0] : null;
+                  const notifParty = pick(r, ['Party','party']) || (knownRow && knownRow.Party) || '';
+                  const notifDesc = pick(r, ['Description','Product','description','product']) || (knownRow && knownRow.Description) || '';
                   if(!state.priceChangeNotifications) state.priceChangeNotifications = [];
                   state.priceChangeNotifications.unshift({
                       id: 'pc_' + Date.now() + '_' + Math.random().toString(36).slice(2,8),
