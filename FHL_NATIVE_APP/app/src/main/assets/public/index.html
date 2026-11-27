@@ -6357,15 +6357,14 @@ async function syncBrandsStateToCloud(){
   // Activate only if the root is still the version we read before building this
   // snapshot. This prevents a stale device from activating an older snapshot
   // after another device has completed a newer Excel import.
-  await fbBrandsDocRef.firestore.runTransaction(function(transaction){
-    return transaction.get(fbBrandsDocRef).then(function(latestRootSnap){
-      const latestRoot = latestRootSnap.exists ? (latestRootSnap.data() || {}) : {};
-      if(String(latestRoot.activeVersion || '') !== previousActiveVersion){
-        throw new Error('Brands cloud changed during publish; newer active version preserved');
-      }
-      transaction.set(fbBrandsDocRef, Object.assign({ activeVersion:versionId }, versionMeta), {merge:true});
-    });
-  });
+  // Firestore SDK 10.12.2 can throw "INTERNAL ASSERTION FAILED: Unexpected state" from runTransaction on
+  // some devices, so activation uses a fresh server read followed by a plain write instead.
+  const latestRootSnap = await fbBrandsDocRef.get({source:'server'});
+  const latestRoot = latestRootSnap.exists ? (latestRootSnap.data() || {}) : {};
+  if(String(latestRoot.activeVersion || '') !== previousActiveVersion){
+    throw new Error('Brands cloud changed during publish; newer active version preserved');
+  }
+  await fbBrandsDocRef.set(Object.assign({ activeVersion:versionId }, versionMeta), {merge:true});
   const verifiedRoot = await fbBrandsDocRef.get({source:'server'});
   const verifiedData = verifiedRoot.exists ? (verifiedRoot.data() || {}) : {};
   if(String(verifiedData.activeVersion || '') !== versionId || verifiedData.status !== 'ready') throw new Error('Brands cloud version was not confirmed');
@@ -7308,7 +7307,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.16';
+const APP_VERSION = '6.1.17';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
