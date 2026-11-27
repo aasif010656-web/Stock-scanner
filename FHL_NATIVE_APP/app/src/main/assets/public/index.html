@@ -7307,7 +7307,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.19';
+const APP_VERSION = '6.1.20';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -11934,7 +11934,8 @@ function renderActiveSessions(){
 }
 function renderUserMgmt(){
   if(!isAdminUser()) return '<div class="empty">Only Admin can manage users.</div>';
-  let html = '<div class="form-card" style="margin-top:12px;">';
+  let html = '<div class="form-card" style="margin-top:12px;"><div class="field-label">Activity & devices</div><div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" style="flex:1;" onclick="FHLTools.openDirect(\'users\')">👥 User activity</button><button class="btn btn-ghost btn-sm" style="flex:1;" onclick="FHLTools.openDirect(\'devices\')">📱 Devices & logout</button></div></div>';
+  html += '<div class="form-card" style="margin-top:12px;">';
   html += '<div class="field-label">Add / Update User</div>';
   html += '<input type="text" placeholder="Username" value="' + esc(state.userForm.username) + '" oninput="setUserFormField(\'username\',this.value)" style="margin-bottom:8px;" />';
   html += '<input type="text" placeholder="Password" value="' + esc(state.userForm.password) + '" oninput="setUserFormField(\'password\',this.value)" style="margin-bottom:8px;" />';
@@ -12025,41 +12026,36 @@ function renderSettings(){
   html += iosRow('📱', 'linear-gradient(#5AC8FA,#0A84FF)', 'Device Name', '<input type="text" value="' + esc(state.deviceName) + '" oninput="setDeviceNameInput(this.value)" style="width:110px;margin:0;padding:6px 8px;font-size:13px;" /><button class="btn btn-accent btn-sm" onclick="commitDeviceName()">Save</button>');
   html += '</div>';
 
-  // ---- Appearance ----
-  html += '<div class="ios-section-title">Appearance</div>';
+  // ---- Appearance & display ----
+  html += '<div class="ios-section-title">Appearance & Display</div>';
   html += '<div class="ios-group">';
   const activeThemeObj = state.themes.find(t=>t.id===state.theme) || state.themes[0];
   html += iosRow('🎨', 'linear-gradient(#FF2D55,#C7003D)', 'App Theme', '<button class="btn btn-accent btn-sm" onclick="openThemePicker()">' + esc(activeThemeObj.name) + '</button>');
-  html += '</div>';
-
-  if(isStaffOrAdmin()){
-    html += '<div class="ios-section-title">Tools</div><div class="ios-group">';
-    html += iosRow('🧰', 'linear-gradient(#34C759,#248A3D)', 'Stock, price & share tools', '<button class="btn btn-accent btn-sm" onclick="FHLTools.open()">Open</button>');
-    html += '</div>';
-  }
-  // ---- Scan preferences ----
-  html += '<div class="ios-section-title">Scan Preferences</div>';
-  html += '<div class="ios-group">';
-  html += iosRow('🔊', 'linear-gradient(#FF9500,#D97E00)', 'Beep on Scan', iosSwitchHtml(state.beepOnScan, 'state.beepOnScan = !state.beepOnScan; render();'));
-  html += iosRow('📳', 'linear-gradient(#FF9500,#D97E00)', 'Vibrate on Scan', iosSwitchHtml(state.vibrateOnScan, 'state.vibrateOnScan = !state.vibrateOnScan; render();'));
   html += iosRow('🔤', 'linear-gradient(#8E8E93,#636366)', 'Display Font', '<button class="btn btn-ghost btn-sm" onclick="state.largeFont = !state.largeFont; render();">' + (state.largeFont ? 'Large' : 'Normal') + '</button>');
   html += '</div>';
 
-  // ---- Support ----
-  html += '<div class="ios-section-title">Help & Support</div>';
+  // ---- Scanning ----
+  html += '<div class="ios-section-title">Scanning</div>';
   html += '<div class="ios-group">';
-  const canEditContactAdmin = !!(state.user && state.user.username === 'Asif' && state.user.role === 'admin');
-  const contactAdminControl = canEditContactAdmin ? '<div style="display:flex;gap:6px;align-items:center;max-width:245px;"><input type="url" value="' + esc(state.contactAdminLink||'') + '" placeholder="Paste admin link" oninput="state.contactAdminLink=this.value" style="width:150px;margin:0;padding:7px 8px;font-size:12px;" /><button class="btn btn-accent btn-sm" onclick="saveContactAdminLink()">Save</button>' + (state.contactAdminLink ? '<button class="btn btn-ghost btn-sm" onclick="openContactAdminLink()">Open</button>' : '') + '</div>' : (state.contactAdminLink ? '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open</button>' : '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open Admin Contact</button>');
-  html += iosRow('💬', 'linear-gradient(#25D366,#128C7E)', 'Contact Admin', contactAdminControl);
+  html += iosRow('🔊', 'linear-gradient(#FF9500,#D97E00)', 'Beep on Scan', iosSwitchHtml(state.beepOnScan, 'state.beepOnScan = !state.beepOnScan; render();'));
+  html += iosRow('📳', 'linear-gradient(#FF9500,#D97E00)', 'Vibrate on Scan', iosSwitchHtml(state.vibrateOnScan, 'state.vibrateOnScan = !state.vibrateOnScan; render();'));
   html += '</div>';
 
-  // ---- Connection recovery (all roles) ----
-  html += '<div class="ios-section-title">Connection & Recovery</div>';
+  // ---- Stock & sync ----
+  html += '<div class="ios-section-title">Stock & Sync</div>';
   html += '<div class="ios-group">';
   const retryLabel = syncStatus === 'synced' ? 'Verify Connection' : (syncStatus === 'connecting' ? 'Checking…' : 'Retry Connection');
   const cloudDetail = syncStatus === 'synced' ? 'Cloud reachable' : (syncStatus === 'offline' ? 'Waiting for internet' : 'Checking cloud connection');
   html += iosRow('📦', 'linear-gradient(#5AC8FA,#0A84FF)', 'Refresh Stock & Prices', '<button class="btn btn-accent btn-sm" onclick="refreshStockNow()"' + (state._stockRefreshRunning ? ' disabled' : '') + '>' + (state._stockRefreshRunning ? 'Refreshing…' : 'Refresh') + '</button>');
   html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Connection', '<span style="font-size:11px;color:var(--muted);">' + esc(cloudDetail) + '</span><button class="btn btn-accent btn-sm"' + (state._cloudRetryRunning ? ' disabled style="opacity:.55;"' : '') + ' onclick="retryCloudConnection()">' + retryLabel + '</button>');
+  if(state.user.role === 'admin'){
+    let syncOptions = '<option value="realtime"' + (state.syncInterval==='realtime'?' selected':'') + '>Real-time</option>' +
+                       '<option value="manual"' + (state.syncInterval==='manual'?' selected':'') + '>Manual Only</option>';
+    	    html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Sync Interval', '<select class="ios-select" onchange="state.syncInterval = this.value; render();">' + syncOptions + '</select>');
+  }
+  if(isStaffOrAdmin()){
+    html += iosRow('🧰', 'linear-gradient(#34C759,#248A3D)', 'Stock, price & share tools', '<button class="btn btn-accent btn-sm" onclick="FHLTools.open()">Open</button>');
+  }
   html += '</div>';
 
   if(state.user.role === 'admin'){
@@ -12075,12 +12071,20 @@ function renderSettings(){
       html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;"><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Rows</div><div class="bento-value">' + Number(lastExcel.updatedRows || 0) + '</div></div><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Updated Qty</div><div class="bento-value">' + updatedQty.toLocaleString() + '</div></div><div class="bento-tile small" style="min-height:54px;"><div class="bento-label">Updated Value</div><div class="bento-value">' + esc(fmtMoney(updatedValue)) + '</div></div></div>';
       html += '</div>';
     }
+    html += '<div class="ios-section-title">Users & Access</div>';
+    html += '<div class="ios-group">';
+    const promoterActions = '<div class="promoter-actions-card"><div class="promoter-actions-title">Promoter Security</div><div class="promoter-actions-buttons"><button class="btn btn-accent btn-sm" onclick="runPromoterSecurityAction(\'lock\');">🔒 Lock</button><button class="btn btn-ghost btn-sm" onclick="runPromoterSecurityAction(\'unlock\');">🔓 Unlock</button><button class="btn btn-ghost btn-sm promoter-logout-btn" onclick="runPromoterSecurityAction(\'logout\');">↪ Logout</button></div></div>';
+    html += promoterActions;
+    html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="openUserManagementWindow()">Open</button>');
+    html += iosRow('🔔', 'linear-gradient(#FF9F0A,#FF453A)', 'Custom Notification', '<button class="btn btn-accent btn-sm" onclick="openCustomNotificationComposer()">Compose</button>');
+    html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="openAuditLogWindow()">View</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
+    html += '</div>';
     if(state.user.username === 'Asif'){
-      html += '<div class="ios-section-title">Danger Zone</div>';
+      html += '<div class="ios-section-title">Maintenance</div>';
       html += '<div class="ios-group">';
+      html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="confirmClearLocalOverrides()">Clear</button>');
       html += iosRow('⚠️', 'linear-gradient(#FF3B30,#C4291F)', 'Full Reset (Clear ALL Data)', '<button class="btn btn-accent btn-sm" style="background:var(--red); border-color:var(--red);" onclick="fullHardReset()">Hard Reset</button>');
       html += '</div>';
-
       if(state.importProgress && state.importProgress.active){
         const pct = state.importProgress.total ? Math.round((state.importProgress.current / state.importProgress.total) * 100) : 0;
         html += '<div class="ios-section-title">Brands Import — In Progress</div>';
@@ -12090,22 +12094,14 @@ function renderSettings(){
         html += '</div>';
       }
     }
-    html += '<div class="ios-section-title">Users & Security</div>';
-    html += '<div class="ios-group">';
-    const promoterActions = '<div class="promoter-actions-card"><div class="promoter-actions-title">Promoter Security</div><div class="promoter-actions-buttons"><button class="btn btn-accent btn-sm" onclick="runPromoterSecurityAction(\'lock\');">🔒 Lock</button><button class="btn btn-ghost btn-sm" onclick="runPromoterSecurityAction(\'unlock\');">🔓 Unlock</button><button class="btn btn-ghost btn-sm promoter-logout-btn" onclick="runPromoterSecurityAction(\'logout\');">↪ Logout</button></div></div>';
-    html += promoterActions;
-    html += iosRow('🧹', 'linear-gradient(#5856D6,#3F3DAE)', 'Clear All Overrides', '<button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="confirmClearLocalOverrides()">Clear</button>');
-    html += iosRow('👥', 'linear-gradient(#5856D6,#3F3DAE)', 'User Management', '<button class="btn btn-ghost btn-sm" onclick="openUserManagementWindow()">Open</button>');
-    html += iosRow('🔔', 'linear-gradient(#FF9F0A,#FF453A)', 'Custom Notification', '<button class="btn btn-accent btn-sm" onclick="openCustomNotificationComposer()">Compose</button>');
-    html += iosRow('📋', 'linear-gradient(#5856D6,#3F3DAE)', 'Audit Log (' + (state.auditLog||[]).length + ')', '<button class="btn btn-ghost btn-sm" onclick="openAuditLogWindow()">View</button><button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="clearAuditLog()">Clear</button>');
-    html += '</div>';
-    html += '<div class="ios-section-title">Data & Sync</div>';
-    html += '<div class="ios-group">';
-    let syncOptions = '<option value="realtime"' + (state.syncInterval==='realtime'?' selected':'') + '>Real-time</option>' +
-                       '<option value="manual"' + (state.syncInterval==='manual'?' selected':'') + '>Manual Only</option>';
-    	    html += iosRow('🔄', 'linear-gradient(#34C759,#2AA84A)', 'Cloud Sync Interval', '<select class="ios-select" onchange="state.syncInterval = this.value; render();">' + syncOptions + '</select>');
-	    html += '</div>';
-	  }
+  }
+
+  html += '<div class="ios-section-title">Help & Support</div>';
+  html += '<div class="ios-group">';
+  const canEditContactAdmin = !!(state.user && state.user.username === 'Asif' && state.user.role === 'admin');
+  const contactAdminControl = canEditContactAdmin ? '<div style="display:flex;gap:6px;align-items:center;max-width:245px;"><input type="url" value="' + esc(state.contactAdminLink||'') + '" placeholder="Paste admin link" oninput="state.contactAdminLink=this.value" style="width:150px;margin:0;padding:7px 8px;font-size:12px;" /><button class="btn btn-accent btn-sm" onclick="saveContactAdminLink()">Save</button>' + (state.contactAdminLink ? '<button class="btn btn-ghost btn-sm" onclick="openContactAdminLink()">Open</button>' : '') + '</div>' : (state.contactAdminLink ? '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open</button>' : '<button class="btn btn-accent btn-sm" onclick="openContactAdminLink()">Open Admin Contact</button>');
+  html += iosRow('💬', 'linear-gradient(#25D366,#128C7E)', 'Contact Admin', contactAdminControl);
+  html += '</div>';
 
 	  if(canUseNativeUpdateFlow()){
 	    const update = state.availableUpdate || null;
@@ -13397,7 +13393,7 @@ function showStartupRecovery(error){
     t += tile('🧬','Duplicate finder','Same item name under different barcodes','dups');
     t += tile('🎨','Display','Theme, large text','display');
     t += tile('💾','Backup export','Products, prices, movements, scans in one Excel','backup');
-    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🩺','Cloud sync check','Why an import is not in the cloud, upload or discard','sync'); t += tile('📣','Push price updates','Send today\'s price changes to everyone','pricepush'); t += tile('💲','Price alerts from 2 Excels','Create Log price updates by comparing old and new file','pricexl'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
+    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🩺','Cloud sync check','Why an import is not in the cloud, upload or discard','sync'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
     return t + '</div>';
   }
   function lowView(){
@@ -13682,7 +13678,8 @@ function showStartupRecovery(error){
   window.FHLTools = {
     open: function(){ if(typeof isStaffOrAdmin==='function' && !isStaffOrAdmin()) return; view = 'home'; ctx = {}; el().style.display = 'block'; render(); },
     close: function(){ var o = document.getElementById('fhlToolsOverlay'); if(o) o.style.display = 'none'; },
-    back: function(){ if(view==='home') this.close(); else { view = 'home'; render(); } },
+    back: function(){ if(view==='home' || ctx.direct) this.close(); else { view = 'home'; render(); } },
+    openDirect: function(v){ if(!isAdm()) return; try{ closeActionModal(); }catch(e){} view = v; ctx = {direct:true}; el().style.display = 'block'; render(); el().scrollTop = 0; },
     go: function(v){ if(/^(users|audit|devices|sales|approval|sync)$/.test(v) && !isAdm()) return; view = v; render(); el().scrollTop = 0; },
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
