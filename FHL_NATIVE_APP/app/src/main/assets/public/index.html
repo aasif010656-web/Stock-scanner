@@ -7307,7 +7307,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.18';
+const APP_VERSION = '6.1.19';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13391,7 +13391,7 @@ function showStartupRecovery(error){
     t += tile('🧬','Duplicate finder','Same item name under different barcodes','dups');
     t += tile('🎨','Display','Theme, large text','display');
     t += tile('💾','Backup export','Products, prices, movements, scans in one Excel','backup');
-    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🩺','Cloud sync check','Why an import is not in the cloud, upload or discard','sync'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
+    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🩺','Cloud sync check','Why an import is not in the cloud, upload or discard','sync'); t += tile('📣','Push price updates','Send today\'s price changes to everyone','pricepush'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
     return t + '</div>';
   }
   function lowView(){
@@ -13601,6 +13601,21 @@ function showStartupRecovery(error){
     }
     return t + '</div>';
   }
+  function todayPriceItems(){
+    var d = new Date(); d.setHours(0,0,0,0); var s0 = d.getTime();
+    return (state.priceChangeNotifications||[]).filter(function(n){ return Number(n.ts||0) >= s0; });
+  }
+  function pricepushView(){
+    var t = top('📣 Push price updates'), items = todayPriceItems(), g = {};
+    items.forEach(function(n){ var p = n.party || 'General'; g[p] = (g[p]||0) + 1; });
+    var keys = Object.keys(g);
+    t += '<div style="'+card+'"><div style="font-weight:700;margin-bottom:6px;">Today\'s price changes in Log: '+items.length+'</div>';
+    if(!keys.length) t += '<div style="'+muted+'">No price changes recorded today, so there is nothing to send. Import the price Excel again on a phone to create them.</div>';
+    keys.forEach(function(p){ t += '<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border,#262B3B);font-size:13px;"><span>Party '+H(p)+'</span><b>'+g[p]+' products</b></div>'; });
+    t += '</div>';
+    if(keys.length) t += btn('📣 Send notification to everyone','FHLTools.sendPricePush()') + '<div style="'+muted+'margin-top:6px;">Shows in every user\'s notification list and Log, and pops a phone notification here.</div>';
+    return t + '</div>';
+  }
   function syncView(){
     var t = top('🩺 Cloud sync check'), pend = null, act = '', err = null;
     try{ pend = hasBrandsCloudPending() ? brandsCloudPending : null; }catch(e){}
@@ -13617,7 +13632,7 @@ function showStartupRecovery(error){
     t += '<div style="'+muted+'margin-top:8px;">"Discard" throws away what this phone could not upload (for example a failed import) and shows what is in the cloud. Import the file again afterwards.</div>';
     return t + '</div>';
   }
-  var views = { sync:syncView, approval:approvalView, users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
+  var views = { pricepush:pricepushView, sync:syncView, approval:approvalView, users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
   function render(){ var o = el(), sc = o.scrollTop; try{ o.innerHTML = (views[view]||home)(); }catch(e){ o.innerHTML = top('Tools') + '<div>Could not open: '+H(e.message)+'</div></div>'; } o.scrollTop = sc; }
   function shareText(text){
     if(navigator.share){ navigator.share({text:text}).catch(function(){}); return; }
@@ -13658,6 +13673,20 @@ function showStartupRecovery(error){
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
     openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
+    sendPricePush: function(){
+      var items = todayPriceItems(), g = {};
+      if(!items.length){ showToast('No price changes today', true); return; }
+      items.forEach(function(n){ var p = n.party || 'General'; g[p] = (g[p]||0) + 1; });
+      var day = new Date().toISOString().slice(0,10), done = 0;
+      Object.keys(g).forEach(function(p){
+        var title = 'Price update · ' + p, body = g[p] + ' product' + (g[p]===1?' price was':' prices were') + ' updated today' + (p!=='General' ? ' · Party ' + p : '');
+        try{ addAppNotification({ id:'price-push-' + p + '-' + day + '-' + Date.now(), category:'price', audience:'all', party:p, tab:'log', title:title, message:body }); done++; }catch(e){}
+        try{ addWebsiteNotification({ id:'price-push-local-' + p + '-' + Date.now(), category:'price', party:p, tab:'log', ts:Date.now(), title:title, body:body, silent:true }); }catch(e){}
+        try{ if(window.AndroidNative && window.AndroidNative.postPriceUpdateNotification) window.AndroidNative.postPriceUpdateNotification(title, body); }catch(e){}
+      });
+      try{ addAuditLog('Price update pushed', items.length + ' price changes sent to everyone'); }catch(e){}
+      showToast('✓ Price update sent (' + done + ' parties)');
+    },
     inspectCloud: async function(){
       try{
         showToast('Inspecting cloud...');
