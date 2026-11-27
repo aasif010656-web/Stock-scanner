@@ -6,7 +6,6 @@ const APP_SHELL = [
   '/icon-192.png',
   '/icon-512.png',
   '/login_reference_logo.png',
-  '/splash-logo.webp',
   '/js/xlsx.full.min.js'
 ];
 
