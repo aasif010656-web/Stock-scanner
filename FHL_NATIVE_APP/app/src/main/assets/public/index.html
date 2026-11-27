@@ -6319,8 +6319,22 @@ async function syncBrandsStateToCloud(){
     }
   }
   let remoteState = null;
-  if(previousRoot.activeVersion) remoteState = await readBrandsStateFromCloud(previousRoot);
   const replaceAll = !!(brandsCloudPending && brandsCloudPending.replaceAll);
+  if(previousRoot.activeVersion && !replaceAll){
+    try{
+      remoteState = await readBrandsStateFromCloud(previousRoot);
+    }catch(readError){
+      // If the active cloud snapshot is itself broken (a chunk is missing), nobody can read it, so merging
+      // with it is impossible. An Excel import / manual repair then publishes this device's data as a new,
+      // complete version instead of failing forever. Ordinary background retries never do this.
+      const unreadable = /chunk is unavailable|version is incomplete/i.test(String((readError && readError.message) || ''));
+      const mayReplace = !!(brandsCloudPending && brandsCloudPending.allowImportRebase === true && brandsCloudPending.reason === 'brands-excel-import');
+      if(!(unreadable && mayReplace)) throw readError;
+      rememberBrandsCloudSyncError(readError, 'cloud-snapshot-unreadable-republishing');
+      try{ addAuditLog('Cloud repair', 'Active cloud snapshot was unreadable; published this device data as a new version'); }catch(e){}
+      remoteState = null;
+    }
+  }
   const mergedProducts = replaceAll ? (customProducts || []).slice() : (remoteState ? unionExtraBarcodes(remoteState.customProducts, customProducts, mergeArrayByKey(remoteState.customProducts, customProducts, function(item){ return item && item.SL; }, deletedKeys.customProducts)) : (customProducts || []).slice());
   const mergedOverrides = replaceAll ? Object.assign({}, stockOverrides || {}) : mergeBrandsOverrides(remoteState && remoteState.stockOverrides, stockOverrides);
   const mergedProductFields = replaceAll ? Object.assign({}, productFieldOverrides || {}) : Object.assign({}, remoteState && remoteState.productFieldOverrides || {}, productFieldOverrides || {});
@@ -7294,7 +7308,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.15';
+const APP_VERSION = '6.1.16';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13597,9 +13611,10 @@ function showStartupRecovery(error){
     t += '<div style="'+card+'">' + kv('Connection', (typeof syncStatus!=='undefined'?syncStatus:'?') + (navigator.onLine?'':' (no internet)')) + kv('Local cloud version', act||'none') + kv('Waiting to upload', pend ? 'YES' : 'no');
     if(pend){ t += kv('Reason', pend.reason||'') + kv('Since', dstr(pend.updatedAt)) + kv('Retries', pend.retryCount||0) + kv('Based on version', pend.baseVersion||'(empty)') + kv('Conflict', pend.conflict||'none'); }
     if(ctx.cloudRoot !== undefined) t += kv('Version in cloud now', ctx.cloudRoot);
+    if(ctx.cloudVersions){ t += '<div style="'+muted+'margin:8px 0 4px;">Cloud versions (newest first)</div>' + ctx.cloudVersions.map(function(v){ return kv((v.active?'● ':'')+H(v.id.replace('brands_','').slice(-14)), v.status + ' · ' + (v.missing ? v.missing + ' chunk(s) MISSING' : 'all chunks ok')); }).join(''); }
     if(err) t += kv('Last error', err.detail + ' · ' + err.stage + ' · ' + dstr(err.at));
     t += '</div>';
-    t += btn('☁ Check cloud version','FHLTools.checkCloud()','btn-ghost') + btn('⬆ Upload waiting changes now','FHLTools.uploadNow()') + (pend ? btn('🗑 Discard waiting changes and load cloud data','FHLTools.discardPending()','btn-ghost') : '');
+    t += btn('☁ Check cloud version','FHLTools.checkCloud()','btn-ghost') + btn('🔍 Inspect cloud snapshots','FHLTools.inspectCloud()','btn-ghost') + btn('🛠 Replace cloud with THIS phone\'s data','FHLTools.repairCloud()','btn-ghost') + btn('⬆ Upload waiting changes now','FHLTools.uploadNow()') + (pend ? btn('🗑 Discard waiting changes and load cloud data','FHLTools.discardPending()','btn-ghost') : '');
     t += '<div style="'+muted+'margin-top:8px;">"Discard" throws away what this phone could not upload (for example a failed import) and shows what is in the cloud. Import the file again afterwards.</div>';
     return t + '</div>';
   }
@@ -13644,6 +13659,31 @@ function showStartupRecovery(error){
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
     openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
+    inspectCloud: async function(){
+      try{
+        showToast('Inspecting cloud...');
+        var root = await fbBrandsDocRef.get({source:'server'}), rd = root.exists ? (root.data()||{}) : {}, active = String(rd.activeVersion||'');
+        var snap = await fbBrandsVersionsRef.get({source:'server'}), out = [];
+        for(var i=0;i<snap.docs.length;i++){
+          var d = snap.docs[i], m = d.data()||{}, missing = 0;
+          var counts = {products:Number(m.productChunkCount||0), overrides:Number(m.overrideChunkCount||0), productFields:Number(m.productFieldChunkCount||0), prices:Number(m.priceChunkCount||0)};
+          for(var kind in counts){ for(var k=0;k<counts[kind];k++){ var c = await fbBrandsVersionsRef.doc(d.id).collection('chunks').doc(brandsChunkId(kind,k)).get({source:'server'}); if(!c.exists) missing++; } }
+          out.push({id:d.id, status:String(m.status||'?'), missing:missing, updatedAt:Number(m.updatedAt||0), active:d.id===active});
+        }
+        out.sort(function(a,b){ return b.updatedAt-a.updatedAt; });
+        ctx.cloudVersions = out.slice(0,6); ctx.cloudRoot = active || 'none'; render();
+      }catch(e){ showToast('Inspect failed: ' + String(e && e.message || e).slice(0,100), true); }
+    },
+    repairCloud: async function(){
+      if(!(await appConfirm('Publish THIS phone\'s stock and prices as the new cloud data, replacing whatever is in the cloud? Do this only on the phone that has the correct latest data.', 'Replace cloud data'))) return;
+      try{
+        showToast('Publishing...');
+        markBrandsCloudPending('brands-excel-import'); brandsCloudPending.replaceAll = true; persistBrandsCloudPending();
+        var r = await Promise.race([syncBrandsStateToCloud(), new Promise(function(x){ setTimeout(function(){ x('timeout'); }, 60000); })]);
+        if(r === true){ try{ addAuditLog('Cloud repair', 'Cloud data replaced from this phone'); }catch(x){} showToast('✓ Cloud data replaced'); } else { showToast('Did not finish: ' + r, true); }
+      }catch(e){ try{ rememberBrandsCloudSyncError(e,'tools-repair'); }catch(x){} showToast('Failed: ' + String(e && e.message || e).slice(0,110), true); }
+      ctx.cloudRoot = undefined; ctx.cloudVersions = undefined; render();
+    },
     checkCloud: function(){ if(typeof fbBrandsDocRef==='undefined' || !fbBrandsDocRef){ showToast('Cloud not ready', true); return; } fbBrandsDocRef.get({source:'server'}).then(function(d){ ctx.cloudRoot = d.exists ? String((d.data()||{}).activeVersion || 'none') : 'no document'; render(); }).catch(function(e){ ctx.cloudRoot = 'error: ' + String(e && e.message || e).slice(0,90); render(); }); },
     uploadNow: async function(){ try{ showToast('Uploading...'); var r = await Promise.race([syncBrandsStateToCloud(), new Promise(function(x){ setTimeout(function(){ x('timeout'); }, 40000); })]); if(r === true){ showToast('✓ Uploaded'); } else { showToast('Upload did not finish: ' + r, true); } }catch(e){ try{ rememberBrandsCloudSyncError(e,'tools-upload'); }catch(x){} showToast('Failed: ' + String(e && e.message || e).slice(0,110), true); } ctx.cloudRoot = undefined; render(); },
     discardPending: async function(){ if(!(await appConfirm('Discard the changes this phone could not upload and load the cloud data? You will need to import again.', 'Discard waiting changes'))) return; try{ clearBrandsCloudPending(); try{ clearBrandsCloudSyncError(); }catch(x){} await refreshCanonicalBrandsState(); showToast('✓ Loaded cloud data'); }catch(e){ showToast('Failed: ' + String(e && e.message || e).slice(0,100), true); } ctx.cloudRoot = undefined; render(); try{ window.render && window.render(); }catch(x){} },
