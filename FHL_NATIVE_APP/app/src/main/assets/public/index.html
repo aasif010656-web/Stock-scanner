@@ -7307,7 +7307,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.17';
+const APP_VERSION = '6.1.18';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13678,9 +13678,17 @@ function showStartupRecovery(error){
       try{
         showToast('Publishing...');
         markBrandsCloudPending('brands-excel-import'); brandsCloudPending.replaceAll = true; persistBrandsCloudPending();
-        var r = await Promise.race([syncBrandsStateToCloud(), new Promise(function(x){ setTimeout(function(){ x('timeout'); }, 60000); })]);
+        // Use a clean, separate Firestore instance (no listeners/state from the main one), because the main
+        // instance can be stuck in an internal-assertion state on some devices.
+        var savedDoc = fbBrandsDocRef, savedVers = fbBrandsVersionsRef, r;
+        try{
+          var app2 = firebase.apps.filter(function(a){ return a.name === 'repair'; })[0] || firebase.initializeApp(firebaseConfig, 'repair');
+          fbBrandsDocRef = app2.firestore().collection('stockScannerApp').doc('brandsData');
+          fbBrandsVersionsRef = fbBrandsDocRef.collection('versions');
+          r = await Promise.race([syncBrandsStateToCloud(), new Promise(function(x){ setTimeout(function(){ x('timeout'); }, 90000); })]);
+        } finally { fbBrandsDocRef = savedDoc; fbBrandsVersionsRef = savedVers; }
         if(r === true){ try{ addAuditLog('Cloud repair', 'Cloud data replaced from this phone'); }catch(x){} showToast('✓ Cloud data replaced'); } else { showToast('Did not finish: ' + r, true); }
-      }catch(e){ try{ rememberBrandsCloudSyncError(e,'tools-repair'); }catch(x){} showToast('Failed: ' + String(e && e.message || e).slice(0,110), true); }
+      }catch(e){ try{ rememberBrandsCloudSyncError(e,'tools-repair'); }catch(x){} showToast('Failed: ' + String(e && e.message || e).slice(0,80) + ' @' + String((e && e.stack || '').split('\n')[1] || '').trim().slice(0,70), true); }
       ctx.cloudRoot = undefined; ctx.cloudVersions = undefined; render();
     },
     checkCloud: function(){ if(typeof fbBrandsDocRef==='undefined' || !fbBrandsDocRef){ showToast('Cloud not ready', true); return; } fbBrandsDocRef.get({source:'server'}).then(function(d){ ctx.cloudRoot = d.exists ? String((d.data()||{}).activeVersion || 'none') : 'no document'; render(); }).catch(function(e){ ctx.cloudRoot = 'error: ' + String(e && e.message || e).slice(0,90); render(); }); },
