@@ -7018,8 +7018,21 @@ async function refreshStockNow(){
   if(state._stockRefreshRunning) return;
   if(!navigator.onLine){ showToast('No internet. Showing the last saved stock.', true); return; }
   if(!state.user || !storageReady){ showToast('Please wait, app is still starting.'); return; }
-  if(typeof hasBrandsCloudPending === 'function' && hasBrandsCloudPending()){ showToast('This device still has changes waiting to upload. They will sync first.', true); try{ retryCloudConnection({silent:true}); }catch(e){} return; }
   state._stockRefreshRunning = true; render();
+  if(typeof hasBrandsCloudPending === 'function' && hasBrandsCloudPending()){
+    showToast('Uploading the changes waiting on this device...');
+    try{
+      const up = await Promise.race([ syncBrandsStateToCloud(), new Promise(function(r){ setTimeout(function(){ r('timeout'); }, 40000); }) ]);
+      if(up === 'timeout') throw new Error('Upload is taking too long');
+      if(up !== true) throw new Error('Cloud publisher is not ready');
+      showToast('✓ Waiting changes uploaded');
+    }catch(e){
+      try{ rememberBrandsCloudSyncError(e, 'manual-refresh'); }catch(x){}
+      state._stockRefreshRunning = false; render();
+      showToast('Upload failed: ' + String((e && e.message) || e).slice(0, 110), true);
+      return;
+    }
+  }
   showToast('Refreshing stock...');
   let ok = false;
   try{
@@ -7281,7 +7294,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.14';
+const APP_VERSION = '6.1.15';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -13365,7 +13378,7 @@ function showStartupRecovery(error){
     t += tile('🧬','Duplicate finder','Same item name under different barcodes','dups');
     t += tile('🎨','Display','Theme, large text','display');
     t += tile('💾','Backup export','Products, prices, movements, scans in one Excel','backup');
-    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
+    if(isAdm()){ t += '<div class="divider-label" style="margin:12px 0 8px;">Admin only</div>'; t += tile('👥','User activity','Who is online, last seen, devices','users'); t += tile('📜','Audit log','Filter by user/date, export to Excel','audit'); t += tile('📱','Devices & logout','See every logged-in phone, log it out','devices'); t += tile('📊','Sales report','Party-wise sales, top and slow-moving items','sales'); t += tile('🩺','Cloud sync check','Why an import is not in the cloud, upload or discard','sync'); t += tile('🔐','Login approval','Staff/promoter logins need your approval','approval'); }
     return t + '</div>';
   }
   function lowView(){
@@ -13575,7 +13588,22 @@ function showStartupRecovery(error){
     }
     return t + '</div>';
   }
-  var views = { approval:approvalView, users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
+  function syncView(){
+    var t = top('🩺 Cloud sync check'), pend = null, act = '', err = null;
+    try{ pend = hasBrandsCloudPending() ? brandsCloudPending : null; }catch(e){}
+    try{ act = (brandsCloudState && brandsCloudState.activeVersion) || ''; }catch(e){}
+    try{ err = brandsLastCloudSyncError; }catch(e){}
+    function kv(a,b){ return '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border,#262B3B);font-size:13px;"><span style="'+muted+'">'+a+'</span><b style="text-align:right;word-break:break-all;">'+H(b)+'</b></div>'; }
+    t += '<div style="'+card+'">' + kv('Connection', (typeof syncStatus!=='undefined'?syncStatus:'?') + (navigator.onLine?'':' (no internet)')) + kv('Local cloud version', act||'none') + kv('Waiting to upload', pend ? 'YES' : 'no');
+    if(pend){ t += kv('Reason', pend.reason||'') + kv('Since', dstr(pend.updatedAt)) + kv('Retries', pend.retryCount||0) + kv('Based on version', pend.baseVersion||'(empty)') + kv('Conflict', pend.conflict||'none'); }
+    if(ctx.cloudRoot !== undefined) t += kv('Version in cloud now', ctx.cloudRoot);
+    if(err) t += kv('Last error', err.detail + ' · ' + err.stage + ' · ' + dstr(err.at));
+    t += '</div>';
+    t += btn('☁ Check cloud version','FHLTools.checkCloud()','btn-ghost') + btn('⬆ Upload waiting changes now','FHLTools.uploadNow()') + (pend ? btn('🗑 Discard waiting changes and load cloud data','FHLTools.discardPending()','btn-ghost') : '');
+    t += '<div style="'+muted+'margin-top:8px;">"Discard" throws away what this phone could not upload (for example a failed import) and shows what is in the cloud. Import the file again afterwards.</div>';
+    return t + '</div>';
+  }
+  var views = { sync:syncView, approval:approvalView, users:usersView, audit:auditView, devices:devicesView, sales:salesView, home:home, low:lowView, price:priceView, summary:summaryView, share:shareView, scans:scansView, dups:dupsView, display:displayView, backup:backupView };
   function render(){ var o = el(), sc = o.scrollTop; try{ o.innerHTML = (views[view]||home)(); }catch(e){ o.innerHTML = top('Tools') + '<div>Could not open: '+H(e.message)+'</div></div>'; } o.scrollTop = sc; }
   function shareText(text){
     if(navigator.share){ navigator.share({text:text}).catch(function(){}); return; }
@@ -13612,10 +13640,13 @@ function showStartupRecovery(error){
     open: function(){ if(typeof isStaffOrAdmin==='function' && !isStaffOrAdmin()) return; view = 'home'; ctx = {}; el().style.display = 'block'; render(); },
     close: function(){ var o = document.getElementById('fhlToolsOverlay'); if(o) o.style.display = 'none'; },
     back: function(){ if(view==='home') this.close(); else { view = 'home'; render(); } },
-    go: function(v){ if(/^(users|audit|devices|sales|approval)$/.test(v) && !isAdm()) return; view = v; render(); el().scrollTop = 0; },
+    go: function(v){ if(/^(users|audit|devices|sales|approval|sync)$/.test(v) && !isAdm()) return; view = v; render(); el().scrollTop = 0; },
     set: function(k, v, keepFocus){ ctx[k] = v; if(keepFocus){ var o = el(), a = document.activeElement, pos = a && a.selectionStart; render(); var i = o.querySelector('input'); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } } else render(); },
     setLimit: function(v){ var n = parseFloat(v); if(!isNaN(n)) localStorage.setItem('fhl-low-stock-limit', String(n)); render(); },
     openRow: function(code){ this.close(); try{ setTab('scan'); lookupBarcode(code); }catch(e){} },
+    checkCloud: function(){ if(typeof fbBrandsDocRef==='undefined' || !fbBrandsDocRef){ showToast('Cloud not ready', true); return; } fbBrandsDocRef.get({source:'server'}).then(function(d){ ctx.cloudRoot = d.exists ? String((d.data()||{}).activeVersion || 'none') : 'no document'; render(); }).catch(function(e){ ctx.cloudRoot = 'error: ' + String(e && e.message || e).slice(0,90); render(); }); },
+    uploadNow: async function(){ try{ showToast('Uploading...'); var r = await Promise.race([syncBrandsStateToCloud(), new Promise(function(x){ setTimeout(function(){ x('timeout'); }, 40000); })]); if(r === true){ showToast('✓ Uploaded'); } else { showToast('Upload did not finish: ' + r, true); } }catch(e){ try{ rememberBrandsCloudSyncError(e,'tools-upload'); }catch(x){} showToast('Failed: ' + String(e && e.message || e).slice(0,110), true); } ctx.cloudRoot = undefined; render(); },
+    discardPending: async function(){ if(!(await appConfirm('Discard the changes this phone could not upload and load the cloud data? You will need to import again.', 'Discard waiting changes'))) return; try{ clearBrandsCloudPending(); try{ clearBrandsCloudSyncError(); }catch(x){} await refreshCanonicalBrandsState(); showToast('✓ Loaded cloud data'); }catch(e){ showToast('Failed: ' + String(e && e.message || e).slice(0,100), true); } ctx.cloudRoot = undefined; render(); try{ window.render && window.render(); }catch(x){} },
     makeTopic: function(){ var n = window.FHLApproval.newTopic(); window.FHLApproval.setTopic(n).then(function(){ ctx.apprTopic = n; render(); }).catch(function(){ showToast('Could not save', true); }); }, testNtfy: function(){ if(!ctx.apprTopic) return; fetch('https://ntfy.sh/' + encodeURIComponent(ctx.apprTopic), {method:'POST', headers:{'Title':'FHL login approval','Tags':'key'}, body:'Test: notifications are working.'}).then(function(){ showToast('Test sent'); }).catch(function(){ showToast('Could not send', true); }); }, toggleApproval: function(){ var n = !ctx.apprOn; window.FHLApproval.setEnabled(n).then(function(){ ctx.apprOn = n; try{ addAuditLog('Login Approval', n?'Turned ON':'Turned OFF'); }catch(e){} render(); }).catch(function(){ showToast('Could not save', true); }); }, exportAudit: exportAudit, exportSales: exportSales, revokeOne: revokeOne, revokeMany: revokeMany, render: render, shareText: shareText, copyText: copyText, backup: backup,
     _sum: function(){ return summaryText(summaryData()); }, _priceText: priceText
   };
