@@ -6498,7 +6498,7 @@ async function loadStorage(){
       state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
       state.a7Excels = data.a7Excels || state.a7Excels || [];
       state.a4Excels = data.a4Excels || state.a4Excels || [];
-      state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
+      state.priceChangeNotifications = applyPriceDeleteTombstones(mergeArrayByKey(data.priceChangeNotifications || [], state.priceChangeNotifications || [], function(x){ return x && x.id; }), data.priceChangeNotificationTombstones);
       if(!remoteStockMovements && !hasStockMovementCloudPending()) state.stockMovements = data.stockMovements || state.stockMovements || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
       state.pdfImports = mergePdfMetadata(data.pdfImports || state.pdfImports || []);
@@ -6621,7 +6621,7 @@ async function loadStorage(){
       const prevPriceNotifs = state.priceChangeNotifications || [];
       const prevStockAdditionId = String(state._websiteLastStockAdditionId || (state.stockAdditionNotice && state.stockAdditionNotice.id) || '');
       const prevExcelSignature = state._websiteLastExcelSignature || (state.latestExcelUpdate && (state.latestExcelUpdate.ts || state.latestExcelUpdate.fileName)) || '';
-      state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
+      state.priceChangeNotifications = applyPriceDeleteTombstones(mergeArrayByKey(data.priceChangeNotifications || [], state.priceChangeNotifications || [], function(x){ return x && x.id; }), data.priceChangeNotificationTombstones);
       if(!stockMovementCloudState.activeVersion && !hasStockMovementCloudPending()) state.stockMovements = data.stockMovements || state.stockMovements || [];
       const previousAppNotifications = state.appNotifications || [];
       state.appNotifications = data.appNotifications || state.appNotifications || [];
@@ -7307,7 +7307,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.20';
+const APP_VERSION = '6.1.21';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -9870,7 +9870,7 @@ async function handleRestoreFile(fileInput){
     state.userRoles = data.userRoles || state.userRoles || DEFAULT_USER_ROLES;
     state.a7Excels = data.a7Excels || state.a7Excels || [];
     state.a4Excels = data.a4Excels || state.a4Excels || [];
-    state.priceChangeNotifications = applyPriceDeleteTombstones(data.priceChangeNotifications || state.priceChangeNotifications || [], data.priceChangeNotificationTombstones);
+    state.priceChangeNotifications = applyPriceDeleteTombstones(mergeArrayByKey(data.priceChangeNotifications || [], state.priceChangeNotifications || [], function(x){ return x && x.id; }), data.priceChangeNotificationTombstones);
     state.stockMovements = data.stockMovements || state.stockMovements || [];
     if(Array.isArray(data.stockMovements) && data.stockMovements.length) markStockMovementCloudPending('backup-restore');
     if((data.a7TemplateVersion || 0) < A7_TEMPLATE_VERSION){
