@@ -5616,6 +5616,29 @@ function rebuildIndex(){
 
 let stockOverrides = JSON.parse(localStorage.getItem('stock-overrides-cache') || '{}');
 let scanLog = JSON.parse(localStorage.getItem('scan-log-cache') || '[]');
+function scanItemLastTouch(item){
+  let t = Date.parse(item && item.ts) || 0;
+  ((item && item.history) || []).forEach(function(h){ const x = Date.parse(h && h.ts) || 0; if(x > t) t = x; });
+  return t;
+}
+// Cloud list + scans that only exist on this device (made offline) are both kept; the newer copy of a line wins.
+function mergeCloudScanLog(cloudList){
+  const deleted = scanLogTombstones || {};
+  const map = new Map();
+  (cloudList || []).concat(scanLog || []).forEach(function(item){
+    const id = String(item && item.id || '');
+    if(!id || deleted[id]) return;
+    const prev = map.get(id);
+    if(!prev || scanItemLastTouch(item) > scanItemLastTouch(prev) || (scanItemLastTouch(item) === scanItemLastTouch(prev) && item === (scanLog || []).find(function(x){ return x && x.id === id; }))) map.set(id, item);
+  });
+  return Array.from(map.values()).sort(function(a,b){ return (Date.parse(b.ts) || 0) - (Date.parse(a.ts) || 0); });
+}
+function cacheScanLogLocal(){
+  try{
+    localStorage.setItem('scan-log-cache', JSON.stringify(scanLog));
+    localStorage.setItem('scan-log-tombstones-cache', JSON.stringify(scanLogTombstones));
+  }catch(e){}
+}
 let storageReady = false;
 
 // Build the initial lookup only after offline cache-backed variables exist.
@@ -6506,7 +6529,7 @@ async function loadStorage(){
       if(allowLegacyBrandsData) stockOverrides = data.stockOverrides || stockOverrides;
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLogTombstones = mergeScanLogTombstones(scanLogTombstones, data.scanLogTombstones);
-      scanLog = (data.scanLog || scanLog).filter(function(item){ return item && !scanLogTombstones[String(item.id || '')]; });
+      scanLog = mergeCloudScanLog(data.scanLog); cacheScanLogLocal();
       if(allowLegacyBrandsData) customProducts = data.customProducts || customProducts;
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
       if(allowLegacyBrandsData) state.prices = data.prices || state.prices || {};
@@ -6609,7 +6632,7 @@ async function loadStorage(){
       markStockCacheFresh(data.stockDataUpdatedAt || Date.now());
       scanLogTombstones = mergeScanLogTombstones(scanLogTombstones, data.scanLogTombstones);
       try{ localStorage.setItem('scan-log-tombstones-cache', JSON.stringify(scanLogTombstones)); }catch(e){}
-      scanLog = (data.scanLog || []).filter(function(item){ return item && !scanLogTombstones[String(item.id || '')]; });
+      scanLog = mergeCloudScanLog(data.scanLog); cacheScanLogLocal();
       if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) customProducts = data.customProducts || [];
       state.reports = mergeReportMetadata(data.reports || state.reports || []);
       if(!brandsCloudState.activeVersion && !hasBrandsCloudPending()) state.prices = data.prices || state.prices || {};
@@ -6761,6 +6784,8 @@ async function loadStorage(){
 let scanLogTombstones = {};
 try{ scanLogTombstones = normalizeScanLogTombstones(JSON.parse(localStorage.getItem('scan-log-tombstones-cache') || '{}')); }catch(e){ scanLogTombstones = {}; }
 let deletedKeys = { customProducts: new Set(), stockOverrides: new Set(), reports: new Set(), a7Excels: new Set(), a4Excels: new Set(), priceChangeNotifications: new Set(), stockMovements: new Set(), appNotifications: new Set(), pdfImports: new Set(), auditLog: new Set() };
+try{ JSON.parse(localStorage.getItem('deleted-report-ids-v1') || '[]').forEach(function(id){ deletedKeys.reports.add(String(id)); }); }catch(e){}
+function persistDeletedReportIds(){ try{ localStorage.setItem('deleted-report-ids-v1', JSON.stringify(Array.from(deletedKeys.reports).slice(-300))); }catch(e){} }
 function rememberDeletedPriceNotifications(ids, tombstones){
   priceDeleteTombstones = mergePriceDeleteTombstones(priceDeleteTombstones, tombstones);
   (ids || []).forEach(function(id){
@@ -6965,7 +6990,7 @@ async function pushToCloud(force, suppressToast, options){
     const mergedActiveSessions = mergeArrayByKey(cloudData.activeSessions, state.activeSessions, x=>x.id);
     // Adopt the merged results locally too, so THIS device doesn't lose what others added
     state.reports = mergedReports;
-    scanLog = mergedScanLog;
+    scanLog = mergedScanLog; cacheScanLogLocal();
     state.auditLog = mergedAuditLog;
     state.a7Excels = mergedA7Excels;
     state.a4Excels = mergedA4Excels;
@@ -7160,9 +7185,13 @@ async function refreshCanonicalBrandsState(){
     return false;
   }
 }
+window.addEventListener('offline', function(){ window.__fhlWasOffline = true; });
 window.addEventListener('online', function(){
   if(storageReady && state.user) window.setTimeout(function(){
-    retryCloudConnection({ silent:true }).then(function(){ return refreshCanonicalBrandsState(); });
+    retryCloudConnection({ silent:true }).then(function(){ return refreshCanonicalBrandsState(); }).then(function(){
+      // Scans and edits made while offline are uploaded as soon as the phone is back online.
+      if(window.__fhlWasOffline){ window.__fhlWasOffline = false; return pushToCloud(true, true, { preserveStatus:true }); }
+    }).catch(function(){});
   }, 300);
 });
 document.addEventListener('visibilitychange', function(){
@@ -7323,7 +7352,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.22';
+const APP_VERSION = '6.1.23';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
@@ -12457,9 +12486,9 @@ async function saveReportWorkspace(){
 async function deleteReport(idx) {
     if(!(await appConfirm('Delete this report?', 'Delete Report'))) return;
     const rep = state.reports[idx];
-    if(rep) deletedKeys.reports.add(reportCloudId(rep));
+    if(rep){ deletedKeys.reports.add(reportCloudId(rep)); persistDeletedReportIds(); }
     state.reports.splice(idx, 1);
-    localStorage.setItem('app-reports', JSON.stringify(state.reports));
+    cacheReportIndexLocal();
     render();
     try{ await deleteReportRowsFromCloud(rep); await pushToCloud(true, true); }catch(e){ showToast('Report deleted locally; cloud cleanup will retry when online.', true); }
 }
@@ -12943,6 +12972,16 @@ try{ history.replaceState({tab: state.tab}, "", location.href); }catch(e){}
 window.addEventListener("popstate", function(){ document.dispatchEvent(new Event("backbutton")); });
 // ---------- Android hardware back button handler ----------
 window.handleNativeBack = function(){
+  // Anything layered on top of the screen closes first, one layer per press.
+  if(state._confirmRequest){ resolveAppConfirm(false); return true; }
+  const toolsOverlay = document.getElementById('fhlToolsOverlay');
+  if(toolsOverlay && toolsOverlay.style.display === 'block' && window.FHLTools){ window.FHLTools.back(); return true; }
+  const shown = function(id){ const el = document.getElementById(id); return !!(el && el.classList.contains('show')); };
+  if(shown('actionModal')){ closeActionModal(); return true; }
+  if(shown('themeModal')){ closeThemePicker(); return true; }
+  if(shown('notificationModal')){ closeNotificationCenter(); return true; }
+  if(shown('reportWorkspaceModal')){ closeReportWorkspace(); return true; }
+  if(state.tab === 'data' && state.openReportIndex !== null && state.openReportIndex !== undefined){ state.openReportIndex = null; render(); return true; }
   // Priority: close modals first.
   const barcodeModal = document.getElementById('barcodeModal');
   if(barcodeModal && barcodeModal.classList.contains('show')){ closeBarcodeModal(); return true; }
