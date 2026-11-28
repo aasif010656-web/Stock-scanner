@@ -6265,7 +6265,7 @@ async function syncUserManagementToCloud(){
   }
 }
 
-async function syncBrandsStateToCloud(){
+async function syncBrandsStateToCloudCore(){
   // Cancel any in-flight listener/refresh read before publishing local edits.
   ++brandsRemoteApplyGeneration;
   persistBrandsLocalState();
@@ -6381,6 +6381,22 @@ async function syncBrandsStateToCloud(){
   clearBrandsCloudPending();
   cleanupPreviousBrandsVersion(previousRoot, versionId);
   return true;
+}
+// Some devices get Firestore SDK "INTERNAL ASSERTION FAILED" on the main connection. When that happens the
+// upload is retried once through a clean, separate Firestore instance (no listeners), so imports still reach the cloud.
+async function syncBrandsStateToCloud(){
+  try{
+    return await syncBrandsStateToCloudCore.apply(null, arguments);
+  }catch(error){
+    if(!/INTERNAL ASSERTION FAILED/i.test(String((error && error.message) || ''))) throw error;
+    const savedDoc = fbBrandsDocRef, savedVers = fbBrandsVersionsRef;
+    try{
+      const app2 = firebase.apps.filter(function(a){ return a.name === 'repair'; })[0] || firebase.initializeApp(firebaseConfig, 'repair');
+      fbBrandsDocRef = app2.firestore().collection('stockScannerApp').doc('brandsData');
+      fbBrandsVersionsRef = fbBrandsDocRef.collection('versions');
+      return await syncBrandsStateToCloudCore.apply(null, arguments);
+    } finally { fbBrandsDocRef = savedDoc; fbBrandsVersionsRef = savedVers; }
+  }
 }
 function queueBrandsCloudBackfill(delay){
   if(brandsCloudBackfillTimer || !hasBrandsCloudPending() || !navigator.onLine || !storageReady || !state.user) return;
@@ -7307,7 +7323,7 @@ function getStoredDeviceName(){
 // ---------- State ----------
 // Single source of truth for the app version — used in the title, header, and the
 // in-app update checker, so they can never drift out of sync with each other again.
-const APP_VERSION = '6.1.21';
+const APP_VERSION = '6.1.22';
 const UPDATE_CHECK_VERSION = '6.1.2';
 const APP_BUILD = '184';
 const APP_NAME = 'FHL ELECTRONICS';
